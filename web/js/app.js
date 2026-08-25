@@ -131,6 +131,16 @@ const App = {
     // 如果切入 3D 播放器，触发 resize 保持视口正确
     if (tabId === 'tab-3d-player' && dancePlayer) {
       setTimeout(() => dancePlayer.onResize(), 50);
+    } else if (tabId === 'tab-logs' && window.LogViewer) {
+      LogViewer.fetchCurrentLogs();
+    } else if (tabId === 'tab-network' && window.TabNetwork) {
+      TabNetwork.init();
+    } else if (tabId === 'tab-precheck' && window.TabPrecheck) {
+      TabPrecheck.run();
+    } else if (tabId === 'tab-image' && window.TabImage) {
+      TabImage.init();
+    } else if (tabId === 'tab-license' && window.TabLicense) {
+      TabLicense.init();
     }
   },
 

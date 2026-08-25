@@ -74,33 +74,67 @@ class LogDiagnostics:
     def fetch_logs(self, log_type: str = "container", tail_lines: int = 150) -> Dict[str, Any]:
         """
         拉取指定来源的日志
-        log_type: container (docker logs), sec_run (主控日志), lora_recv (群控日志), dmesg (内核硬件)
+        log_type: container (docker logs), sec_run (主控日志), lora_recv (群控日志), dmesg (内核硬件), all (全量汇总)
         """
         if not ssh_manager.is_connected():
             return {
                 "success": False,
                 "log_type": log_type,
-                "raw_text": "未连接至机器人，请先建立 SSH 连接。",
+                "raw_text": "【未连接至机器人】请先点击顶部的【连接机器人】(192.168.123.164)。",
                 "lines_count": 0,
                 "diagnostics": []
             }
 
-        cmd_map = {
-            "container": f"docker logs --tail {tail_lines} vsis_g1 2>&1",
-            "sec_run": f"tail -n {tail_lines} /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>&1 || docker exec vsis_g1 tail -n {tail_lines} /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>&1",
-            "lora_recv": f"tail -n {tail_lines} /home/ubuntu/vsis_mimic_deploy/log/lora_recv.log 2>&1 || docker exec vsis_g1 tail -n {tail_lines} /home/ubuntu/vsis_mimic_deploy/log/lora_recv.log 2>&1",
-            "dmesg": "dmesg | grep -iE 'ch341|ttyCH|nvidia|docker' | tail -n 80"
-        }
+        # 1. 动态探测机器人上正在运行或已存在的 Docker 容器
+        code_ps, ps_out, _ = ssh_manager.execute_command("docker ps --format '{{.Names}}'", sudo=True)
+        running_names = [n.strip() for n in ps_out.strip().split("\n") if n.strip()] if code_ps == 0 else []
 
-        cmd = cmd_map.get(log_type, cmd_map["container"])
+        code_ps_a, psa_out, _ = ssh_manager.execute_command("docker ps -a --format '{{.Names}}'", sudo=True)
+        all_names = [n.strip() for n in psa_out.strip().split("\n") if n.strip()] if code_ps_a == 0 else []
+
+        # 确定主容器名称
+        c_name = "vsis_g1"
+        if running_names:
+            if "vsis_g1" in running_names:
+                c_name = "vsis_g1"
+            else:
+                code_p400, p400_out, _ = ssh_manager.execute_command("docker ps --filter publish=400 --format '{{.Names}}'", sudo=True)
+                if code_p400 == 0 and p400_out.strip():
+                    c_name = p400_out.strip().split("\n")[0]
+                else:
+                    c_name = running_names[0]
+        elif all_names:
+            c_name = "vsis_g1" if "vsis_g1" in all_names else all_names[0]
+
+        # 2. 根据类型组装高鲁棒性执行指令
+        if log_type == "container":
+            cmd = f"docker logs --tail {tail_lines} {c_name} 2>&1"
+        elif log_type == "sec_run":
+            cmd = f"cat /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>/dev/null | tail -n {tail_lines} || docker exec {c_name} tail -n {tail_lines} /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>&1 || echo '(主控日志文件尚未生成)'"
+        elif log_type == "lora_recv":
+            cmd = f"cat /home/ubuntu/vsis_mimic_deploy/log/lora_recv.log 2>/dev/null | tail -n {tail_lines} || docker exec {c_name} tail -n {tail_lines} /home/ubuntu/vsis_mimic_deploy/log/lora_recv.log 2>&1 || echo '(群控日志文件尚未生成)'"
+        elif log_type == "dmesg":
+            cmd = "dmesg | grep -iE 'ch341|ttyCH|nvidia|docker|usb' | tail -n 80 || dmesg | tail -n 80"
+        elif log_type == "all":
+            cmd = f"echo '=== Docker 容器状态 ===' && docker ps -a --format 'table {{{{.Names}}}}\t{{{{.Status}}}}\t{{{{.Ports}}}}' && echo '' && echo '=== Docker Logs [{c_name}] ===' && docker logs --tail 60 {c_name} 2>&1"
+        else:
+            cmd = f"docker logs --tail {tail_lines} {c_name} 2>&1"
+
         code, out, err = ssh_manager.execute_command(cmd, sudo=True)
-        raw_text = out if code == 0 else (out or err or "暂无日志或文件未生成")
+        raw_text = out if (code == 0 or out.strip()) else (out or err or "【暂无日志输出】容器或日志文件可能尚未生成。")
         
+        # 若 docker logs 几乎为空，补充读取容器内 sec_run.log
+        if log_type == "container" and len(raw_text.strip().split("\n")) <= 2:
+            code_sub, out_sub, _ = ssh_manager.execute_command(f"docker exec {c_name} tail -n 60 /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>/dev/null || cat /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>/dev/null", sudo=True)
+            if out_sub.strip():
+                raw_text += f"\n\n=== 容器内部主控运行日志 (sec_run.log) ===\n{out_sub.strip()}"
+
         diagnostics = self.analyze_log(raw_text)
         return {
             "success": True,
             "log_type": log_type,
-            "raw_text": raw_text,
+            "target_container": c_name,
+            "raw_text": raw_text.strip(),
             "lines_count": len(raw_text.strip().split("\n")),
             "diagnostics": diagnostics
         }

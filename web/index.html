@@ -794,14 +794,16 @@
 
         <div class="card">
           <div class="card-header">
-            <div style="display: flex; gap: 8px;">
-              <button class="btn btn-secondary btn-sm log-type-btn active" data-type="container">Docker 容器日志</button>
-              <button class="btn btn-secondary btn-sm log-type-btn" data-type="sec_run">主控运行 (sec_run.log)</button>
-              <button class="btn btn-secondary btn-sm log-type-btn" data-type="lora_recv">群控接收 (lora_recv.log)</button>
-              <button class="btn btn-secondary btn-sm log-type-btn" data-type="dmesg">内核与硬件 (dmesg)</button>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <button class="btn btn-secondary btn-sm log-type-btn active" data-type="container">🐳 Docker 容器日志</button>
+              <button class="btn btn-secondary btn-sm log-type-btn" data-type="sec_run">🎮 主控运行 (sec_run.log)</button>
+              <button class="btn btn-secondary btn-sm log-type-btn" data-type="lora_recv">📡 群控接收 (lora_recv.log)</button>
+              <button class="btn btn-secondary btn-sm log-type-btn" data-type="all">📑 全链路汇总</button>
+              <button class="btn btn-secondary btn-sm log-type-btn" data-type="dmesg">🔌 内核与硬件 (dmesg)</button>
             </div>
 
             <div style="display: flex; align-items: center; gap: 10px;">
+              <button class="btn btn-primary btn-sm" onclick="LogViewer.fetchCurrentLogs()">🔄 刷新日志</button>
               <input type="text" id="input-log-filter" class="form-control" placeholder="过滤搜索关键字..."
                 style="width: 160px; padding: 4px 8px; font-size: 0.78rem;">
               <label style="font-size: 0.78rem; display: flex; align-items: center; gap: 4px; cursor: pointer;">
