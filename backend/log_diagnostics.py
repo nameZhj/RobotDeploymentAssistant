@@ -106,28 +106,15 @@ class LogDiagnostics:
         elif all_names:
             c_name = "vsis_g1" if "vsis_g1" in all_names else all_names[0]
 
-        # 2. 根据类型组装高鲁棒性执行指令
-        if log_type == "container":
-            cmd = f"docker logs --tail {tail_lines} {c_name} 2>&1"
-        elif log_type == "sec_run":
-            cmd = f"cat /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>/dev/null | tail -n {tail_lines} || docker exec {c_name} tail -n {tail_lines} /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>&1 || echo '(主控日志文件尚未生成)'"
-        elif log_type == "lora_recv":
-            cmd = f"cat /home/ubuntu/vsis_mimic_deploy/log/lora_recv.log 2>/dev/null | tail -n {tail_lines} || docker exec {c_name} tail -n {tail_lines} /home/ubuntu/vsis_mimic_deploy/log/lora_recv.log 2>&1 || echo '(群控日志文件尚未生成)'"
-        elif log_type == "dmesg":
+        # 2. 根据类型组装执行指令（直出 Docker 容器日志）
+        if log_type == "dmesg":
             cmd = "dmesg | grep -iE 'ch341|ttyCH|nvidia|docker|usb' | tail -n 80 || dmesg | tail -n 80"
-        elif log_type == "all":
-            cmd = f"echo '=== Docker 容器状态 ===' && docker ps -a --format 'table {{{{.Names}}}}\t{{{{.Status}}}}\t{{{{.Ports}}}}' && echo '' && echo '=== Docker Logs [{c_name}] ===' && docker logs --tail 60 {c_name} 2>&1"
         else:
+            # 默认直接输出 Docker 容器日志
             cmd = f"docker logs --tail {tail_lines} {c_name} 2>&1"
 
         code, out, err = ssh_manager.execute_command(cmd, sudo=True)
-        raw_text = out if (code == 0 or out.strip()) else (out or err or "【暂无日志输出】容器或日志文件可能尚未生成。")
-        
-        # 若 docker logs 几乎为空，补充读取容器内 sec_run.log
-        if log_type == "container" and len(raw_text.strip().split("\n")) <= 2:
-            code_sub, out_sub, _ = ssh_manager.execute_command(f"docker exec {c_name} tail -n 60 /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>/dev/null || cat /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>/dev/null", sudo=True)
-            if out_sub.strip():
-                raw_text += f"\n\n=== 容器内部主控运行日志 (sec_run.log) ===\n{out_sub.strip()}"
+        raw_text = out if (code == 0 or out.strip()) else (out or err or "【暂无 Docker 容器日志输出】请确保容器已启动并在运行。")
 
         diagnostics = self.analyze_log(raw_text)
         return {

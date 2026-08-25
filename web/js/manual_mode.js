@@ -51,20 +51,6 @@ const ManualMode = {
       desc: '杀掉旧进程并重新调用 run_bg.sh',
       cmd: 'docker exec vsis_g1 bash -c "pkill -f g1_ctrl_vsis ; pkill -f lora_recv_group" && docker exec -d vsis_g1 /home/ubuntu/vsis_mimic_deploy/run_bg.sh',
       sudo: true
-    },
-    {
-      id: 'view_sec_log',
-      title: '8. 查看主控运行日志',
-      desc: '查看 sec_run.log 主控制器初始化与模型加载日志',
-      cmd: 'docker exec vsis_g1 tail -n 50 /home/ubuntu/vsis_mimic_deploy/log/sec_run.log',
-      sudo: true
-    },
-    {
-      id: 'view_lora_log',
-      title: '9. 查看群控接收日志',
-      desc: '查看 lora_recv.log 无线指令接收与就绪状态',
-      cmd: 'docker exec vsis_g1 tail -n 50 /home/ubuntu/vsis_mimic_deploy/log/lora_recv.log',
-      sudo: true
     }
   ],
 
