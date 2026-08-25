@@ -7,7 +7,7 @@
 ## 📌 架构与技术栈
 
 - **后端架构**：`Python 3.10+` + `Flask` + `Paramiko` (SSH/SFTP 高并发远端通信与实时流式输出) + `PyWebview` (现代化原生独立桌面窗口) + `Numpy` (3D 运动学解析)
-- **前端架构**：原生 `HTML5` + `Vanilla CSS` (赛博朋克深色设计系统) + `Vanilla JS` (模块化单页应用) + `Three.js r128` (WebGL 50fps 真实骨骼物理仿真与轨道相机控制器)
+- **前端架构**：原生 `HTML5` + `Vanilla CSS`  + `Vanilla JS` (模块化单页应用) + `Three.js r128` (WebGL 50fps 真实骨骼物理仿真与轨道相机控制器)
 - **打包分发**：`PyInstaller` (便携绿色运行包) + `Inno Setup` (Windows 标准安装引导包)
 
 ---

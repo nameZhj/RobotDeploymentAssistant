@@ -164,13 +164,13 @@ class DeploymentCore:
             return False
 
         commands = [
-            ("更新软件包并安装内核头文件与编译工具", "apt update && apt install -y build-essential bc linux-headers-$(uname -r) git"),
+            ("更新软件包并安装内核头文件与编译工具", "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential bc linux-headers-$(uname -r) git"),
             ("清理旧版驱动源码目录", "rm -rf /tmp/ch341ser_linux"),
-            ("克隆 CH341 官方 Linux 驱动仓库", "git clone --depth 1 https://github.com/WCHSoftGroup/ch341ser_linux /tmp/ch341ser_linux"),
+            ("获取 CH341 官方 Linux 驱动源码", "git clone --depth 1 https://github.com/WCHSoftGroup/ch341ser_linux /tmp/ch341ser_linux || git clone --depth 1 https://gitee.com/mirrors_WCHSoftGroup/ch341ser_linux.git /tmp/ch341ser_linux"),
             ("编译驱动模块", "cd /tmp/ch341ser_linux/driver && make clean && make"),
             ("安装驱动模块", "cd /tmp/ch341ser_linux/driver && make install"),
             ("加载驱动模块", "modprobe ch341"),
-            ("移除冲突的盲文串口服务 (brltty)", "apt purge -y 'brltty*' || true"),
+            ("移除冲突的盲文串口服务 (brltty)", "DEBIAN_FRONTEND=noninteractive apt-get purge -y 'brltty*' || true"),
         ]
 
         for desc, cmd in commands:

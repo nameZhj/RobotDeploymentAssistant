@@ -129,10 +129,9 @@ class SSHManager:
 
         try:
             cmd = command
-            if sudo and not command.strip().startswith("sudo"):
-                cmd = f"echo '{self.password}' | sudo -S -p '' {command}"
-            elif sudo and command.strip().startswith("sudo"):
-                cmd = command.replace("sudo", f"echo '{self.password}' | sudo -S -p ''", 1)
+            if sudo:
+                escaped_command = command.replace("'", "'\\''")
+                cmd = f"echo '{self.password}' | sudo -S -p '' bash -c '{escaped_command}'"
 
             stdin, stdout, stderr = self.client.exec_command(cmd, timeout=timeout)
             exit_code = stdout.channel.recv_exit_status()
@@ -155,10 +154,9 @@ class SSHManager:
 
         try:
             cmd = command
-            if sudo and not command.strip().startswith("sudo"):
-                cmd = f"echo '{self.password}' | sudo -S -p '' {command}"
-            elif sudo and command.strip().startswith("sudo"):
-                cmd = command.replace("sudo", f"echo '{self.password}' | sudo -S -p ''", 1)
+            if sudo:
+                escaped_command = command.replace("'", "'\\''")
+                cmd = f"echo '{self.password}' | sudo -S -p '' bash -c '{escaped_command}'"
 
             stdin, stdout, stderr = self.client.exec_command(cmd, get_pty=True, timeout=timeout)
 
