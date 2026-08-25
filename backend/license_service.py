@@ -1,0 +1,254 @@
+import json
+import time
+import os
+import logging
+from typing import Dict, Any, Tuple, Optional, List
+from backend.ssh_client import ssh_manager
+from backend.deployment_core import deployment_core
+
+logger = logging.getLogger("LicenseService")
+
+
+class LicenseService:
+    """License 导入、解析、机器码一致性校验与部署服务"""
+
+    def __init__(self):
+        pass
+
+    def parse_license_content(self, content_str: str) -> Dict[str, Any]:
+        """解析 License JSON 内容以供前端预览展示（不作阻断式强校验，由机器端自行校验）"""
+        if not content_str or not content_str.strip():
+            return {"success": False, "msg": "License 文件内容为空"}
+
+        try:
+            data = json.loads(content_str.strip())
+            
+            machine_id = data.get("machine_id") or data.get("machine_code") or data.get("hardware_id", "")
+            machine_id = str(machine_id).strip().lower()
+
+            expire_date = data.get("expire_date") or data.get("valid_until") or data.get("expiration", "永久授权 (Permanent)")
+            
+            # 提取舞蹈列表
+            dances_raw = data.get("authorized_dances") or data.get("dances") or data.get("dance_list") or []
+            if isinstance(dances_raw, dict):
+                dance_list = list(dances_raw.keys())
+            elif isinstance(dances_raw, list):
+                dance_list = [str(d).strip() for d in dances_raw]
+            else:
+                dance_list = []
+
+            customer = data.get("customer") or data.get("client") or "商业客户"
+            model = data.get("robot_model") or data.get("model") or "Unitree G1"
+            signature = data.get("signature") or data.get("sign") or ""
+
+            return {
+                "success": True,
+                "data": {
+                    "machine_id": machine_id,
+                    "expire_date": str(expire_date),
+                    "dances": dance_list,
+                    "dance_count": len(dance_list),
+                    "customer": customer,
+                    "model": model,
+                    "signature": signature,
+                    "raw_json": data
+                }
+            }
+        except Exception as e:
+            # 即使不是标准 JSON 也返回成功，由机器端自主校验
+            return {
+                "success": True,
+                "data": {
+                    "machine_id": "",
+                    "expire_date": "由机器端校验",
+                    "dances": [],
+                    "dance_count": 0,
+                    "customer": "自定义文件",
+                    "model": "Unitree G1",
+                    "signature": "",
+                    "raw_json": {}
+                }
+            }
+
+    def verify_license(self, license_data: Dict[str, Any], current_machine_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        前端预览比对（仅供参考，以机器端日志 [SKIP] not licensed 为唯一真实标准）
+        """
+        lic_mid = str(license_data.get("machine_id", "")).strip().lower()
+        curr_mid = str(current_machine_id or "").strip().lower()
+        customer = license_data.get("customer", "商业客户")
+        expire_date = license_data.get("expire_date", "永久授权")
+        dances = license_data.get("dances", [])
+
+        # 始终允许用户提交给机器端进行真实校验
+        return {
+            "is_match": True,
+            "msg": "License 文件已就绪，点击下方按钮将由机器人主控程序执行真实加密校验",
+            "current_machine_id": curr_mid,
+            "license_machine_id": lic_mid,
+            "dances": dances,
+            "dance_count": len(dances),
+            "expire_date": expire_date,
+            "customer": customer
+        }
+
+    def check_remote_license_status(self) -> Dict[str, Any]:
+        """
+        探测机器人远端部署与 License 状态：
+        唯一标准：
+        1. 检查是否存在 /home/ubuntu/vsis_mimic_deploy/license.json
+        2. 容器正在运行
+        3. 机器人主控日志中各舞蹈无 [SKIP] not licensed
+        """
+        if not ssh_manager.is_connected():
+            return {
+                "connected": False,
+                "first_time": True,
+                "has_license": False,
+                "license_valid": False,
+                "is_container_running": False,
+                "msg": "未连接至机器人"
+            }
+
+        # 1. 尝试读取远端 License 是否存在
+        remote_lic_path = "/home/ubuntu/vsis_mimic_deploy/license.json"
+        ok_lic, lic_content = ssh_manager.read_remote_text_file(remote_lic_path)
+        if not ok_lic or not lic_content.strip():
+            # 容器内部读取
+            code, out, _ = ssh_manager.execute_command(f"docker exec vsis_g1 cat {remote_lic_path} 2>/dev/null", sudo=True)
+            if code == 0 and out.strip():
+                lic_content = out
+                ok_lic = True
+
+        has_license = bool(ok_lic and lic_content.strip())
+        
+        # 2. 读取当前机器码
+        m_res = deployment_core.read_machine_id()
+        current_mid = m_res.get("machine_id", "")
+
+        # 3. 检查容器运行状态 (包含 400 端口或 vsis_g1 容器)
+        code_p400, p400_out, _ = ssh_manager.execute_command("docker ps --filter publish=400 --format '{{.Names}}'", sudo=True)
+        code_ps, ps_out, _ = ssh_manager.execute_command("docker ps --filter name=vsis_g1 --format '{{.Names}}'", sudo=True)
+        is_container_running = bool((code_p400 == 0 and p400_out.strip()) or (code_ps == 0 and "vsis_g1" in ps_out))
+
+        # 4. 读取 Robot ID
+        ok_id, id_txt = ssh_manager.read_remote_text_file("/home/ubuntu/vsis_mimic_deploy/group/lora_robot_id.txt")
+        robot_id = id_txt.strip() if ok_id and id_txt.strip() else "A"
+
+        # 5. 校验日志中是否存在 [SKIP] not licensed
+        has_skip = False
+        if has_license and is_container_running:
+            check_cmd = "cat /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>/dev/null | tail -n 80"
+            code_log, log_out, _ = ssh_manager.execute_command(check_cmd, sudo=True)
+            if not log_out.strip():
+                c_name = p400_out.strip().split('\n')[0] if p400_out.strip() else "vsis_g1"
+                _, log_out, _ = ssh_manager.execute_command(f"docker exec {c_name} cat /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>/dev/null | tail -n 80", sudo=True)
+            has_skip = bool("[SKIP] not licensed" in log_out or "not licensed" in log_out)
+
+        license_valid = bool(has_license and not has_skip)
+        first_time = not (has_license and license_valid and is_container_running)
+
+        parsed_license = {}
+        if has_license:
+            p = self.parse_license_content(lic_content)
+            if p.get("success"):
+                parsed_license = p.get("data", {})
+
+        return {
+            "connected": True,
+            "first_time": first_time,
+            "has_license": has_license,
+            "license_valid": license_valid,
+            "is_container_running": is_container_running,
+            "machine_id": current_mid,
+            "robot_id": robot_id,
+            "license_data": parsed_license,
+            "msg": "已完成部署且 License 验证通过，直接进入群控运行模式" if not first_time else "检测到未授权或未部署完成，需进入一键部署向导"
+        }
+
+        return {
+            "connected": True,
+            "first_time": first_time,
+            "has_license": has_license,
+            "license_valid": license_valid,
+            "is_container_running": is_container_running,
+            "machine_id": current_mid,
+            "robot_id": robot_id,
+            "license_data": parsed_license,
+            "msg": "已完成部署且 License 验证通过，直接进入群控运行模式" if not first_time else "检测到未授权或未部署完成，需进入一键部署向导"
+        }
+
+    def deploy_license_to_robot(self, license_json_str: str) -> Dict[str, Any]:
+        """
+        按照群控商业化说明第8节第6步完整执行：
+        1. license 放入 /home/ubuntu/vsis_mimic_deploy/license.json
+        2. 同步拷贝至容器内部并重启进程/容器
+        3. 自动读取日志确认各舞蹈无 [SKIP] not licensed
+        """
+        remote_path = "/home/ubuntu/vsis_mimic_deploy/license.json"
+        
+        # 1. 写入宿主机目录
+        ok, msg = ssh_manager.write_remote_text_file(license_json_str, remote_path, sudo=True)
+        if not ok:
+            logger.error(f"[LICENSE 部署错误] 写入宿主机 {remote_path} 失败: {msg}")
+            return {"success": False, "msg": f"写入宿主机 License 失败: {msg}"}
+
+        # 2. 动态获取运行容器名称 (例如 mimic_cpu 或 vsis_g1)
+        code_p400, p400_out, _ = ssh_manager.execute_command("docker ps --filter publish=400 --format '{{.Names}}'", sudo=True)
+        c_names = set(["vsis_g1"])
+        if code_p400 == 0 and p400_out.strip():
+            for name in p400_out.strip().split('\n'):
+                if name.strip():
+                    c_names.add(name.strip())
+
+        # 同步拷贝进入容器
+        for c_name in c_names:
+            cmd_cp = f"docker cp {remote_path} {c_name}:{remote_path} 2>/dev/null || true"
+            ssh_manager.execute_command(cmd_cp, sudo=True)
+
+        logger.info(f"[LICENSE 部署] 已写入 {remote_path} 并同步至容器 {list(c_names)}，正在重启运控与群控进程...")
+
+        # 3. 重启控制程序 (杀掉旧进程并重新调用 run_bg.sh)
+        for c_name in c_names:
+            cmd_restart = (
+                f"docker exec {c_name} bash -c "
+                f"\"pkill -9 -f g1_ctrl_vsis ; pkill -9 -f lora_recv_group ; nohup /home/ubuntu/vsis_mimic_deploy/run_bg.sh >/dev/null 2>&1 &\" || true"
+            )
+            ssh_manager.execute_command(cmd_restart, sudo=True)
+
+        # 4. 等待 2 秒让主控程序完成模型加载与 License 初始化
+        time.sleep(2.0)
+
+        # 5. 读取主控日志并校验各舞蹈是否存在 [SKIP] not licensed
+        check_cmd = "cat /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>/dev/null | tail -n 80"
+        code_log, log_out, _ = ssh_manager.execute_command(check_cmd, sudo=True)
+        if not log_out.strip():
+            for c_name in c_names:
+                code_log, log_out, _ = ssh_manager.execute_command(f"docker exec {c_name} cat /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>/dev/null | tail -n 80", sudo=True)
+                if log_out.strip():
+                    break
+
+        has_skip = bool("[SKIP] not licensed" in log_out or "not licensed" in log_out)
+        
+        if has_skip:
+            logger.error(f"[LICENSE 校验失败] 容器已重启，但在日志中检测到舞蹈跳过标记 [SKIP] not licensed！\n日志片段:\n{log_out[-400:]}")
+            return {
+                "success": False,
+                "has_skip": True,
+                "path": remote_path,
+                "msg": "License 已导入并重启，但在日志中检测到 [SKIP] not licensed 标记，部分舞蹈未获得授权！",
+                "log_snippet": log_out[-600:] if log_out else ""
+            }
+        else:
+            logger.info(f"[LICENSE 部署与校验成功] License 成功部署生效并重启！日志确认各舞蹈无 [SKIP] not licensed 标记。")
+            return {
+                "success": True,
+                "has_skip": False,
+                "path": remote_path,
+                "msg": "License 成功部署并重启生效！主控日志确认各舞蹈正常加载，无未授权跳过情况。",
+                "log_snippet": log_out[-600:] if log_out else ""
+            }
+
+
+license_service = LicenseService()
+

@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VSISLAB 机器人部署助手 - Unitree G1 商业化部署系统</title>
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="stylesheet" href="css/style.css">
+  <!-- 离线本地 Three.js 与 CDN 双重容灾 -->
+  <script src="js/three.min.js"></script>
+  <script src="js/OrbitControls.js"></script>
+  <script>
+    if (typeof THREE === 'undefined') {
+      document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>');
+      document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"><\/script>');
+    }
+  </script>
+</head>
+
+<body>
+
+  <!-- 顶部状态栏 -->
+  <header class="navbar">
+    <div class="nav-brand">
+      <img src="assets/app_icon.png" alt="Logo"
+        style="width: 36px; height: 36px; border-radius: 8px; box-shadow: 0 0 12px rgba(0, 210, 255, 0.4);">
+      <div>
+        <div class="brand-title">VSISLAB 机器人部署助手</div>
+        <div class="brand-subtitle">Unitree G1 / Go2 Commercial Deployment Suite v2.0</div>
+      </div>
+    </div>
+
+    <div class="nav-connection-panel">
+      <button class="btn-nav-action" id="btn-open-wizard"
+        style="background: linear-gradient(135deg, rgba(0, 210, 255, 0.2), rgba(139, 92, 246, 0.2)); border: 1px solid rgba(0, 210, 255, 0.4); color: var(--accent-cyan); font-weight: 600;">🚀
+        一键部署向导</button>
+      <div class="conn-status-indicator">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text">离线 (Offline)</span>
+      </div>
+      <div class="conn-info-text" id="conn-info-display">192.168.123.164:22</div>
+      <button class="btn-nav-action" id="btn-global-disconnect">断开连接</button>
+
+      <!-- 右上角设置菜单 -->
+      <div class="settings-dropdown" style="position: relative;">
+        <button class="btn-nav-action" id="btn-settings-menu"
+          style="background: var(--bg-hover); border: 1px solid var(--border-color); padding: 6px 10px; cursor: pointer;">⚙️
+          设置 ▼</button>
+        <div id="settings-menu-content" class="settings-menu-content"
+          style="display: none; position: absolute; right: 0; top: 110%; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; width: 280px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); z-index: 1000; padding: 12px;">
+          <!-- 授权状态区块 -->
+          <div style="padding-bottom: 12px; border-bottom: 1px solid var(--border-color); margin-bottom: 12px;">
+            <div style="font-size: 0.85rem; font-weight: bold; margin-bottom: 6px;">🔑 License 授权状态</div>
+            <div id="settings-license-status" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
+              未检测到授权信息</div>
+            <button class="btn btn-primary btn-sm" style="width: 100%;"
+              onclick="App.switchTab('tab-license'); document.getElementById('settings-menu-content').style.display = 'none';">重新导入
+              License</button>
+          </div>
+          <!-- 其他设置区块 -->
+          <div>
+            <button class="btn btn-secondary btn-sm" style="width: 100%; text-align: left; padding: 8px;"
+              onclick="App.switchTab('tab-network'); document.getElementById('settings-menu-content').style.display = 'none';">🌐
+              设备发现与网卡配置</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ========================================================= -->
+  <!-- 一键部署向导 独立模态浮窗 (仅未授权/未部署或手动点击时弹出) -->
+  <!-- ========================================================= -->
+  <div class="wizard-modal-overlay" id="wizard-modal">
+    <div class="wizard-modal-container">
+      <div class="wizard-modal-header">
+        <div class="wizard-modal-title">
+          <span>🚀</span>
+          <span>VSISLAB 机器人自动化部署向导</span>
+        </div>
+        <button class="wizard-modal-close" id="btn-close-wizard" title="关闭向导 (右上角随时可重新唤起)">✕</button>
+      </div>
+
+      <div class="wizard-modal-body">
+        <!-- 步骤指示条 -->
+        <div class="wizard-steps">
+          <div class="step-node active" data-step="1">
+            <div class="step-circle">1</div>
+            <div class="step-label">连接与发现</div>
+          </div>
+          <div class="step-node" data-step="2">
+            <div class="step-circle">2</div>
+            <div class="step-label">环境预检</div>
+          </div>
+          <div class="step-node" data-step="3">
+            <div class="step-circle">3</div>
+            <div class="step-label">镜像导入</div>
+          </div>
+          <div class="step-node" data-step="4">
+            <div class="step-circle">4</div>
+            <div class="step-label">启动与自启</div>
+          </div>
+          <div class="step-node" data-step="5">
+            <div class="step-circle">5</div>
+            <div class="step-label">机器码与License</div>
+          </div>
+          <div class="step-node" data-step="6">
+            <div class="step-circle">6</div>
+            <div class="step-label">部署就绪</div>
+          </div>
+        </div>
+
+        <!-- 向导步骤 1: 连接与网络 -->
+        <div class="wizard-step-pane" id="wizard-step-1">
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">🔌 机器人连接参数 (默认预置)</div>
+                <span class="card-badge">宇树标准网段</span>
+              </div>
+              <div class="form-group">
+                <label class="form-label">机器人 IP 地址</label>
+                <input type="text" class="form-control" id="input-host" value="192.168.123.164">
+              </div>
+              <div class="grid-2">
+                <div class="form-group">
+                  <label class="form-label">SSH 端口</label>
+                  <input type="number" class="form-control" id="input-port" value="22">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">用户名</label>
+                  <input type="text" class="form-control" id="input-username" value="unitree">
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">SSH 密码</label>
+                <input type="password" class="form-control" id="input-password" value="123">
+              </div>
+              <div style="display: flex; gap: 10px; margin-top: 14px;">
+                <button class="btn btn-primary" id="btn-global-connect" style="flex: 1;">⚡ 连接机器人</button>
+                <button class="btn btn-secondary" onclick="Wizard.nextStep()">下一步 ➔</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">📡 一键发现与网卡直连模式</div>
+              </div>
+              <div style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 12px;">
+                如果无法直连 192.168.123.164，可自动将电脑网卡配置为 192.168.123.200 同网段直连，并扫描局域网。
+              </div>
+              <div class="form-group">
+                <label class="form-label">选择电脑以太网卡 (网线直连口)</label>
+                <select class="form-control" id="select-nic-list">
+                  <option value="">正在检测本地网卡...</option>
+                </select>
+              </div>
+              <div style="display: flex; gap: 8px; margin-bottom: 14px;">
+                <button class="btn btn-secondary btn-sm" id="btn-refresh-nics">🔄 刷新网卡</button>
+                <button class="btn btn-primary btn-sm" id="btn-config-nic-static">🌐 一键设为同网段 (192.168.123.200)</button>
+                <button class="btn btn-secondary btn-sm" id="btn-config-nic-dhcp">恢复 DHCP</button>
+              </div>
+              <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.06); margin: 12px 0;">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                <div style="font-size: 0.85rem; font-weight: 600;">局域网设备扫描 (192.168.123.x)</div>
+                <button class="btn btn-primary btn-sm" id="btn-scan-network">🔍 一键全网扫描</button>
+              </div>
+              <div id="scan-results-list" style="max-height: 140px; overflow-y: auto;">
+                <div style="font-size: 0.78rem; color: var(--text-muted);">点击上方按钮扫描当前网段中的机器人与活跃主机</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 向导步骤 2: 环境预检与修复 -->
+        <div class="wizard-step-pane" id="wizard-step-2" style="display: none;">
+          <div class="card" style="margin-bottom: 16px;">
+            <div class="card-header">
+              <div class="card-title">🛠️ 机器人宿主机环境预检 (G1 硬件与运行时)</div>
+              <div style="display: flex; gap: 10px;">
+                <button class="btn btn-secondary btn-sm" id="btn-run-precheck">🔄 重新检测</button>
+                <button class="btn btn-primary btn-sm" onclick="Wizard.runFixCh341()">🛠️ 一键修复 CH341 驱动</button>
+              </div>
+            </div>
+            <div id="precheck-items-list">
+              <div style="padding: 20px; color: var(--accent-cyan);">⏳ 正在检测环境指标...</div>
+            </div>
+          </div>
+          <div style="display: flex; justify-content: space-between;">
+            <button class="btn btn-secondary" onclick="Wizard.prevStep()">⬅️ 上一步</button>
+            <button class="btn btn-primary" onclick="Wizard.nextStep()">下一步：镜像导入 ➔</button>
+          </div>
+        </div>
+
+        <!-- 向导步骤 3: 镜像上传与导入 -->
+        <div class="wizard-step-pane" id="wizard-step-3" style="display: none;">
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">📤 镜像上传 (SFTP 大文件流式传输)</div>
+                <span class="card-badge">支持 5~10GB tar.gz</span>
+              </div>
+              <div class="form-group">
+                <label class="form-label">选取本地镜像包文件 (.tar / .tar.gz)</label>
+                <input type="file" id="input-image-file" class="form-control" accept=".tar,.gz,.tgz">
+                <div id="image-selected-name" style="font-size: 0.78rem; color: var(--accent-cyan); margin-top: 4px;">
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">或输入本地文件绝对路径 (免浏览器复制)</label>
+                <input type="text" class="form-control" id="input-local-tar-path"
+                  placeholder="e.g. D:\images\rl_cu118_v2.tar.gz">
+              </div>
+              <button class="btn btn-primary" id="btn-start-upload" style="width: 100%;">🚀 开始上传至机器人 /tmp</button>
+
+              <!-- 上传进度条 -->
+              <div id="upload-progress-box" style="display: none; margin-top: 16px;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 4px;">
+                  <span>传输进度</span>
+                  <span id="image-upload-pct" style="color: var(--accent-cyan); font-weight: 700;">0%</span>
+                </div>
+                <div class="progress-bar-wrap">
+                  <div class="progress-bar-fill" id="image-upload-bar"></div>
+                </div>
+                <div id="image-upload-info"
+                  style="font-size: 0.75rem; color: var(--text-muted); font-family: monospace;"></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">📥 镜像解压与加载 (docker load)</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">远端镜像文件路径</label>
+                <input type="text" class="form-control" id="input-remote-load-path" value="/tmp/rl_cu118_v2.tar.gz">
+              </div>
+              <button class="btn btn-primary" id="btn-docker-load" style="width: 100%; margin-bottom: 12px;">⚡ 执行 docker
+                load -i</button>
+              <div class="terminal-console" id="image-load-console" style="height: 180px;">
+                <div class="log-info">等待执行 docker load ...</div>
+              </div>
+            </div>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-top: 16px;">
+            <button class="btn btn-secondary" onclick="Wizard.prevStep()">⬅️ 上一步</button>
+            <button class="btn btn-primary" onclick="Wizard.nextStep()">下一步：固化启动与自启 ➔</button>
+          </div>
+        </div>
+
+        <!-- 向导步骤 4: 固化容器启动与自启 -->
+        <div class="wizard-step-pane" id="wizard-step-4" style="display: none;">
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">🚀 启动固化参数 Docker 容器</div>
+                <span class="card-badge">参数已全部固化</span>
+              </div>
+              <div class="form-group">
+                <label class="form-label">选择启动镜像</label>
+                <select class="form-control" id="select-docker-image">
+                  <option value="rl_cu118:2.0">rl_cu118:2.0</option>
+                </select>
+              </div>
+              <div
+                style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(0,0,0,0.3); padding: 10px; border-radius: 6px; margin-bottom: 12px; font-family: monospace;">
+                <b>固化参数:</b> --restart=on-failure --name vsis_g1 --gpus all --privileged --device /dev/:/dev/ -p 400:22
+                -p 4001:4000 -p 4002:6006 -v /tmp/.X11-unix:/tmp/.X11-unix
+              </div>
+              <button class="btn btn-primary" id="btn-start-container" style="width: 100%; margin-bottom: 12px;">⚡ 一键启动
+                vsis_g1 容器</button>
+              <div class="terminal-console" id="container-start-console" style="height: 140px;">
+                <div class="log-info">点击上方按钮启动固化容器...</div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">⚙️ 开机自启钩子与 Robot ID 配置</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">分配 Robot ID (群控寻址唯一标识)</label>
+                <select class="form-control" id="select-robot-id"
+                  style="font-size: 1.1rem; font-weight: 700; color: var(--accent-cyan);">
+                  <option value="A">Robot A (1号机)</option>
+                  <option value="B">Robot B (2号机)</option>
+                  <option value="C">Robot C (3号机)</option>
+                  <option value="D">Robot D (4号机)</option>
+                </select>
+                <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
+                  写入 <code>/home/ubuntu/vsis_mimic_deploy/group/lora_robot_id.txt</code>，每台机器人必须唯一！
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">自启动钩子脚本</label>
+                <input type="text" class="form-control" value="/docker_config/custom_startup.sh" readonly>
+                <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
+                  内容固化为调用 <code>/home/ubuntu/vsis_mimic_deploy/run_bg.sh</code>
+                </div>
+              </div>
+              <button class="btn btn-success" id="btn-write-autostart" style="width: 100%;">💾 一键写入自启与 Robot ID</button>
+            </div>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-top: 16px;">
+            <button class="btn btn-secondary" onclick="Wizard.prevStep()">⬅️ 上一步</button>
+            <button class="btn btn-primary" onclick="Wizard.nextStep()">下一步：机器码与License ➔</button>
+          </div>
+        </div>
+
+        <!-- 向导步骤 5: 机器码与 License 导入 -->
+        <div class="wizard-step-pane" id="wizard-step-5" style="display: none;">
+          <!-- 64 位机器码大字号展示牌 -->
+          <div class="machine-id-hero">
+            <div class="machine-id-title">🔑 机器人硬件 64 位机器码 (MACHINE ID)</div>
+            <div class="machine-id-value" id="machine-id-display">正在读取中...</div>
+            <div style="margin-top: 12px; display: flex; justify-content: center; gap: 12px;">
+              <button class="btn btn-primary" onclick="Wizard.copyMachineId()">📋 一键复制机器码</button>
+              <button class="btn btn-secondary btn-sm" id="btn-read-machine-id">🔄 重新读取</button>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">📄 导入并校验 License 文件</div>
+                <span class="card-badge">license.json</span>
+              </div>
+              <div class="dropzone" id="license-dropzone">
+                <div class="dropzone-icon">📥</div>
+                <div class="dropzone-text">点击选择或将 license.json 拖拽至此处</div>
+                <div class="dropzone-hint">上传后自动部署并重启机器人主控程序进行生效校验</div>
+                <input type="file" id="license-file-input" style="display: none;" accept=".json">
+              </div>
+              <button class="btn btn-success" id="btn-deploy-license" style="width: 100%;" disabled>
+                🚀 部署 License 至机器人
+              </button>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">🔍 授权与生效结果</div>
+              </div>
+              <div id="license-verify-result">
+                <div style="color: var(--text-muted); font-size: 0.85rem; padding: 20px; text-align: center;">
+                  请在左侧拖入或选择 license.json 文件
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; margin-top: 16px;">
+            <button class="btn btn-secondary" onclick="Wizard.prevStep()">⬅️ 上一步</button>
+            <button class="btn btn-primary" onclick="Wizard.nextStep()">下一步 ➔</button>
+          </div>
+        </div>
+
+        <!-- 向导步骤 6: 部署就绪 -->
+        <div class="wizard-step-pane" id="wizard-step-6" style="display: none;">
+          <div class="card" style="text-align: center; padding: 36px 20px;">
+            <div style="font-size: 3rem; margin-bottom: 12px;">🎉</div>
+            <h2 style="color: var(--accent-cyan); margin-bottom: 8px;">机器人商业化环境部署就绪！</h2>
+            <p style="color: var(--text-secondary); max-width: 600px; margin: 0 auto 20px; font-size: 0.9rem;">
+              宿主机 CH341 串口、Docker 固化容器、自启动钩子、Robot ID 与授权 License 已全部配置完毕。
+            </p>
+
+            <div
+              style="max-width: 500px; margin: 0 auto 24px; text-align: left; background: rgba(0,0,0,0.3); padding: 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
+              <div style="font-weight: 700; color: #ffffff; margin-bottom: 8px;">🎮 现场遥控器测试推荐顺序：</div>
+              <div style="font-size: 0.85rem; color: #93c5fd; line-height: 1.8;">
+                1. <b>站立:</b> 发送 <code>ALL|STAND</code> → 机器人进入 FixStand 准备状态<br>
+                2. <b>步态:</b> 等待 3 秒后发送 <code>ALL|GAIT</code> → 激活运控步态<br>
+                3. <b>舞蹈:</b> 发送 <code>ALL|DANCE,G1_TIKTOK</code> → 播放指定舞蹈<br>
+                4. <b>停止:</b> 发送 <code>ALL|STOP</code> 或 <code>EMERGENCY</code> 急停
+              </div>
+            </div>
+
+            <div style="display: flex; justify-content: center; gap: 14px;">
+              <button class="btn btn-primary btn-lg" onclick="Wizard.closeModal(); App.switchTab('tab-3d-player')">🎉
+                完成向导并进入 3D 控制台</button>
+              <button class="btn btn-secondary btn-lg" onclick="Wizard.closeModal(); App.switchTab('tab-logs')">📋
+                查看实时运行日志</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 主布局 -->
+  <div class="main-wrapper">
+    <!-- 左侧导航选项卡 -->
+    <nav class="sidebar-tabs">
+      <button class="tab-btn active" data-tab="tab-3d-player">
+        <span class="tab-icon">🕺</span>
+        <span>3D 舞蹈预览与动作</span>
+      </button>
+      <button class="tab-btn" data-tab="tab-dance-update">
+        <span class="tab-icon">💃</span>
+        <span>舞蹈动作更新</span>
+      </button>
+      <!-- 隐藏的两个菜单
+      <button class="tab-btn" data-tab="tab-network" style="display:none;">
+        <span class="tab-icon">🌐</span>
+        <span>设备发现与网卡</span>
+      </button>
+      -->
+      <button class="tab-btn" data-tab="tab-precheck">
+        <span class="tab-icon">🛠️</span>
+        <span>环境预检与修复</span>
+      </button>
+      <button class="tab-btn" data-tab="tab-image">
+        <span class="tab-icon">📦</span>
+        <span>镜像与容器管理</span>
+      </button>
+      <!-- 隐藏的两个菜单
+      <button class="tab-btn" data-tab="tab-license" style="display:none;">
+        <span class="tab-icon">🔑</span>
+        <span>机器码与 License</span>
+      </button>
+      -->
+      <button class="tab-btn" data-tab="tab-logs">
+        <span class="tab-icon">📋</span>
+        <span>实时日志与诊断</span>
+      </button>
+      <button class="tab-btn" data-tab="tab-manual">
+        <span class="tab-icon">⌨️</span>
+        <span>手动模式</span>
+      </button>
+      <button class="tab-btn" data-tab="tab-tutorial">
+        <span class="tab-icon">📖</span>
+        <span>使用教程与图解</span>
+      </button>
+    </nav>
+
+    <!-- 右侧主体内容容器 -->
+    <main class="content-container">
+
+      <!-- ======================================= -->
+      <!-- TAB 2: 设备发现与网卡配置 -->
+      <!-- ======================================= -->
+      <section class="tab-content-panel" id="tab-network">
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">📡 局域网设备并发扫描</div>
+              <button id="tp-btn-scan" class="btn btn-primary btn-sm" onclick="TabNetwork.scan()">🔍 开始扫描</button>
+            </div>
+            <div style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 10px;">支持全网段快速发现宇树 G1 / Go2 及
+              SSH 端口活跃主机（192.168.123.1~254）</div>
+            <div id="tp-scan-results">
+              <div style="color: var(--text-muted); font-size: 0.85rem;">点击【开始扫描】发现局域网设备</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">🌐 Windows 本机网卡直连配置</div>
+              <button class="btn btn-secondary btn-sm" onclick="TabNetwork.loadNics()">🔄 刷新</button>
+            </div>
+            <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 12px;">
+              通过一键调用 Windows netsh 接口，将选中的以太网适配器配置为与机器人相同的 192.168.123.x 网段。
+            </p>
+            <div class="form-group">
+              <label class="form-label">本机以太网适配器</label>
+              <select class="form-control" id="tp-nic-select">
+                <option value="">加载中...</option>
+              </select>
+            </div>
+            <div style="display: flex; gap: 10px;">
+              <button class="btn btn-primary btn-sm" onclick="TabNetwork.setStatic()">⚡ 设为 192.168.123.200</button>
+              <button class="btn btn-secondary btn-sm" onclick="TabNetwork.setDhcp()">恢复自动获取 (DHCP)</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================= -->
+      <!-- TAB 3: 环境预检与修复 -->
+      <!-- ======================================= -->
+      <section class="tab-content-panel" id="tab-precheck">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🛠️ 机器人运行环境深度预检</div>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-secondary btn-sm" onclick="TabPrecheck.run()">🔄 刷新预检</button>
+              <button class="btn btn-primary btn-sm" onclick="TabPrecheck.fixCh341()">🛠️ 编译安装 CH341 驱动</button>
+            </div>
+          </div>
+          <div id="tp-precheck-items">
+            <div style="padding: 20px; color: var(--text-muted); text-align: center; font-size: 0.9rem;">点击【刷新预检】开始检测环境
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================= -->
+      <!-- TAB 4: 镜像与容器管理 -->
+      <!-- ======================================= -->
+      <section class="tab-content-panel" id="tab-image">
+        <div class="grid-2">
+          <!-- 左侧：镜像上传与 docker load -->
+          <div>
+            <div class="card" style="margin-bottom: 14px;">
+              <div class="card-header">
+                <div class="card-title">📤 镜像上传</div>
+                <button class="btn btn-secondary btn-sm" onclick="TabImage.loadImages()">🔄 刷新列表</button>
+              </div>
+              <div class="form-group">
+                <label class="form-label">选择本地镜像文件 (.tar.gz，约 5~10 GB)</label>
+                <input type="file" class="form-control" id="tp-image-file-input" accept=".gz,.tar,.tar.gz">
+                <div id="tp-image-file-label" style="font-size: 0.78rem; color: var(--text-muted); margin-top: 4px;">
+                  未选择文件</div>
+              </div>
+              <button class="btn btn-primary" onclick="TabImage.uploadImage()"
+                style="width: 100%; margin-bottom: 10px;">
+                📤 开始上传
+              </button>
+              <div id="tp-upload-progress-box" style="display: none; margin-bottom: 10px;">
+                <div
+                  style="background: rgba(0,0,0,0.3); border-radius: 6px; overflow: hidden; height: 10px; margin-bottom: 4px;">
+                  <div id="tp-upload-bar"
+                    style="height: 100%; background: var(--accent-cyan); width: 0%; transition: width 0.3s;"></div>
+                </div>
+                <div
+                  style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted);">
+                  <span id="tp-upload-info">等待上传...</span>
+                  <span id="tp-upload-pct">0%</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">⚡ Docker Load 与 Load 输出</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">远端镜像文件路径</label>
+                <input type="text" class="form-control" id="tp-remote-path-input" value="/tmp/vsis_dancer_gpu.tar.gz">
+              </div>
+              <button class="btn btn-secondary" onclick="TabImage.dockerLoad()"
+                style="width: 100%; margin-bottom: 10px;">
+                ⚡ 执行 docker load -i
+              </button>
+              <div class="terminal-console" id="tp-load-console" style="height: 160px;">
+                <div class="log-info">等待执行 docker load ...</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右侧：容器启动与自启动 -->
+          <div>
+            <div class="card" style="margin-bottom: 14px;">
+              <div class="card-header">
+                <div class="card-title">🚀 启动固化参数容器</div>
+                <span class="card-badge">参数已固化</span>
+              </div>
+              <div class="form-group">
+                <label class="form-label">选择启动镜像</label>
+                <select class="form-control" id="tp-docker-image-select">
+                  <option value="vsis_dancer:gpu-0.1">vsis_dancer:gpu-0.1 (默认)</option>
+                </select>
+              </div>
+              <div
+                style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; margin-bottom: 12px; font-family: monospace; line-height: 1.5;">
+                --restart=on-failure --name vsis_g1 --gpus all --privileged<br>--device /dev/:/dev/ -p 400:22 -p
+                4001:4000 -p 4002:6006
+              </div>
+              <button class="btn btn-primary" onclick="TabImage.startContainer()"
+                style="width: 100%; margin-bottom: 10px;">
+                ⚡ 一键启动 vsis_g1 容器
+              </button>
+              <div class="terminal-console" id="tp-container-console" style="height: 140px;">
+                <div class="log-info">点击上方按钮启动容器...</div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">⚙️ 开机自启与 Robot ID</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">分配 Robot ID（群控唯一寻址标识）</label>
+                <select class="form-control" id="tp-robot-id-select"
+                  style="font-size: 1.1rem; font-weight: 700; color: var(--accent-cyan);">
+                  <option value="A">Robot A (1号机)</option>
+                  <option value="B">Robot B (2号机)</option>
+                  <option value="C">Robot C (3号机)</option>
+                  <option value="D">Robot D (4号机)</option>
+                </select>
+                <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">写入
+                  /home/ubuntu/vsis_mimic_deploy/group/lora_robot_id.txt，每台机器人必须唯一！</div>
+              </div>
+              <button class="btn btn-success" onclick="TabImage.writeAutostart()" style="width: 100%;">
+                💾 写入自启动钩子与 Robot ID
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================= -->
+      <!-- TAB 5: 机器码与 License -->
+      <!-- ======================================= -->
+      <section class="tab-content-panel" id="tab-license">
+        <div class="machine-id-hero">
+          <div class="machine-id-title">🔑 64 位硬件机器码（Machine ID）</div>
+          <div class="machine-id-value" id="tp-machine-id-val">尚未读取，请点击下方按钮</div>
+          <div style="margin-top: 12px; display: flex; justify-content: center; gap: 12px;">
+            <button class="btn btn-primary" onclick="TabLicense.copyMachineId()">📋 一键复制机器码</button>
+            <button class="btn btn-secondary btn-sm" onclick="TabLicense.fetchMachineId()">🔄 重新读取</button>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">📄 License 授权导入</div>
+              <span class="card-badge">license.json</span>
+            </div>
+            <div class="dropzone" id="tp-license-dropzone">
+              <div class="dropzone-icon">📥</div>
+              <div class="dropzone-text">点击选择或将 license.json 拖拽至此处</div>
+              <div id="tp-license-filename" class="dropzone-hint">上传后自动写入并重启机器人主控进行生效校验</div>
+              <input type="file" id="tp-license-file-input" style="display: none;" accept=".json">
+            </div>
+            <button class="btn btn-success" id="tp-deploy-btn" style="width: 100%;" disabled>
+              🚀 部署 License 至机器人
+            </button>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">🔍 授权与校验结果</div>
+            </div>
+            <div id="tp-license-result">
+              <div style="color: var(--text-muted); font-size: 0.85rem; padding: 20px; text-align: center;">
+                请在左侧拖入或选择 license.json 文件
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================= -->
+      <!-- TAB 6: 舞蹈动作更新 -->
+      <!-- ======================================= -->
+      <section class="tab-content-panel" id="tab-dance-update">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">💃 导入新舞蹈动作包 (.vsis + license)</div>
+            <span class="card-badge">全程无需手动改配置</span>
+          </div>
+          <div class="grid-2">
+            <div>
+              <div class="form-group">
+                <label class="form-label">新舞蹈别名 (Dance Alias)</label>
+                <input type="text" class="form-control" id="input-update-alias" placeholder="e.g. G2_NEW_DANCE">
+              </div>
+              <div class="grid-2">
+                <div class="form-group">
+                  <label class="form-label">遥控器按键组</label>
+                  <select class="form-control" id="select-update-group">
+                    <option value="R1">R1 (Group 2)</option>
+                    <option value="L1">L1 (Group 1)</option>
+                    <option value="L2">L2 (Group 3)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">动作触发按键</label>
+                  <select class="form-control" id="select-update-action">
+                    <option value="SELECT">SELECT</option>
+                    <option value="START">START</option>
+                    <option value="UP">UP (上)</option>
+                    <option value="DOWN">DOWN (下)</option>
+                    <option value="LEFT">LEFT (左)</option>
+                    <option value="RIGHT">RIGHT (右)</option>
+                    <option value="A">A</option>
+                    <option value="B">B</option>
+                    <option value="X">X</option>
+                    <option value="Y">Y</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">选择 .vsis 动作权重文件</label>
+                <input type="file" class="form-control" id="input-update-vsis" accept=".vsis">
+              </div>
+              <div class="form-group">
+                <label class="form-label">选择附带的 license.json (如有)</label>
+                <input type="file" class="form-control" id="input-update-license" accept=".json">
+              </div>
+              <button class="btn btn-primary" id="btn-submit-dance-update" style="width: 100%; margin-bottom: 12px;">
+                🚀 部署更新包并同步 YAML
+              </button>
+              <button class="btn btn-secondary" id="btn-restart-dance-proc" style="width: 100%;"
+                onclick="Wizard.restartProcesses(); showToast('已发送重启指令', \'info\')">
+                🔄 立即重启控制进程
+              </button>
+            </div>
+
+            <div>
+              <div
+                style="background: rgba(0,0,0,0.3); padding: 16px; border-radius: 8px; font-size: 0.82rem; color: #93c5fd; line-height: 1.8; margin-bottom: 14px;">
+                <b>💡 商业化更新说明：</b><br>
+                1. 自动上传 <code>.vsis</code> 覆盖 <code>/secure/config_vsis/mimic_exp2</code>。<br>
+                2. 自动在 <code>lora_recv_group.yaml</code> 的 <code>dance_map</code> 中添加映射。<br>
+                3. 重启控制进程无需重新编译即可生效。<br>
+                4. 触发命令格式：<code>ALL|DANCE,别名</code>
+              </div>
+              <div class="card">
+                <div class="card-header">
+                  <div class="card-title">📋 部署结果</div>
+                  <button class="btn btn-secondary btn-sm"
+                    onclick="document.getElementById('dance-update-result').innerHTML='';">清空</button>
+                </div>
+                <div class="terminal-console" id="dance-update-result" style="height: 200px;">
+                  <div class="log-info">等待部署操作...</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================= -->
+      <!-- TAB 7: 3D 舞蹈预览播放器 -->
+      <!-- ======================================= -->
+      <section class="tab-content-panel active" id="tab-3d-player">
+        <div class="player3d-container">
+          <!-- 3D 视口 -->
+          <div class="player3d-viewport" id="dance3d-viewport">
+            <div class="player3d-controls-overlay">
+              <button class="btn btn-primary btn-sm" id="btn-dance-play">▶️ 播放</button>
+              <input type="range" id="dance-scrubber" min="0" max="300" value="0" style="flex: 1; cursor: pointer;">
+              <span id="dance-time-text"
+                style="font-family: monospace; font-size: 0.78rem; color: #ffffff; min-width: 160px;">0.0s / 6.0s</span>
+              <select class="btn btn-secondary btn-sm" id="select-dance-speed" style="padding: 4px 8px;">
+                <option value="0.5">0.5x</option>
+                <option value="1.0" selected>1.0x (50fps)</option>
+                <option value="1.5">1.5x</option>
+                <option value="2.0">2.0x</option>
+              </select>
+              <label style="display: flex; align-items: center; gap: 4px; font-size: 0.78rem; cursor: pointer;">
+                <input type="checkbox" id="chk-dance-loop" checked> 循环
+              </label>
+              <button class="btn btn-secondary btn-sm" id="btn-reset-cam">🔄 视角复位</button>
+            </div>
+          </div>
+
+          <!-- 舞蹈库列表侧边栏 -->
+          <div class="player3d-sidebar">
+            <div
+              style="font-size: 0.95rem; font-weight: 700; display: flex; align-items: center; justify-content: space-between;">
+              <span>💃 舞蹈动作库 (50fps)</span>
+              <label class="btn btn-secondary btn-sm" style="cursor: pointer;">
+                + 导入 NPZ
+                <input type="file" id="input-custom-npz" style="display: none;" accept=".npz,.NPZ" multiple>
+              </label>
+            </div>
+            <div id="dance-3d-list" style="display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1;">
+              <!-- 动态填充 -->
+            </div>
+            <div style="font-size: 0.72rem; color: var(--text-muted); text-align: center;">
+              鼠标左键拖动旋转 / 滚轮缩放 / 50fps 平滑物理骨骼仿真
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================= -->
+      <!-- TAB 8: 实时日志与智能诊断 -->
+      <!-- ======================================= -->
+      <section class="tab-content-panel" id="tab-logs">
+        <!-- 智能诊断告警区 -->
+        <div id="log-diag-alerts" style="margin-bottom: 14px;"></div>
+
+        <div class="card">
+          <div class="card-header">
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-secondary btn-sm log-type-btn active" data-type="container">Docker 容器日志</button>
+              <button class="btn btn-secondary btn-sm log-type-btn" data-type="sec_run">主控运行 (sec_run.log)</button>
+              <button class="btn btn-secondary btn-sm log-type-btn" data-type="lora_recv">群控接收 (lora_recv.log)</button>
+              <button class="btn btn-secondary btn-sm log-type-btn" data-type="dmesg">内核与硬件 (dmesg)</button>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <input type="text" id="input-log-filter" class="form-control" placeholder="过滤搜索关键字..."
+                style="width: 160px; padding: 4px 8px; font-size: 0.78rem;">
+              <label style="font-size: 0.78rem; display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" id="chk-log-autoscroll" checked> 滚动到底部
+              </label>
+              <label style="font-size: 0.78rem; display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" id="chk-log-autorefresh" checked> 自动刷新
+              </label>
+              <button class="btn btn-secondary btn-sm" onclick="LogViewer.copyLogs()">📋 复制</button>
+              <button class="btn btn-secondary btn-sm" onclick="LogViewer.clearLogs()">🗑️ 清空</button>
+            </div>
+          </div>
+          <div class="terminal-console" id="log-console-content" style="height: 480px;">
+            <div class="log-info">正在拉取日志...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================= -->
+      <!-- TAB 9: 手动模式 (控制台) -->
+      <!-- ======================================= -->
+      <section class="tab-content-panel" id="tab-manual">
+        <div class="grid-2">
+          <div id="manual-cmd-list" style="max-height: 600px; overflow-y: auto;">
+            <!-- 动态填充一键复制与执行命令卡片 -->
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">💻 远程控制台输出</div>
+              <button class="btn btn-secondary btn-sm" onclick="ManualMode.clearConsole()">清屏</button>
+            </div>
+            <div class="terminal-console" id="manual-console-output" style="height: 440px;">
+              <div class="log-info">点击左侧命令的【⚡ 执行】或在下方输入自定义命令...</div>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 10px;">
+              <input type="text" class="form-control" id="input-manual-custom-cmd" placeholder="输入在机器人上执行的 Bash 命令...">
+              <label style="display: flex; align-items: center; gap: 4px; font-size: 0.78rem; white-space: nowrap;">
+                <input type="checkbox" id="chk-manual-sudo" checked> sudo
+              </label>
+              <button class="btn btn-primary" id="btn-manual-custom-run">执行</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================= -->
+      <!-- TAB 10: 使用教程与遥控器图解 -->
+      <!-- ======================================= -->
+      <section class="tab-content-panel" id="tab-tutorial">
+        <div class="remote-guide-container">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">🎮 宇树物理遥控器按键图解</div>
+            </div>
+            <div style="background: rgba(0,0,0,0.4); border-radius: 8px; padding: 12px; text-align: center;">
+              <img src="assets/remote_guide.svg" alt="遥控器图解" style="max-width: 100%; height: auto;">
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">📋 现场操作顺序与命令表</div>
+            </div>
+            <div style="font-size: 0.85rem; color: #93c5fd; margin-bottom: 12px;">
+              <b>标准动作执行顺序：</b> 站立 (STAND) ➔ 等待3秒 ➔ 步态 (GAIT) ➔ 舞蹈 (DANCE) ➔ 软停/急停
+            </div>
+
+            <table class="cmd-table">
+              <thead>
+                <tr>
+                  <th>命令字</th>
+                  <th>按键映射</th>
+                  <th>功能说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><span class="cmd-code">ALL|STAND</span></td>
+                  <td>L1+START</td>
+                  <td>进入 FixStand 固定站立状态</td>
+                </tr>
+                <tr>
+                  <td><span class="cmd-code">ALL|GAIT</span></td>
+                  <td>R1+START</td>
+                  <td>进入 RL_MJAMP 步态（可移动）</td>
+                </tr>
+                <tr>
+                  <td><span class="cmd-code">ALL|DANCE,G1_TIKTOK</span></td>
+                  <td>L1+UP</td>
+                  <td>播放抖音摇摆舞 (Group 1)</td>
+                </tr>
+                <tr>
+                  <td><span class="cmd-code">ALL|DANCE,G1_TURN_JUMP</span></td>
+                  <td>L1+DOWN</td>
+                  <td>播放旋转跳跃舞</td>
+                </tr>
+                <tr>
+                  <td><span class="cmd-code">ALL|DANCE,G2_WAVE</span></td>
+                  <td>R1+UP</td>
+                  <td>播放机械手臂波浪舞 (Group 2)</td>
+                </tr>
+                <tr>
+                  <td><span class="cmd-code">ALL|STOP</span></td>
+                  <td>B 键</td>
+                  <td>软停：减速归零，保持站立</td>
+                </tr>
+                <tr>
+                  <td><span class="cmd-code">ALL|EMERGENCY</span></td>
+                  <td>L2+R2+B</td>
+                  <td><b style="color: #f87171;">硬停：立即零轴取消所有控制</b></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- 一键修复实时日志弹窗 -->
+  <div id="fix-stream-modal"
+    style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(8px); z-index: 999; align-items: center; justify-content: center;">
+    <div class="card" style="width: 700px; max-width: 90vw;">
+      <div class="card-header">
+        <div class="card-title">🛠️ 实时任务执行控制台</div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary btn-sm"
+            onclick="copyToClipboard(document.getElementById('fix-stream-console')?.innerText, '任务执行日志已复制')">📋
+            复制日志</button>
+          <button class="btn btn-secondary btn-sm" onclick="Wizard.closeFixModal()">关闭</button>
+        </div>
+      </div>
+      <div class="terminal-console" id="fix-stream-console" style="height: 380px;">
+        <div class="log-info">正在执行中...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 全局 Toast 容器 -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- 脚本引入 -->
+  <script src="js/api.js"></script>
+  <script src="js/dance_player3d.js"></script>
+  <script src="js/wizard.js"></script>
+  <script src="js/log_viewer.js"></script>
+  <script src="js/manual_mode.js"></script>
+  <script src="js/tab_panels.js"></script>
+  <script src="js/app.js"></script>
+</body>
+
+</html>
