@@ -186,6 +186,27 @@ class LicenseService:
         3. 自动读取日志确认各舞蹈无 [SKIP] not licensed
         """
         remote_path = "/home/ubuntu/vsis_mimic_deploy/license.json"
+
+        # 0. 前置检查：若现有 License 文件与传入的内容相同且无 [SKIP] not licensed，直接返回成功
+        ok_cur, cur_lic_str = ssh_manager.read_remote_text_file(remote_path)
+        if ok_cur and cur_lic_str.strip():
+            try:
+                import json
+                cur_data = json.loads(cur_lic_str.strip())
+                new_data = json.loads(license_json_str.strip())
+                if cur_data == new_data:
+                    # 检查运行日志是否有 [SKIP] not licensed
+                    check_cmd = "cat /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>/dev/null | tail -n 80"
+                    _, log_out, _ = ssh_manager.execute_command(check_cmd, sudo=True)
+                    if "[SKIP] not licensed" not in log_out and "not licensed" not in log_out:
+                        return {
+                            "success": True,
+                            "already_identical": True,
+                            "has_skip": False,
+                            "msg": "检测到机器人端已存在完全相同的有效 License 授权文件，且所有舞蹈均已授权就绪，无需重复导入！"
+                        }
+            except Exception:
+                pass
         
         # 1. 写入宿主机目录
         ok, msg = ssh_manager.write_remote_text_file(license_json_str, remote_path, sudo=True)

@@ -69,17 +69,33 @@ class DeploymentCore:
             gpu_msg = f"检测到 GPU: {gpu_out.strip()}"
         gpu_status = "ok" if gpu_ok else "warning"
 
-        # 5. CH341 串口
-        code, ch341_ls, _ = ssh_manager.execute_command("ls /dev/ttyCH34*")
-        ch341_found = (code == 0 and "ttyCH34" in ch341_ls)
-        if not ch341_found:
-            # 查 dmesg
-            code_d, dmesg_out, _ = ssh_manager.execute_command("dmesg | grep -i ch341 | tail -n 5", sudo=True)
-            ch341_found = ("ch341" in dmesg_out.lower())
+        # 5. CH341 串口（多维前置检查：设备节点 / 内核模块 / 模块文件 / dmesg 日志）
+        code_dev, ch341_ls, _ = ssh_manager.execute_command("ls /dev/ttyCH34* 2>/dev/null")
+        has_dev = (code_dev == 0 and "ttyCH34" in ch341_ls)
 
+        code_mod, lsmod_out, _ = ssh_manager.execute_command("lsmod | grep -i ch341")
+        has_mod = (code_mod == 0 and "ch341" in lsmod_out.lower())
+
+        code_info, modinfo_out, _ = ssh_manager.execute_command("modinfo ch341 2>/dev/null || find /lib/modules/$(uname -r) -name '*ch341*.ko*' 2>/dev/null")
+        has_ko = (code_info == 0 and bool(modinfo_out.strip()))
+
+        code_d, dmesg_out, _ = ssh_manager.execute_command("dmesg | grep -i ch341 | tail -n 5", sudo=True)
+        has_dmesg = (code_d == 0 and "ch341" in dmesg_out.lower())
+
+        ch341_found = bool(has_dev or has_mod or has_ko or has_dmesg)
         ch341_status = "ok" if ch341_found else "error"
-        ch341_ver = ch341_ls.strip() if ch341_found else "缺失 /dev/ttyCH341USB0"
-        ch341_msg = "CH341 串口驱动正常加载" if ch341_found else "未检测到 CH341 驱动，需一键安装驱动以支持 LoRa 群控通信"
+        if has_dev:
+            ch341_ver = ch341_ls.strip()
+            ch341_msg = f"CH341 驱动已加载，设备节点: {ch341_ls.strip()}"
+        elif has_mod or has_ko:
+            ch341_ver = "CH341 内核模块已安装 (ch341.ko)"
+            ch341_msg = "CH341 驱动已编译并在内核就绪，插入 USB 串口模块即可通信"
+        elif has_dmesg:
+            ch341_ver = "内核日志就绪 (CH341)"
+            ch341_msg = "系统底层已识别 CH341 驱动"
+        else:
+            ch341_ver = "未安装 /dev/ttyCH341USB0"
+            ch341_msg = "未检测到 CH341 驱动，需一键编译安装驱动以支持 LoRa 群控通信"
 
         # 6. 磁盘空间
         code, df_out, _ = ssh_manager.execute_command("df -BG / | tail -n 1")
@@ -156,12 +172,22 @@ class DeploymentCore:
     # ==========================
     def fix_ch341_driver(self, stream_callback) -> bool:
         """
-        一键编译安装 CH341 串口驱动（根据补充说明第1节）
+        一键编译安装 CH341 串口驱动（前置幂等检查：若已存在则直接提示并返回）
         """
-        stream_callback("[INFO] 开始安装 CH341 串口驱动...\n", False)
+        stream_callback("[INFO] 正在检测机器人端现有驱动状态...\n", False)
         if not ssh_manager.is_connected():
             stream_callback("[ERROR] 未连接至机器人，请先连接机器人！\n", True)
             return False
+
+        # 前置检查：是否已存在驱动
+        code_dev, ch341_ls, _ = ssh_manager.execute_command("ls /dev/ttyCH34* 2>/dev/null")
+        code_mod, lsmod_out, _ = ssh_manager.execute_command("lsmod | grep -i ch341")
+        code_info, modinfo_out, _ = ssh_manager.execute_command("modinfo ch341 2>/dev/null || find /lib/modules/$(uname -r) -name '*ch341*.ko*' 2>/dev/null")
+
+        if (code_dev == 0 and "ttyCH34" in ch341_ls) or (code_mod == 0 and "ch341" in lsmod_out.lower()) or (code_info == 0 and modinfo_out.strip()):
+            device_desc = ch341_ls.strip() if (code_dev == 0 and "ttyCH34" in ch341_ls) else "内核 ch341 驱动模块就绪"
+            stream_callback(f"[SUCCESS] 检测到机器人端已有 CH341 驱动 ({device_desc})，驱动已就绪，无需重复安装！\n", False)
+            return True
 
         commands = [
             ("更新软件包并安装编译工具与内核头文件", "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential bc git dkms && (DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-l4t-kernel-headers || DEBIAN_FRONTEND=noninteractive apt-get install -y linux-headers-$(uname -r) || true)"),
@@ -250,11 +276,19 @@ class DeploymentCore:
             return {"success": False, "msg": f"启动驱动安装程序异常: {str(e)}"}
 
     def fix_docker(self, stream_callback) -> bool:
-        """一键安装/启动 Docker 环境"""
-        stream_callback("[INFO] 正在修复 Docker 运行环境...\n", False)
+        """一键安装/启动 Docker 环境（前置检查：已存在则直接返回）"""
+        stream_callback("[INFO] 正在检测 Docker 运行环境...\n", False)
         if not ssh_manager.is_connected():
             stream_callback("[ERROR] 未连接至机器人！\n", True)
             return False
+
+        code_v, docker_v, _ = ssh_manager.execute_command("docker --version")
+        code_act, act_out, _ = ssh_manager.execute_command("systemctl is-active docker")
+        if code_v == 0 and "active" in act_out:
+            stream_callback(f"[SUCCESS] 检测到 Docker 环境已正常运行 ({docker_v.strip()})，无需重复安装！\n", False)
+            return True
+
+        stream_callback("[INFO] 正在执行 Docker 安装与服务拉起...\n", False)
         cmd = "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io && systemctl enable --now docker && usermod -aG docker unitree"
         code = ssh_manager.execute_command_stream(cmd, stream_callback, sudo=True)
         return code == 0
@@ -283,12 +317,20 @@ class DeploymentCore:
         return images
 
     def load_docker_image(self, remote_tar_path: str, stream_callback) -> Tuple[bool, str]:
-        """执行 docker load -i 导入镜像"""
-        stream_callback(f"[INFO] 正在远端执行 docker load -i {remote_tar_path} (此步骤解压约需 1~3 分钟，请稍候)...\n", False)
+        """执行 docker load -i 导入镜像（前置检查：若已有目标镜像则跳过重复解压）"""
         if not ssh_manager.is_connected():
             stream_callback("[ERROR] 未连接至机器人！\n", True)
             return False, "未连接至机器人"
 
+        # 检查现有镜像
+        existing_images = self.list_docker_images()
+        for img in existing_images:
+            full_name = f"{img['repository']}:{img['tag']}"
+            if "rl_cu" in full_name or "vsis" in full_name or "mimic" in full_name:
+                stream_callback(f"[SUCCESS] 检测到机器人已存在就绪的 Docker 镜像 [{full_name}] (ID: {img['id']})，无需重复导入解压！\n", False)
+                return True, f"镜像已存在: {full_name}"
+
+        stream_callback(f"[INFO] 正在远端执行 docker load -i {remote_tar_path} (此步骤解压约需 1~3 分钟，请稍候)...\n", False)
         cmd = f"docker load -i {remote_tar_path}"
         code = ssh_manager.execute_command_stream(cmd, stream_callback, sudo=True, timeout=900.0)
         if code == 0:

@@ -193,6 +193,16 @@ const TabPrecheck = {
       }
       container.innerHTML = html || '<div style="color: var(--text-muted); padding: 20px;">没有预检数据</div>';
 
+      // 控制顶部快速修复按钮：仅在驱动缺失且可修复时显示，已就绪则隐藏
+      const btnHeaderFix = document.getElementById('btn-tp-fix-ch341');
+      if (btnHeaderFix) {
+        if (items.serial_ch341 && items.serial_ch341.can_fix) {
+          btnHeaderFix.style.display = 'inline-block';
+        } else {
+          btnHeaderFix.style.display = 'none';
+        }
+      }
+
       if (res.data.all_passed) {
         // 静默通过，仅在 UI 上显示绿勾，不再弹出 toast
       } else {
@@ -275,7 +285,43 @@ const TabImage = {
 
   async init() {
     await this.loadImages();
+    await this.checkStatus();
     this.bindEvents();
+  },
+
+  async checkStatus() {
+    try {
+      const res = await API.getContainerStatus();
+      if (res.success && res.data) {
+        const d = res.data;
+        const btnStart = document.getElementById('tp-btn-start-container');
+        const btnAutostart = document.getElementById('tp-btn-write-autostart');
+        const consoleEl = document.getElementById('tp-container-console');
+
+        if (d.running || d.has_port_400) {
+          if (btnStart) {
+            btnStart.disabled = true;
+            btnStart.classList.remove('btn-primary');
+            btnStart.classList.add('btn-secondary');
+            btnStart.textContent = `✅ 容器 [${d.container_name || 'vsis_g1'}] 运行中 (端口 400)`;
+          }
+          if (consoleEl && consoleEl.innerHTML.includes('点击上方按钮启动容器')) {
+            consoleEl.innerHTML = `<div class="log-info">[就绪] 检测到 400 端口容器 [${d.container_name || 'vsis_g1'}] 正在正常运行，无需重复启动。</div>`;
+          }
+        }
+
+        if (d.autostart_configured) {
+          if (btnAutostart) {
+            btnAutostart.disabled = true;
+            btnAutostart.classList.remove('btn-success');
+            btnAutostart.classList.add('btn-secondary');
+            btnAutostart.textContent = `✅ 开机自启动与 Robot ID [${d.robot_id}] 已配置`;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Check container/autostart status failed:', e);
+    }
   },
 
   bindEvents() {

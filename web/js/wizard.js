@@ -192,9 +192,45 @@ const Wizard = {
       if (autoTrigger) this.autoCheckStep3();
     } else if (this.currentStep === 4) {
       this.refreshImagesList();
+      this.updateStep4ButtonStatus();
       if (autoTrigger) this.autoCheckStep4();
     } else if (this.currentStep === 5) {
       this.fetchMachineId();
+    }
+  },
+
+  async updateStep4ButtonStatus() {
+    try {
+      const res = await API.getContainerStatus();
+      if (res.success && res.data) {
+        const d = res.data;
+        const btnStart = document.getElementById('btn-start-container');
+        const btnAuto = document.getElementById('btn-write-autostart');
+        const consoleEl = document.getElementById('container-start-console');
+
+        if (d.running || d.has_port_400) {
+          if (btnStart) {
+            btnStart.disabled = true;
+            btnStart.classList.remove('btn-primary');
+            btnStart.classList.add('btn-secondary');
+            btnStart.textContent = `✅ 容器 [${d.container_name || 'vsis_g1'}] 运行中 (端口 400)`;
+          }
+          if (consoleEl && consoleEl.innerHTML.includes('正在执行固化容器启动命令')) {
+            consoleEl.innerHTML = `<div class="log-info">[就绪] 检测到 400 端口容器 [${d.container_name || 'vsis_g1'}] 正在正常运行，无需重复启动。</div>`;
+          }
+        }
+
+        if (d.autostart_configured) {
+          if (btnAuto) {
+            btnAuto.disabled = true;
+            btnAuto.classList.remove('btn-success');
+            btnAuto.classList.add('btn-secondary');
+            btnAuto.textContent = `✅ 开机自启动与 ID [${d.robot_id}] 已就绪`;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(e);
     }
   },
 

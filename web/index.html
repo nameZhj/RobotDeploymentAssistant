@@ -501,7 +501,7 @@
             <div style="display: flex; gap: 8px;">
               <button class="btn btn-secondary btn-sm" onclick="TabNetwork.installWindowsCh341()">🔌 安装上位机驱动</button>
               <button class="btn btn-secondary btn-sm" onclick="TabPrecheck.run()">🔄 刷新预检</button>
-              <button class="btn btn-primary btn-sm" onclick="TabPrecheck.fixCh341()">🛠️ 编译机器人端驱动</button>
+              <button class="btn btn-primary btn-sm" id="btn-tp-fix-ch341" style="display: none;" onclick="TabPrecheck.fixCh341()">🛠️ 编译机器人端驱动</button>
             </div>
           </div>
           <div id="tp-precheck-items">
@@ -583,7 +583,7 @@
                 --restart=on-failure --name vsis_g1 --gpus all --privileged<br>--device /dev/:/dev/ -p 400:22 -p
                 4001:4000 -p 4002:6006
               </div>
-              <button class="btn btn-primary" onclick="TabImage.startContainer()"
+              <button class="btn btn-primary" id="tp-btn-start-container" onclick="TabImage.startContainer()"
                 style="width: 100%; margin-bottom: 10px;">
                 ⚡ 一键启动 vsis_g1 容器
               </button>
@@ -608,7 +608,7 @@
                 <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">写入
                   /home/ubuntu/vsis_mimic_deploy/group/lora_robot_id.txt，每台机器人必须唯一！</div>
               </div>
-              <button class="btn btn-success" onclick="TabImage.writeAutostart()" style="width: 100%;">
+              <button class="btn btn-success" id="tp-btn-write-autostart" onclick="TabImage.writeAutostart()" style="width: 100%;">
                 💾 写入自启动钩子与 Robot ID
               </button>
             </div>
