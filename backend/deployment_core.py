@@ -190,13 +190,72 @@ class DeploymentCore:
             stream_callback(f"[WARNING] 驱动已编译加载，未检测到插入的 USB 转串口设备，请确认硬件是否牢固插入机器 USB 口。\n", True)
             return True
 
+    def check_windows_ch341(self) -> Dict[str, Any]:
+        """检查 Windows 上位机 COM 端口与 CH340/CH341 驱动状态"""
+        ports = []
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'HARDWARE\DEVICEMAP\SERIALCOMM')
+            i = 0
+            while True:
+                try:
+                    name, val, _ = winreg.EnumValue(key, i)
+                    ports.append({"device": name, "port": val})
+                    i += 1
+                except WindowsError:
+                    break
+        except Exception:
+            pass
+
+        has_ch341 = any("ch34" in p["device"].lower() or "usbserial" in p["device"].lower() for p in ports)
+        return {
+            "has_driver": len(ports) > 0 or has_ch341,
+            "ports": ports,
+            "count": len(ports),
+            "msg": f"检测到 {len(ports)} 个活跃串口 ({', '.join(p['port'] for p in ports)})" if ports else "未检测到已插入的串口设备"
+        }
+
+    def install_windows_ch341(self) -> Dict[str, Any]:
+        """在 Windows 上位机一键安装/运行内置的 CH341 串口驱动程序"""
+        import sys, ctypes, subprocess
+        if getattr(sys, 'frozen', False):
+            base_root = sys._MEIPASS
+        else:
+            base_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        candidates = [
+            os.path.join(base_root, "backend", "drivers", "CH341SER.EXE"),
+            os.path.join(base_root, "CH340 CH341驱动.exe"),
+            os.path.join(base_root, "CH341SER.EXE")
+        ]
+
+        driver_path = None
+        for c in candidates:
+            if os.path.exists(c):
+                driver_path = c
+                break
+
+        if not driver_path:
+            return {"success": False, "msg": "未在软件目录中找到 Windows CH341 驱动安装包"}
+
+        try:
+            # 优先以管理员权限弹出驱动安装器
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", driver_path, "", None, 1)
+            if ret > 32:
+                return {"success": True, "msg": "已弹出 Windows CH341 驱动安装程序，请点击【安装】按钮完成配置。"}
+            else:
+                subprocess.Popen([driver_path], shell=True)
+                return {"success": True, "msg": "已启动 Windows CH341 驱动程序。"}
+        except Exception as e:
+            return {"success": False, "msg": f"启动驱动安装程序异常: {str(e)}"}
+
     def fix_docker(self, stream_callback) -> bool:
         """一键安装/启动 Docker 环境"""
         stream_callback("[INFO] 正在修复 Docker 运行环境...\n", False)
         if not ssh_manager.is_connected():
             stream_callback("[ERROR] 未连接至机器人！\n", True)
             return False
-        cmd = "apt update && apt install -y docker.io && systemctl enable --now docker && usermod -aG docker unitree"
+        cmd = "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io && systemctl enable --now docker && usermod -aG docker unitree"
         code = ssh_manager.execute_command_stream(cmd, stream_callback, sudo=True)
         return code == 0
 

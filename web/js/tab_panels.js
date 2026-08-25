@@ -10,6 +10,40 @@
 const TabNetwork = {
   async init() {
     await this.loadNics();
+    await this.loadWindowsCh341();
+  },
+
+  async loadWindowsCh341() {
+    const statusEl = document.getElementById('tp-win-ch341-status');
+    if (!statusEl) return;
+    try {
+      const res = await API.checkWindowsCh341();
+      if (res.success && res.data) {
+        const data = res.data;
+        if (data.ports && data.ports.length > 0) {
+          const portNames = data.ports.map(p => `${p.port} (${p.device.replace('\\Device\\', '')})`).join(', ');
+          statusEl.innerHTML = `<span style="color: var(--accent-green); font-weight: bold;">✅ 已识别串口：${portNames}</span>`;
+        } else {
+          statusEl.innerHTML = `<span style="color: var(--text-muted);">未插入 USB 串口模块（若已插入但未识别，请点击右侧安装驱动）</span>`;
+        }
+      }
+    } catch (e) {
+      console.error('检测 Windows 串口失败:', e);
+    }
+  },
+
+  async installWindowsCh341() {
+    try {
+      const res = await API.installWindowsCh341();
+      if (res.success) {
+        alert(res.msg || 'Windows CH341 驱动安装程序已启动，请在弹窗中点击【安装】完成驱动安装。');
+        setTimeout(() => this.loadWindowsCh341(), 4000);
+      } else {
+        alert(`启动驱动安装程序失败: ${res.msg}`);
+      }
+    } catch (err) {
+      alert(`安装驱动异常: ${err.message}`);
+    }
   },
 
   async loadNics() {

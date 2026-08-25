@@ -190,6 +190,17 @@ const API = {
     });
   },
 
+  // 9.1 Windows 本机 CH341 驱动
+  checkWindowsCh341() {
+    return this.request('/api/system/check_windows_ch341');
+  },
+
+  installWindowsCh341() {
+    return this.request('/api/system/install_windows_ch341', {
+      method: 'POST'
+    });
+  },
+
   // 10. SSE 任务日志流监听
   listenStream(taskId, onMessage, onComplete, onError) {
     const es = new EventSource(`/api/stream/${taskId}`);

@@ -40,9 +40,13 @@ def step_2_build_pyinstaller():
     """执行 PyInstaller 生成独立可执行程序"""
     logger.info("[步骤 2/4] 正在使用 PyInstaller 打包客户端 EXE (应用自定义机器人图标) ...")
     
-    # 收集需要打包的数据目录 (web/)
+    # 收集需要打包的数据目录 (web/ 与 backend/drivers/)
     web_dir = os.path.abspath("web")
-    add_data_arg = f'--add-data="{web_dir};web"'
+    drivers_dir = os.path.abspath(os.path.join("backend", "drivers"))
+    add_data_args = [
+        f'--add-data="{web_dir};web"',
+        f'--add-data="{drivers_dir};backend/drivers"',
+    ]
     
     # 隐藏导入项
     hidden_imports = [
@@ -62,8 +66,7 @@ def step_2_build_pyinstaller():
         "--windowed",            # 隐藏控制台窗口
         f"--name={APP_NAME}",
         f'--icon="{ICON_PATH}"', # 自定义应用图标
-        add_data_arg,
-    ] + hidden_imports + [MAIN_SCRIPT]
+    ] + add_data_args + hidden_imports + [MAIN_SCRIPT]
 
     cmd_str = " ".join(cmd)
     logger.info(f"执行打包命令: {cmd_str}")

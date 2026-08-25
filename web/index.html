@@ -472,6 +472,22 @@
               <button class="btn btn-secondary btn-sm" onclick="TabNetwork.setDhcp()">恢复自动获取 (DHCP)</button>
             </div>
           </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">🔌 Windows 本机 LoRa 串口驱动 (CH340/CH341)</div>
+              <div style="display: flex; gap: 8px;">
+                <button class="btn btn-secondary btn-sm" onclick="TabNetwork.loadWindowsCh341()">🔄 刷新串口</button>
+                <button class="btn btn-primary btn-sm" onclick="TabNetwork.installWindowsCh341()">⚡ 安装本机 CH341 驱动</button>
+              </div>
+            </div>
+            <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 8px;">
+              上位机若插有 USB LoRa 广播发射器（用于向机器人发送群控动作与控制指令），本机需安装 Windows CH341 串口驱动。
+            </p>
+            <div id="tp-win-ch341-status" style="font-size: 0.85rem; padding: 8px 12px; background: rgba(0,0,0,0.3); border-radius: 6px; border: 1px solid var(--border-color);">
+              <span style="color: var(--text-muted);">正在检测 Windows 本机串口状态...</span>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -483,8 +499,9 @@
           <div class="card-header">
             <div class="card-title">🛠️ 机器人运行环境深度预检</div>
             <div style="display: flex; gap: 8px;">
+              <button class="btn btn-secondary btn-sm" onclick="TabNetwork.installWindowsCh341()">🔌 安装上位机驱动</button>
               <button class="btn btn-secondary btn-sm" onclick="TabPrecheck.run()">🔄 刷新预检</button>
-              <button class="btn btn-primary btn-sm" onclick="TabPrecheck.fixCh341()">🛠️ 编译安装 CH341 驱动</button>
+              <button class="btn btn-primary btn-sm" onclick="TabPrecheck.fixCh341()">🛠️ 编译机器人端驱动</button>
             </div>
           </div>
           <div id="tp-precheck-items">

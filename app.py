@@ -466,6 +466,21 @@ def execute_manual_command():
 
 
 # ==========================================
+# 9.1 Windows 本机 CH341 串口驱动 API
+# ==========================================
+@app.route("/api/system/check_windows_ch341", methods=["GET"])
+def check_windows_ch341():
+    res = deployment_core.check_windows_ch341()
+    return jsonify({"success": True, "data": res})
+
+
+@app.route("/api/system/install_windows_ch341", methods=["POST"])
+def install_windows_ch341():
+    res = deployment_core.install_windows_ch341()
+    return jsonify(res)
+
+
+# ==========================================
 # 10. SSE 流式任务执行输出
 # ==========================================
 @app.route("/api/stream/<task_id>")
