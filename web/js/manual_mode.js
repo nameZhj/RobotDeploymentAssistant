@@ -14,7 +14,7 @@ const ManualMode = {
       id: 'install_ch341',
       title: '2. 编译并安装 CH341 驱动',
       desc: '拉取官方驱动源码，编译并加载 ch341 驱动模块，清除冲突的 brltty',
-      cmd: 'sudo apt update && sudo apt install -y build-essential bc linux-headers-$(uname -r) git && cd /tmp && rm -rf ch341ser_linux && git clone --depth 1 https://github.com/WCHSoftGroup/ch341ser_linux && cd ch341ser_linux/driver && make && sudo make install && sudo modprobe ch341 && sudo apt purge -y "brltty*"',
+      cmd: 'sudo apt update && sudo apt install -y build-essential bc git dkms && (sudo apt install -y nvidia-l4t-kernel-headers || sudo apt install -y linux-headers-$(uname -r) || true) && cd /tmp && rm -rf ch341ser_linux && (git clone --depth 1 https://github.com/WCHSoftGroup/ch341ser_linux || git clone --depth 1 https://gitee.com/mirrors_WCHSoftGroup/ch341ser_linux.git) && cd ch341ser_linux/driver && make && sudo make install && sudo modprobe ch341 && sudo apt purge -y "brltty*"',
       sudo: true
     },
     {
