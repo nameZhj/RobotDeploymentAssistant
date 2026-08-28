@@ -3,6 +3,9 @@
  */
 const LogViewer = {
   currentLogType: 'container',
+  currentContainer: '',
+  currentLines: 500,
+  lastRawText: '',
   autoRefreshInterval: null,
   isAutoRefresh: true,
 
@@ -19,9 +22,49 @@ const LogViewer = {
         document.querySelectorAll('.log-type-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         this.currentLogType = btn.dataset.type;
+
+        // 控制容器选择下拉框的显示/隐藏
+        const containerWrap = document.getElementById('log-container-select-wrapper');
+        if (containerWrap) {
+          containerWrap.style.display = (this.currentLogType === 'container') ? 'inline-flex' : 'none';
+        }
+
         this.fetchCurrentLogs();
       });
     });
+
+    // 容器下拉选择切换
+    const containerSelect = document.getElementById('select-log-container');
+    if (containerSelect) {
+      containerSelect.addEventListener('change', (e) => {
+        this.currentContainer = e.target.value;
+        this.fetchCurrentLogs();
+      });
+    }
+
+    // 行数选择切换
+    const linesSelect = document.getElementById('select-log-lines');
+    if (linesSelect) {
+      linesSelect.addEventListener('change', (e) => {
+        this.currentLines = parseInt(e.target.value, 10) || 500;
+        this.fetchCurrentLogs();
+      });
+    }
+
+    // 自动换行开关
+    const chkWordwrap = document.getElementById('chk-log-wordwrap');
+    if (chkWordwrap) {
+      chkWordwrap.addEventListener('change', (e) => {
+        const consoleEl = document.getElementById('log-console-content');
+        if (consoleEl) {
+          if (e.target.checked) {
+            consoleEl.classList.add('log-wordwrap');
+          } else {
+            consoleEl.classList.remove('log-wordwrap');
+          }
+        }
+      });
+    }
 
     // 自动刷新开关
     const chkAuto = document.getElementById('chk-log-autorefresh');
@@ -37,7 +80,7 @@ const LogViewer = {
     const filterInput = document.getElementById('input-log-filter');
     if (filterInput) {
       filterInput.addEventListener('input', () => {
-        this.applyFilter();
+        this.renderLogs(this.lastRawText);
       });
     }
   },
@@ -59,18 +102,45 @@ const LogViewer = {
     }
   },
 
+  updateContainerDropdown(containers, targetContainer) {
+    const select = document.getElementById('select-log-container');
+    if (!select || !containers || containers.length === 0) return;
+
+    const currentVal = this.currentContainer || targetContainer || select.value;
+    select.innerHTML = '';
+    for (const c of containers) {
+      const opt = document.createElement('option');
+      opt.value = c.name;
+      opt.textContent = `📦 ${c.name} (${c.status})`;
+      if (c.name === currentVal) {
+        opt.selected = true;
+      }
+      select.appendChild(opt);
+    }
+    if (select.value) {
+      this.currentContainer = select.value;
+    }
+  },
+
   async fetchCurrentLogs(isBackground = false) {
     try {
-      const res = await API.getLogs(this.currentLogType, 200);
+      const lines = this.currentLines || 500;
+      const res = await API.getLogs(this.currentLogType, lines, this.currentContainer);
+      if (res.available_containers) {
+        this.updateContainerDropdown(res.available_containers, res.target_container);
+      }
       if (res.success) {
-        this.renderLogs(res.raw_text);
+        this.lastRawText = res.raw_text || '';
+        this.renderLogs(this.lastRawText);
         this.renderDiagnostics(res.diagnostics);
       } else {
-        this.renderLogs(res.raw_text || res.msg || '拉取日志失败，请检查连接');
+        this.lastRawText = res.raw_text || res.msg || '拉取日志失败，请检查连接';
+        this.renderLogs(this.lastRawText);
         this.renderDiagnostics([]);
       }
     } catch (err) {
-      this.renderLogs(`HTTP 请求失败: ${err.message}`);
+      this.lastRawText = `HTTP 请求失败: ${err.message}`;
+      this.renderLogs(this.lastRawText);
       if (!isBackground) {
         showToast(`拉取日志失败: ${err.message}`, 'error');
       }
@@ -81,23 +151,49 @@ const LogViewer = {
     const consoleEl = document.getElementById('log-console-content');
     if (!consoleEl) return;
 
+    // 清理 ANSI 控制字符
+    const cleanText = (rawText || '').replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '');
     const filterVal = (document.getElementById('input-log-filter')?.value || '').toLowerCase();
-    const lines = rawText.split('\n');
+    const lines = cleanText.split('\n');
     let formattedHtml = '';
 
     for (const line of lines) {
-      if (!line.trim()) continue;
+      if (!line.trim()) {
+        formattedHtml += '<div>&nbsp;</div>';
+        continue;
+      }
       if (filterVal && !line.toLowerCase().includes(filterVal)) continue;
 
       let cls = '';
-      if (line.includes('[ERROR]') || line.includes('error') || line.includes('failed') || line.includes('mismatch')) {
+      const l = line.toLowerCase();
+
+      // 进程状态 section 标题行
+      if (line.startsWith('===') && line.endsWith('===')) {
+        cls = 'log-section-header';
+      }
+      // 进程离线
+      else if (l.includes('[offline]') || l.includes('未运行') || l.includes('not running')) {
         cls = 'log-error';
-      } else if (line.includes('[WARNING]') || line.includes('warn') || line.includes('[SKIP]')) {
-        cls = 'log-warn';
-      } else if (line.includes('[SUCCESS]') || line.includes('[READY]')) {
+      }
+      // 关键成功/就绪状态
+      else if (l.includes('[ready]') || l.includes('加载完成') || l.includes('[success]') || l.includes('[ok]') || l.includes('signature verify success')) {
         cls = 'log-success';
-      } else if (line.includes('[INFO]') || line.includes('[STEP]')) {
+      }
+      // 错误
+      else if (l.includes('[error]') || l.includes('error') || l.includes('failed') || l.includes('mismatch') || l.includes('segmentation fault')) {
+        cls = 'log-error';
+      }
+      // 警告
+      else if (l.includes('[warning]') || l.includes('warn') || l.includes('[skip]')) {
+        cls = 'log-warn';
+      }
+      // 信息
+      else if (l.includes('[info]') || l.includes('[step]') || l.includes('[tx]') || l.includes('[rx]') || l.includes('[config]') || l.includes('[dds]')) {
         cls = 'log-info';
+      }
+      // 日志文件不存在提示
+      else if (l.includes('[日志文件不存在]') || l.includes('no such file')) {
+        cls = 'log-warn';
       }
 
       formattedHtml += `<div class="${cls}">${this.escapeHtml(line)}</div>`;
@@ -117,7 +213,7 @@ const LogViewer = {
 
     if (!diagnostics || diagnostics.length === 0) {
       diagContainer.innerHTML = `
-        <div style="padding: 12px 16px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; color: #34d399; font-size: 0.85rem; display: flex; align-items: center; gap: 8px;">
+        <div style="padding: 10px 14px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; color: #34d399; font-size: 0.82rem; display: flex; align-items: center; gap: 8px;">
           <span>✅</span>
           <span>智能诊断：未发现异常故障，各组件运行指标正常。</span>
         </div>
@@ -176,20 +272,58 @@ const LogViewer = {
     }
   },
 
-  applyFilter() {
-    this.fetchCurrentLogs();
+  toggleFullscreen() {
+    const card = document.getElementById('log-viewer-main-card');
+    const btn = document.getElementById('btn-log-fullscreen');
+    if (!card) return;
+
+    if (card.classList.contains('fullscreen-console')) {
+      card.classList.remove('fullscreen-console');
+      if (btn) btn.textContent = '⛶ 全屏';
+    } else {
+      card.classList.add('fullscreen-console');
+      if (btn) btn.textContent = '🗗 还原';
+    }
+  },
+
+  copyAllLogs() {
+    const consoleEl = document.getElementById('log-console-content');
+    const textToCopy = this.lastRawText || (consoleEl ? consoleEl.innerText : '');
+    if (!textToCopy.trim()) {
+      showToast('当前无可用日志内容', 'warning');
+      return;
+    }
+    copyToClipboard(textToCopy, '全部日志内容已复制到剪贴板');
+  },
+
+  downloadLogs() {
+    const consoleEl = document.getElementById('log-console-content');
+    const text = this.lastRawText || (consoleEl ? consoleEl.innerText : '');
+    if (!text.trim()) {
+      showToast('当前无可用日志内容可供导出', 'warning');
+      return;
+    }
+
+    const now = new Date();
+    const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    const filename = `robot_log_${this.currentLogType}_${timestamp}.txt`;
+
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(`日志已导出为 ${filename}`, 'success');
   },
 
   clearLogs() {
+    this.lastRawText = '';
     const consoleEl = document.getElementById('log-console-content');
     if (consoleEl) consoleEl.innerHTML = '<div class="text-muted">（日志已清空）</div>';
-  },
-
-  copyLogs() {
-    const consoleEl = document.getElementById('log-console-content');
-    if (consoleEl) {
-      copyToClipboard(consoleEl.innerText, '控制台日志已全部复制');
-    }
   },
 
   escapeHtml(str) {

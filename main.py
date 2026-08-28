@@ -1,5 +1,5 @@
 """
-VSISLAB 机器人部署助手 (Robot Deployment Assistant)
+VSISLAB 机器人助手 (Robot Deployment Assistant)
 客户端桌面启动程序
 """
 import os
@@ -9,6 +9,15 @@ import socket
 import threading
 import webbrowser
 import logging
+
+# Windows 任务栏专属应用 ID 绑定，确保任务栏独立显示专属机器人图标
+if sys.platform == "win32":
+    try:
+        import ctypes
+        app_id = "visislab.robotdeploymentassistant.suite.2.0"
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception:
+        pass
 
 from app import app
 
@@ -20,6 +29,12 @@ logger = logging.getLogger("Launcher")
 
 PORT = 8088
 HOST = "127.0.0.1"
+
+
+def get_base_dir():
+    if getattr(sys, 'frozen', False):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.abspath(__file__))
 
 
 def ensure_port_available(port):
@@ -78,7 +93,7 @@ def main():
         import webview
         logger.info("正在唤起 pywebview 原生客户端窗口...")
         window = webview.create_window(
-            title="VSISLAB 机器人部署助手 - Unitree G1 Commercial Suite",
+            title="VSISLAB 机器人助手 - Unitree G1 Commercial Suite",
             url=url,
             width=1320,
             height=860,
@@ -93,10 +108,10 @@ def main():
     # 3. 回退模式：打开浏览器并挂起主进程
     if not use_webview:
         webbrowser.open(url)
-        print("\n" + "="*60)
-        print(f"  VSISLAB 机器人部署助手已在浏览器中启动: {url}")
+        print("\n" + "=" * 60)
+        print(f"  VSISLAB 机器人助手已在浏览器中启动: {url}")
         print("  按 Ctrl+C 退出程序")
-        print("="*60 + "\n")
+        print("=" * 60 + "\n")
         try:
             while True:
                 time.sleep(1)

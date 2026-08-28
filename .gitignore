@@ -21,10 +21,16 @@ ENV/
 *.swp
 *.swo
 
-# Temporary / Scratch scripts & logs
+# Temporary / Uploads / Scratch scripts & logs
+temp_uploads/
 scratch/
 *.log
 *.tmp
+*.bak
+
+# Large binary / archive packages
+*.tar.gz
+*.tar
 
 # System files
 Thumbs.db
@@ -32,3 +38,4 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 .DS_Store
+

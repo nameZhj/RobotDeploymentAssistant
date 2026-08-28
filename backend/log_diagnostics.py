@@ -71,56 +71,129 @@ class LogDiagnostics:
     def __init__(self):
         pass
 
-    def fetch_logs(self, log_type: str = "container", tail_lines: int = 150) -> Dict[str, Any]:
+    def fetch_logs(self, log_type: str = "container", container_name: str = "", tail_lines: int = 200) -> Dict[str, Any]:
         """
         拉取指定来源的日志
-        log_type: container (docker logs), sec_run (主控日志), lora_recv (群控日志), dmesg (内核硬件), all (全量汇总)
+        log_type: container (已启动容器日志), lora (LoRa群控日志), g1_ctrl (运控主程序日志), dmesg (内核硬件)
         """
         if not ssh_manager.is_connected():
             return {
                 "success": False,
                 "log_type": log_type,
+                "target_container": "",
+                "available_containers": [],
                 "raw_text": "【未连接至机器人】请先点击顶部的【连接机器人】(192.168.123.164)。",
                 "lines_count": 0,
                 "diagnostics": []
             }
 
-        # 1. 动态探测机器人上正在运行或已存在的 Docker 容器
-        code_ps, ps_out, _ = ssh_manager.execute_command("docker ps --format '{{.Names}}'", sudo=True)
-        running_names = [n.strip() for n in ps_out.strip().split("\n") if n.strip()] if code_ps == 0 else []
+        # 1. 动态探测机器人上正在运行及所有 Docker 容器
+        code_ps, ps_out, _ = ssh_manager.execute_command(
+            "docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}'", sudo=True
+        )
+        available_containers = []
+        running_names = []
+        all_names = []
 
-        code_ps_a, psa_out, _ = ssh_manager.execute_command("docker ps -a --format '{{.Names}}'", sudo=True)
-        all_names = [n.strip() for n in psa_out.strip().split("\n") if n.strip()] if code_ps_a == 0 else []
+        if code_ps == 0 and ps_out.strip():
+            for line in ps_out.strip().split("\n"):
+                if line.strip():
+                    parts = line.split("\t")
+                    if len(parts) >= 3:
+                        c_name_item, img_item, status_item = parts[0], parts[1], parts[2]
+                        is_up = status_item.lower().startswith("up")
+                        all_names.append(c_name_item)
+                        if is_up:
+                            running_names.append(c_name_item)
+                        available_containers.append({
+                            "name": c_name_item,
+                            "image": img_item,
+                            "is_running": is_up,
+                            "status": "运行中" if is_up else "已停止"
+                        })
 
-        # 确定主容器名称
-        c_name = "vsis_g1"
-        if running_names:
+        # 确定选定容器名称
+        c_name = container_name.strip() if container_name else ""
+        if not c_name or c_name not in all_names:
             if "vsis_g1" in running_names:
                 c_name = "vsis_g1"
+            elif running_names:
+                c_name = running_names[0]
+            elif "vsis_g1" in all_names:
+                c_name = "vsis_g1"
+            elif all_names:
+                c_name = all_names[0]
             else:
-                code_p400, p400_out, _ = ssh_manager.execute_command("docker ps --filter publish=400 --format '{{.Names}}'", sudo=True)
-                if code_p400 == 0 and p400_out.strip():
-                    c_name = p400_out.strip().split("\n")[0]
-                else:
-                    c_name = running_names[0]
-        elif all_names:
-            c_name = "vsis_g1" if "vsis_g1" in all_names else all_names[0]
+                c_name = "vsis_g1"
 
-        # 2. 根据类型组装执行指令（直出 Docker 容器日志）
+        # 2. 根据类型组装执行指令 (优先直接从运行中的 Docker 容器内提取完整日志)
         if log_type == "dmesg":
-            cmd = "dmesg | grep -iE 'ch341|ttyCH|nvidia|docker|usb' | tail -n 80 || dmesg | tail -n 80"
+            cmd = f"dmesg -T 2>/dev/null | grep -iE 'ch341|ttyCH|nvidia|docker|usb' | tail -n {tail_lines} || dmesg | tail -n {tail_lines}"
+
+        elif log_type in ("g1_ctrl", "sec_run"):
+            # 主控运控日志：优先直接从 vsis_g1 容器内读取完整日志与实时进程
+            cmd = (
+                "echo '=========================================' && "
+                "echo '🤖 [1. 运控进程运行状态 (g1_ctrl_vsis / sec_run)]' && "
+                "echo '=========================================' && "
+                "docker exec {c_name} ps aux 2>/dev/null | grep -E 'g1_ctrl_vsis|sec_run' | grep -v grep "
+                "|| ps aux | grep -E 'g1_ctrl_vsis|sec_run' | grep -v grep "
+                "|| echo '[OFFLINE] 容器与宿主机均未检测到 g1_ctrl_vsis 运行进程' && "
+                "echo '' && "
+                "echo '=========================================' && "
+                "echo '📋 [2. 运控核心实时日志 (最新 {lines} 行)]' && "
+                "echo '=========================================' && "
+                "docker exec {c_name} tail -n {lines} /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>/dev/null "
+                "|| ( [ -f /home/ubuntu/vsis_mimic_deploy/log/sec_run.log ] && tail -n {lines} /home/ubuntu/vsis_mimic_deploy/log/sec_run.log ) "
+                "|| echo '[提示] 暂未生成独立 sec_run.log 日志文件'"
+            ).format(lines=tail_lines, c_name=c_name)
+
+        elif log_type in ("lora_recv", "lora"):
+            # LoRa 群控通信与接收日志
+            cmd = (
+                "echo '=========================================' && "
+                "echo '📡 [1. 硬件 USB 串口设备检测 (/dev/ttyCH341* /dev/ttyUSB*)]' && "
+                "echo '=========================================' && "
+                "docker exec {c_name} ls -l /dev/ttyCH341* /dev/ttyUSB* 2>/dev/null "
+                "|| ls -l /dev/ttyCH341* /dev/ttyUSB* 2>/dev/null "
+                "|| echo '[WARN] 未检测到 /dev/ttyCH341USB0 串口（请确认 USB 模块已插入）' && "
+                "echo '' && "
+                "echo '=========================================' && "
+                "echo '🆔 [2. 本机分配的 Robot ID (群控寻址唯一标识)]' && "
+                "echo '=========================================' && "
+                "docker exec {c_name} cat /home/ubuntu/vsis_mimic_deploy/group/lora_robot_id.txt 2>/dev/null "
+                "|| cat /home/ubuntu/vsis_mimic_deploy/group/lora_robot_id.txt 2>/dev/null "
+                "|| echo '[提示] 尚未分配 Robot ID' && "
+                "echo '' && "
+                "echo '=========================================' && "
+                "echo '⚡ [3. LoRa 群控接收进程状态 (lora_recv_group)]' && "
+                "echo '=========================================' && "
+                "docker exec {c_name} ps aux 2>/dev/null | grep -E 'lora_recv_group|lora_send' | grep -v grep "
+                "|| ps aux | grep -E 'lora_recv_group|lora_send' | grep -v grep "
+                "|| echo '[OFFLINE] 容器与宿主机均未运行 lora_recv_group 接收进程' && "
+                "echo '' && "
+                "echo '=========================================' && "
+                "echo '📋 [4. LoRa 无线通信接收实时日志 (最新 {lines} 行)]' && "
+                "echo '=========================================' && "
+                "docker exec {c_name} tail -n {lines} /home/ubuntu/vsis_mimic_deploy/log/lora_recv.log 2>/dev/null "
+                "|| ( [ -f /home/ubuntu/vsis_mimic_deploy/log/lora_recv.log ] && tail -n {lines} /home/ubuntu/vsis_mimic_deploy/log/lora_recv.log ) "
+                "|| docker logs --tail {lines} {c_name} 2>&1 | grep -iE 'lora|recv|robot_id|radio|serial|rx' "
+                "|| echo '[INFO] 暂未生成独立 lora_recv.log 日志文件。'"
+            ).format(lines=tail_lines, c_name=c_name)
+
         else:
-            # 默认直接输出 Docker 容器日志
+            # 默认直接输出 Docker 容器日志 (针对选定的容器)
             cmd = f"docker logs --tail {tail_lines} {c_name} 2>&1"
 
         code, out, err = ssh_manager.execute_command(cmd, sudo=True)
-        raw_text = out if (code == 0 or out.strip()) else (out or err or "【暂无 Docker 容器日志输出】请确保容器已启动并在运行。")
+        raw_text = out if (code == 0 or out.strip()) else (out or err or "【暂无日志输出】请确保机器人已连接且对应容器已启动。")
 
         diagnostics = self.analyze_log(raw_text)
         return {
             "success": True,
             "log_type": log_type,
             "target_container": c_name,
+            "available_containers": available_containers,
             "raw_text": raw_text.strip(),
             "lines_count": len(raw_text.strip().split("\n")),
             "diagnostics": diagnostics

@@ -49,6 +49,17 @@ const API = {
     return this.request('/api/network/interfaces');
   },
 
+  autoConnect(forceNic = true) {
+    return this.request('/api/network/auto_connect', {
+      method: 'POST',
+      body: JSON.stringify({ force_nic: forceNic })
+    });
+  },
+
+  getAutoNetworkStatus() {
+    return this.request('/api/network/auto_status');
+  },
+
   configureNic(nicName, ip = '192.168.123.200') {
     return this.request('/api/network/configure_nic', {
       method: 'POST',
@@ -88,11 +99,30 @@ const API = {
     return this.request('/api/images/list');
   },
 
-  uploadImage(formData) {
-    return fetch('/api/images/upload', {
-      method: 'POST',
-      body: formData
-    }).then(res => res.json());
+  listContainers() {
+    return this.request('/api/containers/list');
+  },
+
+  uploadImage(data) {
+    if (data instanceof FormData) {
+      return fetch('/api/images/upload', {
+        method: 'POST',
+        body: data
+      }).then(res => res.json());
+    } else {
+      return this.request('/api/images/upload', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    }
+  },
+
+  selectFile() {
+    return this.request('/api/system/select_file', { method: 'POST' });
+  },
+
+  cancelUpload() {
+    return this.request('/api/images/cancel_upload', { method: 'POST' });
   },
 
   getUploadProgress() {
@@ -114,6 +144,13 @@ const API = {
     return this.request('/api/container/start', {
       method: 'POST',
       body: JSON.stringify({ image_name: imageName })
+    });
+  },
+
+  stopContainer(containerName) {
+    return this.request('/api/container/stop', {
+      method: 'POST',
+      body: JSON.stringify({ container_name: containerName })
     });
   },
 
@@ -152,7 +189,19 @@ const API = {
   },
 
   restartDanceProcesses() {
-    return this.request('/api/dance/restart_processes', { method: 'POST' });
+    return this.request('/api/robot/start_processes', { method: 'POST' });
+  },
+
+  getRobotProcessStatus() {
+    return this.request('/api/robot/process_status');
+  },
+
+  startRobotProcesses() {
+    return this.request('/api/robot/start_processes', { method: 'POST' });
+  },
+
+  stopRobotProcesses() {
+    return this.request('/api/robot/stop_processes', { method: 'POST' });
   },
 
   // 7. 3D 舞蹈回放
@@ -178,8 +227,10 @@ const API = {
   },
 
   // 8. 日志与诊断
-  getLogs(type = 'container', lines = 150) {
-    return this.request(`/api/logs?type=${type}&lines=${lines}`);
+  getLogs(type = 'container', lines = 200, container = '') {
+    const params = new URLSearchParams({ type, lines });
+    if (container) params.append('container', container);
+    return this.request(`/api/logs?${params.toString()}`);
   },
 
   // 9. 手动模式执行
@@ -199,6 +250,43 @@ const API = {
     return this.request('/api/system/install_windows_ch341', {
       method: 'POST'
     });
+  },
+
+  // 11. LoRa 广播串口与群控 API
+  getSerialPorts() {
+    return this.request('/api/serial/ports');
+  },
+
+  autoConnectSerial(baudrate = 9600) {
+    return this.request('/api/serial/auto_connect', {
+      method: 'POST',
+      body: JSON.stringify({ baudrate })
+    });
+  },
+
+  connectSerial(portName, baudrate = 9600) {
+    return this.request('/api/serial/connect', {
+      method: 'POST',
+      body: JSON.stringify({ port: portName, baudrate })
+    });
+  },
+
+  sendSerialCmd(target, command) {
+    return this.request('/api/serial/send', {
+      method: 'POST',
+      body: JSON.stringify({ target, command })
+    });
+  },
+
+  disconnectSerial(safetyStop = true) {
+    return this.request('/api/serial/disconnect', {
+      method: 'POST',
+      body: JSON.stringify({ safety_stop: safetyStop })
+    });
+  },
+
+  getSerialStatus() {
+    return this.request('/api/serial/status');
   },
 
   // 10. SSE 任务日志流监听

@@ -15,12 +15,15 @@ from backend.license_service import license_service
 from backend.dance_updater import dance_updater
 from backend.npz_service import npz_service
 from backend.log_diagnostics import log_diagnostics
+from backend.serial_manager import serial_manager
 
 
 # 禁用 Werkzeug 频繁的 HTTP Access 请求日志输出，避免控制台刷屏
 werkzeug_log = logging.getLogger("werkzeug")
 werkzeug_log.setLevel(logging.ERROR)
 werkzeug_log.disabled = True
+
+logger = logging.getLogger("app")
 
 def get_base_dir():
     if getattr(sys, 'frozen', False):
@@ -67,7 +70,10 @@ def get_status():
         "host": ssh_manager.host,
         "port": ssh_manager.port,
         "username": ssh_manager.username,
-        "latency_ms": latency
+        "latency_ms": latency,
+        "auto_detecting": network_manager.auto_detecting,
+        "auto_status_msg": network_manager.last_auto_status_msg,
+        "auto_connect_enabled": network_manager.auto_connect_enabled
     })
 
 
@@ -86,8 +92,9 @@ def connect_robot():
 
 @app.route("/api/disconnect", methods=["POST"])
 def disconnect_robot():
+    network_manager.pause_auto_reconnect(15.0)
     ssh_manager.disconnect()
-    return jsonify({"success": True, "msg": "已断开连接"})
+    return jsonify({"success": True, "msg": "已断开连接（已暂停自动重连 15 秒）"})
 
 
 @app.route("/api/startup_check", methods=["GET", "POST"])
@@ -99,7 +106,7 @@ def startup_check():
     3. 返回 first_time 判定结果（True=进入一键部署向导，False=直接进入群控运行模式）
     """
     if not ssh_manager.is_connected():
-        ssh_manager.connect(timeout=2.5)
+        network_manager.auto_detect_and_connect(force_configure_nic=True, timeout=2.0)
 
     status_res = license_service.check_remote_license_status()
     latency = ssh_manager.test_latency() if ssh_manager.is_connected() else -1.0
@@ -107,6 +114,8 @@ def startup_check():
     status_res["host"] = ssh_manager.host
     status_res["port"] = ssh_manager.port
     status_res["username"] = ssh_manager.username
+    status_res["auto_detecting"] = network_manager.auto_detecting
+    status_res["auto_status_msg"] = network_manager.last_auto_status_msg
     return jsonify(status_res)
 
 
@@ -142,6 +151,38 @@ def restore_dhcp():
 
     res = network_manager.configure_nic_dhcp(nic_name)
     return jsonify(res)
+
+
+@app.route("/api/network/auto_connect", methods=["POST"])
+def auto_detect_and_connect_api():
+    """
+    一键断网自愈与自动连接机器人网络：
+    1. 自愈本地网卡（若未配置 192.168.123.x 则自动将直连网卡设为 192.168.123.200）
+    2. 并发探测并自动连接机器人
+    """
+    data = request.json or {}
+    force_nic = data.get("force_nic", True)
+    res = network_manager.auto_detect_and_connect(force_configure_nic=force_nic, timeout=2.5)
+    return jsonify(res)
+
+
+@app.route("/api/network/auto_status", methods=["GET"])
+def get_auto_network_status():
+    return jsonify({
+        "auto_connect_enabled": network_manager.auto_connect_enabled,
+        "auto_detecting": network_manager.auto_detecting,
+        "last_msg": network_manager.last_auto_status_msg,
+        "connected": ssh_manager.is_connected(),
+        "host": ssh_manager.host
+    })
+
+
+@app.route("/api/network/toggle_auto", methods=["POST"])
+def toggle_auto_network():
+    data = request.json or {}
+    enabled = data.get("enabled", True)
+    network_manager.auto_connect_enabled = bool(enabled)
+    return jsonify({"success": True, "auto_connect_enabled": network_manager.auto_connect_enabled})
 
 
 @app.route("/api/network/scan", methods=["POST"])
@@ -200,35 +241,133 @@ def fix_docker():
 # ==========================================
 @app.route("/api/images/list", methods=["GET"])
 def list_images():
-    imgs = deployment_core.list_docker_images()
-    return jsonify({"success": True, "images": imgs})
+    res = deployment_core.list_docker_images()
+    return jsonify({
+        "success": True,
+        "images": res.get("available_images", []),
+        "available_images": res.get("available_images", []),
+        "all_images": res.get("all_images", []),
+        "running_containers": res.get("running_containers", [])
+    })
+
+
+@app.route("/api/containers/list", methods=["GET"])
+def list_containers():
+    containers = deployment_core.list_containers()
+    return jsonify({"success": True, "containers": containers})
 
 
 @app.route("/api/images/upload", methods=["POST"])
 def upload_image():
     """接收上传镜像文件或指定本地绝对路径"""
-    data = request.form
-    local_path = data.get("local_path", "").strip()
+    user_remote_path = ""
+    if request.is_json:
+        data = request.json or {}
+        local_path = data.get("local_path", "").strip()
+        user_remote_path = data.get("remote_path", "").strip()
+    else:
+        data = request.form
+        local_path = data.get("local_path", "").strip()
+        user_remote_path = data.get("remote_path", "").strip()
+
+    local_path = local_path.strip('"').strip("'")
+    user_remote_path = user_remote_path.strip('"').strip("'")
 
     # 若通过 HTTP 表单文件上传
-    if "file" in request.files:
+    if not local_path and "file" in request.files:
         f = request.files["file"]
-        upload_temp_dir = os.path.join(os.path.dirname(__file__), "temp_uploads")
-        os.makedirs(upload_temp_dir, exist_ok=True)
-        local_path = os.path.join(upload_temp_dir, f.filename)
-        f.save(local_path)
+        if f and f.filename:
+            upload_temp_dir = os.path.join(os.path.dirname(__file__), "temp_uploads")
+            os.makedirs(upload_temp_dir, exist_ok=True)
+            local_path = os.path.join(upload_temp_dir, f.filename)
+            f.save(local_path)
 
     if not local_path or not os.path.exists(local_path):
-        return jsonify({"success": False, "msg": "本地镜像文件不存在，请检查路径"})
+        return jsonify({"success": False, "msg": f"本地镜像文件不存在: {local_path or '未选择文件'}，请检查路径"})
+
+    if not ssh_manager.is_connected():
+        conn_ok, msg = ssh_manager.connect()
+        if not conn_ok:
+            return jsonify({"success": False, "msg": f"未连接至机器人 (192.168.123.164): {msg}，请先在顶部连接机器人"})
 
     filename = os.path.basename(local_path)
-    remote_path = f"/tmp/{filename}"
+    file_size = os.path.getsize(local_path)
+
+    # 优先采用用户指定或文档要求的精确路径，未指定时默认存放于 /home/ubuntu/{filename}
+    remote_path = user_remote_path if user_remote_path else f"/home/ubuntu/{filename}"
+
+    # 确保远端父目录存在并具备完全读写权限
+    remote_dir = os.path.dirname(remote_path).replace("\\", "/")
+    if remote_dir and remote_dir != "/":
+        ssh_manager.execute_command(f"mkdir -p '{remote_dir}' && chmod a+rwx '{remote_dir}' 2>/dev/null", sudo=True)
+
+    # 上传前精确检查远端目标路径下是否存在完全相同的镜像包 (大小与文件名一致)
+    code_stat, out_stat, _ = ssh_manager.execute_command(f"stat -c %s '{remote_path}' 2>/dev/null", sudo=True)
+    if code_stat == 0 and out_stat.strip().isdigit() and int(out_stat.strip()) == file_size:
+        logger.info(f"远端已存在完全同名同大小镜像包 ({round(file_size/(1024*1024), 2)} MB): {remote_path}，跳过重复上传，直接就绪")
+        ssh_manager.upload_progress.update({
+            "is_uploading": False,
+            "filename": filename,
+            "transferred_bytes": file_size,
+            "total_bytes": file_size,
+            "percent": 100.0,
+            "speed_mbps": 0.0,
+            "eta_seconds": 0,
+            "status": "completed",
+            "error_msg": "",
+        })
+        return jsonify({
+            "success": True,
+            "msg": f"远端已存在完全同名同大小的镜像包 ({round(file_size/(1024*1024), 2)} MB)，已自动跳过上传直接就绪！",
+            "remote_path": remote_path,
+            "local_path": local_path,
+            "skipped": True
+        })
 
     def _worker():
         ssh_manager.upload_file(local_path, remote_path)
 
     threading.Thread(target=_worker, daemon=True).start()
     return jsonify({"success": True, "msg": "镜像上传任务已启动", "remote_path": remote_path, "local_path": local_path})
+
+
+@app.route("/api/system/select_file", methods=["POST", "GET"])
+def select_local_file():
+    """打开 Windows 原生文件选择器获取镜像文件的真实绝对路径"""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        selected_file = filedialog.askopenfilename(
+            title="选择机器人 Docker 镜像文件 (.tar / .tar.gz)",
+            filetypes=[
+                ("Docker 镜像压缩包", "*.tar.gz;*.tar;*.gz;*.tgz"),
+                ("所有文件", "*.*")
+            ]
+        )
+        root.destroy()
+        if selected_file:
+            norm_path = os.path.normpath(selected_file)
+            size_bytes = os.path.getsize(norm_path)
+            return jsonify({
+                "success": True,
+                "file_path": norm_path,
+                "filename": os.path.basename(norm_path),
+                "size_bytes": size_bytes,
+                "size_gb": round(size_bytes / (1024 * 1024 * 1024), 2)
+            })
+        return jsonify({"success": False, "msg": "已取消选择文件"})
+    except Exception as e:
+        return jsonify({"success": False, "msg": f"打开文件选择器失败: {str(e)}"})
+
+
+@app.route("/api/images/cancel_upload", methods=["POST"])
+def cancel_upload():
+    """取消正在进行的镜像上传"""
+    res = ssh_manager.cancel_upload()
+    return jsonify(res)
 
 
 @app.route("/api/images/upload_progress", methods=["GET"])
@@ -239,7 +378,7 @@ def get_upload_progress():
 @app.route("/api/images/load", methods=["POST"])
 def load_image():
     data = request.json or {}
-    remote_tar_path = data.get("remote_tar_path", "/tmp/rl_cu118_v2.tar.gz")
+    remote_tar_path = data.get("remote_tar_path", "/home/ubuntu/vsis_dancer_cpu_1.0.tar.gz")
     task_id = f"docker_load_{int(time.time())}"
     q = queue.Queue()
     stream_queues[task_id] = q
@@ -278,6 +417,14 @@ def start_container():
 
     threading.Thread(target=_worker, daemon=True).start()
     return jsonify({"success": True, "task_id": task_id})
+
+
+@app.route("/api/container/stop", methods=["POST"])
+def stop_container_route():
+    data = request.json or {}
+    container_name = data.get("container_name", "vsis_g1")
+    ok, msg = deployment_core.stop_container(container_name)
+    return jsonify({"success": ok, "msg": msg})
 
 
 @app.route("/api/container/autostart", methods=["POST"])
@@ -345,40 +492,122 @@ def deploy_license():
 # ==========================================
 @app.route("/api/dance/update", methods=["POST"])
 def update_dance():
+    task_id = f"dance_update_{int(time.time())}"
+    q = queue.Queue()
+    stream_queues[task_id] = q
+
     dance_alias = request.form.get("dance_alias", "").strip().upper()
     button_group = request.form.get("button_group", "R1").strip().upper()
     button_action = request.form.get("button_action", "SELECT").strip().upper()
     dest_path = request.form.get("dest_path", "/secure/config_vsis/mimic_exp2").strip()
 
-    # 处理 .vsis 文件上传
+    # 提取并暂存上传的文件
+    temp_vsis_path = None
     if "vsis_file" in request.files:
         vsis_f = request.files["vsis_file"]
-        temp_path = os.path.join(os.path.dirname(__file__), "temp_uploads", vsis_f.filename)
-        os.makedirs(os.path.dirname(temp_path), exist_ok=True)
-        vsis_f.save(temp_path)
-        ok_vsis, msg_vsis = dance_updater.deploy_vsis_file(temp_path, dest_path)
-        if not ok_vsis:
-            return jsonify({"success": False, "msg": msg_vsis})
+        if vsis_f and vsis_f.filename:
+            temp_dir = os.path.join(os.path.dirname(__file__), "temp_uploads")
+            os.makedirs(temp_dir, exist_ok=True)
+            temp_vsis_path = os.path.join(temp_dir, vsis_f.filename)
+            vsis_f.save(temp_vsis_path)
 
-    # 处理新 license.json
+    lic_content = None
     if "license_file" in request.files:
         lic_f = request.files["license_file"]
-        lic_content = lic_f.read().decode("utf-8", errors="ignore")
-        license_service.deploy_license_to_robot(lic_content)
+        if lic_f and lic_f.filename:
+            lic_content = lic_f.read().decode("utf-8", errors="ignore")
 
-    # 更新 YAML dance_map
-    if dance_alias:
-        dance_updater.update_dance_map(dance_alias, button_group, button_action)
+    def _worker():
+        def _cb(line, is_err=False):
+            push_stream_msg(task_id, line, is_err)
+
+        try:
+            if not ssh_manager.is_connected():
+                _cb("[ERROR] 未连接至机器人，请先在顶部连接 SSH！\n", True)
+                push_stream_msg(task_id, "__TASK_DONE__:False\n", False)
+                return
+
+            _cb(f"[STEP 1/4] 🚀 开始处理舞蹈动作包 [{dance_alias}] ...\n", False)
+
+            # 1. 部署 .vsis 动作权重文件
+            if temp_vsis_path:
+                _cb(f"[INFO] 正在上传 .vsis 动作文件并覆盖至 {dest_path} ...\n", False)
+                ok_vsis, msg_vsis = dance_updater.deploy_vsis_file(temp_vsis_path, dest_path)
+                if not ok_vsis:
+                    _cb(f"[ERROR] {msg_vsis}\n", True)
+                    push_stream_msg(task_id, "__TASK_DONE__:False\n", False)
+                    return
+                _cb(f"[SUCCESS] ✅ {msg_vsis}\n", False)
+            else:
+                _cb("[INFO] 未上传新 .vsis 文件，沿用当前已有的动作模型。\n", False)
+
+            # 2. 部署与验证 License
+            _cb("[STEP 2/4] 检查并部署 License 授权...\n", False)
+            if lic_content and lic_content.strip():
+                _cb("[INFO] 正在写入新 license.json 并校验机器码授权...\n", False)
+                lic_res = license_service.deploy_license_to_robot(lic_content)
+                if not lic_res.get("success"):
+                    _cb(f"[ERROR] License 部署校验失败: {lic_res.get('msg')}\n", True)
+                    push_stream_msg(task_id, "__TASK_DONE__:False\n", False)
+                    return
+                _cb(f"[SUCCESS] ✅ License 授权校验通过: {lic_res.get('msg')}\n", False)
+            else:
+                _cb("[INFO] 未上传新 license.json，沿用当前已有的授权配置。\n", False)
+
+            # 3. 更新 YAML dance_map 映射
+            _cb(f"[STEP 3/4] 更新 group/lora_recv_group.yaml 映射: {dance_alias} -> [{button_group}, {button_action}] ...\n", False)
+            if dance_alias:
+                ok_map, msg_map = dance_updater.update_dance_map(dance_alias, button_group, button_action)
+                if not ok_map:
+                    _cb(f"[ERROR] {msg_map}\n", True)
+                    push_stream_msg(task_id, "__TASK_DONE__:False\n", False)
+                    return
+                _cb(f"[SUCCESS] ✅ {msg_map}\n", False)
+
+            # 4. 自动热重启机载进程
+            _cb("[STEP 4/4] 🔄 正在自动热重启机载运控与通信进程使新配置生效...\n", False)
+            ok_restart = dance_updater.restart_control_processes(_cb)
+            if ok_restart:
+                _cb(f"[SUCCESS] 🎉 舞蹈 [{dance_alias}] 导入、授权校验与自动热重启已圆满完成！\n", False)
+                _cb(f"[READY] 💡 群控测试指令: ALL|DANCE,{dance_alias}\n", False)
+                push_stream_msg(task_id, "__TASK_DONE__:True\n", False)
+            else:
+                _cb("[WARN] 机载进程重启遇到异常，请在【镜像与容器管理】页面检查运行状态。\n", True)
+                push_stream_msg(task_id, "__TASK_DONE__:False\n", False)
+
+        except Exception as e:
+            _cb(f"[ERROR] 执行异常: {str(e)}\n", True)
+            push_stream_msg(task_id, "__TASK_DONE__:False\n", False)
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return jsonify({"success": True, "task_id": task_id})
+
+
+@app.route("/api/robot/process_status", methods=["GET"])
+def get_robot_process_status():
+    if not ssh_manager.is_connected():
+        return jsonify({"success": False, "connected": False, "msg": "未连接至机器人"})
+
+    code1, out1, _ = ssh_manager.execute_command("ps aux | grep -E 'g1_ctrl_vsis|sec_run' | grep -v grep", sudo=True)
+    code2, out2, _ = ssh_manager.execute_command("ps aux | grep -E 'lora_recv_group' | grep -v grep", sudo=True)
+    code1_c, out1_c, _ = ssh_manager.execute_command("docker exec vsis_g1 ps aux 2>/dev/null | grep -E 'g1_ctrl_vsis|sec_run' | grep -v grep || true", sudo=True)
+    code2_c, out2_c, _ = ssh_manager.execute_command("docker exec vsis_g1 ps aux 2>/dev/null | grep -E 'lora_recv_group' | grep -v grep || true", sudo=True)
+
+    g1_up = (code1 == 0 and bool(out1.strip())) or (code1_c == 0 and bool(out1_c.strip()))
+    lora_up = (code2 == 0 and bool(out2.strip())) or (code2_c == 0 and bool(out2_c.strip()))
 
     return jsonify({
         "success": True,
-        "msg": f"舞蹈 [{dance_alias}] 更新包已部署完毕！"
+        "connected": True,
+        "g1_ctrl_running": g1_up,
+        "lora_recv_running": lora_up,
+        "all_running": g1_up and lora_up
     })
 
 
-@app.route("/api/dance/restart_processes", methods=["POST"])
-def restart_dance_processes():
-    task_id = f"restart_dance_{int(time.time())}"
+@app.route("/api/robot/start_processes", methods=["POST"])
+def start_robot_processes():
+    task_id = f"start_robot_proc_{int(time.time())}"
     q = queue.Queue()
     stream_queues[task_id] = q
 
@@ -391,6 +620,18 @@ def restart_dance_processes():
 
     threading.Thread(target=_worker, daemon=True).start()
     return jsonify({"success": True, "task_id": task_id})
+
+
+@app.route("/api/robot/stop_processes", methods=["POST"])
+def stop_robot_processes():
+    if not ssh_manager.is_connected():
+        return jsonify({"success": False, "msg": "未连接至机器人"})
+
+    stop_cmd = "pkill -f g1_ctrl_vsis ; pkill -f lora_recv_group ; sleep 1"
+    ssh_manager.execute_command(stop_cmd, sudo=True)
+    ssh_manager.execute_command("docker exec vsis_g1 pkill -f g1_ctrl_vsis || true", sudo=True)
+    ssh_manager.execute_command("docker exec vsis_g1 pkill -f lora_recv_group || true", sudo=True)
+    return jsonify({"success": True, "msg": "已向机器人发送停止运控与 LoRa 进程指令 (pkill)"})
 
 
 # ==========================================
@@ -440,8 +681,9 @@ def delete_3d_dance(dance_id):
 @app.route("/api/logs", methods=["GET"])
 def get_logs():
     log_type = request.args.get("type", "container")
-    lines = int(request.args.get("lines", 150))
-    res = log_diagnostics.fetch_logs(log_type, lines)
+    container_name = request.args.get("container", "").strip()
+    lines = int(request.args.get("lines", 200))
+    res = log_diagnostics.fetch_logs(log_type, container_name, lines)
     return jsonify(res)
 
 
@@ -481,6 +723,59 @@ def install_windows_ch341():
 
 
 # ==========================================
+# 9.2 LoRa 广播串口通信与自动检测 API
+# ==========================================
+@app.route("/api/serial/ports", methods=["GET"])
+def get_serial_ports():
+    ports = serial_manager.list_ports()
+    return jsonify({"success": True, "ports": ports, "count": len(ports)})
+
+
+@app.route("/api/serial/auto_connect", methods=["POST"])
+def auto_connect_serial():
+    data = request.json or {}
+    baudrate = int(data.get("baudrate", 9600))
+    res = serial_manager.auto_connect_best_port(baudrate=baudrate)
+    return jsonify(res)
+
+
+@app.route("/api/serial/connect", methods=["POST"])
+def connect_serial():
+    data = request.json or {}
+    port_name = data.get("port", "")
+    baudrate = int(data.get("baudrate", 9600))
+    if not port_name:
+        return jsonify({"success": False, "msg": "未指定串口名称"})
+    res = serial_manager.connect_port(port_name, baudrate=baudrate)
+    return jsonify(res)
+
+
+@app.route("/api/serial/send", methods=["POST"])
+def send_serial_cmd():
+    data = request.json or {}
+    target = data.get("target", "ALL")
+    command = data.get("command", "")
+    if not command:
+        return jsonify({"success": False, "msg": "指令不能为空"})
+    res = serial_manager.send_command(target, command)
+    return jsonify(res)
+
+
+@app.route("/api/serial/disconnect", methods=["POST"])
+def disconnect_serial():
+    data = request.json or {}
+    safety = bool(data.get("safety_stop", True))
+    res = serial_manager.disconnect(safety_stop=safety)
+    return jsonify(res)
+
+
+@app.route("/api/serial/status", methods=["GET"])
+def get_serial_status():
+    status = serial_manager.get_status()
+    return jsonify({"success": True, "data": status})
+
+
+# ==========================================
 # 10. SSE 流式任务执行输出
 # ==========================================
 @app.route("/api/stream/<task_id>")
@@ -509,3 +804,4 @@ def stream_events(task_id):
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=8088, debug=False)
+

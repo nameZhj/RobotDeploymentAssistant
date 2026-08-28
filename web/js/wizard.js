@@ -77,13 +77,14 @@ const Wizard = {
       btnRecheck.addEventListener('click', () => this.runPrecheck());
     }
 
-    // 镜像文件选择
-    const inputImageFile = document.getElementById('input-image-file');
-    if (inputImageFile) {
-      inputImageFile.addEventListener('change', (e) => {
-        if (e.target.files.length > 0) {
-          const file = e.target.files[0];
-          document.getElementById('image-selected-name').textContent = `${file.name} (${(file.size / (1024*1024*1024)).toFixed(2)} GB)`;
+    // 监听本地镜像文件路径输入变动回显
+    const pathInput = document.getElementById('input-local-tar-path');
+    if (pathInput) {
+      pathInput.addEventListener('input', (e) => {
+        const val = e.target.value.trim();
+        const nameEl = document.getElementById('image-selected-name');
+        if (nameEl) {
+          nameEl.textContent = val ? `已指定文件: ${val}` : '';
         }
       });
     }
@@ -122,21 +123,41 @@ const Wizard = {
     const licDropzone = document.getElementById('license-dropzone');
     const licFileInput = document.getElementById('license-file-input');
     if (licDropzone && licFileInput) {
-      licDropzone.addEventListener('click', () => licFileInput.click());
-      licDropzone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        licDropzone.classList.add('dragover');
-      });
-      licDropzone.addEventListener('dragleave', () => licDropzone.classList.remove('dragover'));
-      licDropzone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        licDropzone.classList.remove('dragover');
-        if (e.dataTransfer.files.length > 0) {
-          this.handleLicenseFile(e.dataTransfer.files[0]);
+      licDropzone.addEventListener('click', (e) => {
+        if (e.target !== licFileInput) {
+          licFileInput.click();
         }
       });
+
+      ['dragenter', 'dragover'].forEach(eventName => {
+        licDropzone.addEventListener(eventName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          licDropzone.classList.add('dragover');
+          if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+        });
+      });
+
+      ['dragleave', 'dragend'].forEach(eventName => {
+        licDropzone.addEventListener(eventName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          licDropzone.classList.remove('dragover');
+        });
+      });
+
+      licDropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        licDropzone.classList.remove('dragover');
+        const files = e.dataTransfer ? e.dataTransfer.files : null;
+        if (files && files.length > 0) {
+          this.handleLicenseFile(files[0]);
+        }
+      });
+
       licFileInput.addEventListener('change', (e) => {
-        if (e.target.files.length > 0) {
+        if (e.target.files && e.target.files.length > 0) {
           this.handleLicenseFile(e.target.files[0]);
         }
       });
@@ -208,24 +229,35 @@ const Wizard = {
         const btnAuto = document.getElementById('btn-write-autostart');
         const consoleEl = document.getElementById('container-start-console');
 
-        if (d.running || d.has_port_400) {
-          if (btnStart) {
-            btnStart.disabled = true;
-            btnStart.classList.remove('btn-primary');
-            btnStart.classList.add('btn-secondary');
-            btnStart.textContent = `✅ 容器 [${d.container_name || 'vsis_g1'}] 运行中 (端口 400)`;
-          }
-          if (consoleEl && consoleEl.innerHTML.includes('正在执行固化容器启动命令')) {
-            consoleEl.innerHTML = `<div class="log-info">[就绪] 检测到 400 端口容器 [${d.container_name || 'vsis_g1'}] 正在正常运行，无需重复启动。</div>`;
+        if (btnStart) {
+          btnStart.disabled = false;
+          btnStart.classList.add('btn-primary');
+          btnStart.classList.remove('btn-secondary');
+          if (d.running) {
+            btnStart.textContent = `🔄 重新固化启动 / 更新 vsis_g1 容器 (当前运行中)`;
+            if (consoleEl && (consoleEl.innerHTML.includes('等待执行') || consoleEl.innerHTML.includes('正在执行固化容器启动命令'))) {
+              consoleEl.innerHTML = `<div class="log-success">[就绪] 容器 vsis_g1 正在正常运行中。如需更换镜像或重新启动，可选择上方镜像后点击此按钮。</div>`;
+            }
+          } else {
+            btnStart.textContent = `⚡ 固化启动容器 vsis_g1`;
           }
         }
 
-        if (d.autostart_configured) {
-          if (btnAuto) {
-            btnAuto.disabled = true;
-            btnAuto.classList.remove('btn-success');
-            btnAuto.classList.add('btn-secondary');
-            btnAuto.textContent = `✅ 开机自启动与 ID [${d.robot_id}] 已就绪`;
+        const inputRobotId = document.getElementById('select-robot-id');
+        if (inputRobotId && d.robot_id) {
+          inputRobotId.value = d.robot_id;
+        }
+
+        if (btnAuto) {
+          btnAuto.disabled = false;
+          if (d.autostart_configured) {
+            btnAuto.classList.remove('btn-secondary');
+            btnAuto.classList.add('btn-success');
+            btnAuto.textContent = `⚙️ 重新写入开机自启与 ID [${d.robot_id}]`;
+          } else {
+            btnAuto.classList.remove('btn-secondary');
+            btnAuto.classList.add('btn-success');
+            btnAuto.textContent = `📝 一键写入开机自启动与 Robot ID`;
           }
         }
       }
@@ -237,6 +269,32 @@ const Wizard = {
   // ==========================
   // 自动化智能判定与跳步引擎
   // ==========================
+  async autoDetectAndConnect() {
+    showToast('⚡ 正在自愈直连网卡并并发探测连接机器人 (192.168.123.x)...', 'info', 3000);
+    const btn = document.getElementById('btn-wizard-auto-connect');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '⏳ 探测连接中...';
+    }
+    try {
+      const res = await API.autoConnect(true);
+      if (res.connected) {
+        showToast(res.msg, 'success', 3500);
+        App.updateStatus();
+        setTimeout(() => this.goToStep(2, true), 800);
+      } else {
+        showToast(res.msg || '未探测到在线机器人', 'warning', 3500);
+      }
+    } catch (err) {
+      showToast(`自愈连接异常: ${err.message}`, 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '⚡ 立即执行自愈连接';
+      }
+    }
+  },
+
   async autoCheckStep1() {
     try {
       const status = await API.getStatus();
@@ -246,14 +304,14 @@ const Wizard = {
         return;
       }
 
-      // 尝试自动连接一次默认预置参数
-      const res = await API.connect({ host: '192.168.123.164', port: 22, username: 'unitree', password: '123' });
-      if (res.success) {
-        showToast('✓ 成功自动连接机器人 192.168.123.164，自动进入环境预检...', 'success', 2000);
+      // 启动断网自愈与自动探测连接
+      const res = await API.autoConnect(true);
+      if (res && res.connected) {
+        showToast(res.msg || '✓ 成功自动连接机器人，自动进入环境预检...', 'success', 2500);
         App.updateStatus();
         setTimeout(() => this.goToStep(2, true), 800);
       } else {
-        showToast('⚠️ 未能直连 192.168.123.164，请配置网卡或全网扫描', 'info');
+        showToast('⚠️ 未能直连 192.168.123.164，断网自愈监听已开启', 'info');
       }
     } catch (err) {
       console.warn('Step 1 auto check failed:', err);
@@ -266,19 +324,7 @@ const Wizard = {
       if (res.success && res.images && res.images.length > 0) {
         const found = res.images[0];
         const tag = `${found.repository}:${found.tag}`;
-        showToast(`✓ 检测到机器人已存在镜像 [${tag}]，自动跳过导入步骤...`, 'success', 2000);
-
-        // 检查第4步：如果 400 端口容器也已经存在并运行，直接连跳至第 5 步！
-        try {
-          const cRes = await API.getContainerStatus();
-          if (cRes.success && cRes.data && (cRes.data.has_port_400 || cRes.data.running)) {
-            const cName = cRes.data.container_name || 'vsis_g1';
-            showToast(`✓ 检测到 400 端口容器 [${cName}] 运行中（已设置自启并正常启动），自动跳过第4步，进入第5步...`, 'success', 3000);
-            setTimeout(() => this.goToStep(5, true), 800);
-            return;
-          }
-        } catch (_) {}
-
+        showToast(`✓ 检测到机器人已存在镜像 [${tag}]，自动进入固化启动与自启配置...`, 'success', 2000);
         setTimeout(() => this.goToStep(4, true), 800);
       }
     } catch (err) {
@@ -291,17 +337,9 @@ const Wizard = {
       const res = await API.getContainerStatus();
       if (res.success && res.data) {
         const d = res.data;
-        // 如果设备中存在一个 400 端口的容器，则说明程序已经设置好了自启并且已经正常启动，此时应该跳过第四步启动与自启
-        if (d.has_port_400 || d.running) {
-          const cName = d.container_name || 'vsis_g1';
-          showToast(`✓ 检测到 400 端口容器 [${cName}] 运行中（已设置自启并正常启动），自动跳过此步骤...`, 'success', 3000);
-          setTimeout(() => this.goToStep(5, true), 600);
-          return;
+        if (d.running && d.autostart_configured) {
+          showToast(`✓ 检测到 vsis_g1 运行中且自启已配置，可点击下一步进入授权校验`, 'success', 3000);
         }
-
-        // 未检测到 400 端口容器：自动执行容器拉起与自启写入
-        showToast('⚙️ 未检测到 400 端口容器，正在自动拉起 vsis_g1 并配置开机自启...', 'info', 3000);
-        this.startContainer(true); // 传入 true 表示自动化模式
       }
     } catch (err) {
       console.warn('Step 4 auto check failed:', err);
@@ -541,29 +579,96 @@ const Wizard = {
   // ==========================
   // Step 3: 镜像上传与导入
   // ==========================
-  async startImageUpload() {
-    const fileInput = document.getElementById('input-image-file');
-    const pathInput = document.getElementById('input-local-tar-path');
-    let localPath = pathInput ? pathInput.value.trim() : '';
+  async browseTarFile() {
+    try {
+      showToast('正在打开文件选择器...', 'info');
+      const res = await API.selectFile();
+      if (res.success && res.file_path) {
+        const pathInput = document.getElementById('input-local-tar-path');
+        const remoteInput = document.getElementById('input-remote-load-path');
+        const nameEl = document.getElementById('image-selected-name');
+        if (pathInput) pathInput.value = res.file_path;
+        if (nameEl) nameEl.textContent = `已选: ${res.filename} (${res.size_gb} GB)`;
+        if (remoteInput) {
+          const curVal = remoteInput.value.trim();
+          const dir = curVal && curVal.includes('/') ? curVal.substring(0, curVal.lastIndexOf('/')) : '/home/ubuntu';
+          remoteInput.value = `${dir}/${res.filename}`;
+        }
+        showToast(`已选择镜像文件: ${res.filename} (${res.size_gb} GB)`, 'success');
+      } else if (res.msg && !res.msg.includes('取消')) {
+        showToast(res.msg, 'error');
+      }
+    } catch (err) {
+      showToast(`打开文件选择器异常: ${err.message}`, 'error');
+    }
+  },
 
-    const formData = new FormData();
-    if (fileInput && fileInput.files.length > 0) {
-      formData.append('file', fileInput.files[0]);
-    } else if (localPath) {
-      formData.append('local_path', localPath);
-    } else {
-      showToast('请选取本地镜像包或填写镜像文件完整路径', 'warning');
+  async cancelUpload() {
+    try {
+      showToast('正在取消上传...', 'warning');
+      await API.cancelUpload();
+      if (this.uploadInterval) {
+        clearInterval(this.uploadInterval);
+        this.uploadInterval = null;
+      }
+      this._resetUploadButtons();
+      showToast('已取消上传任务', 'info');
+    } catch (err) {
+      showToast(`取消上传失败: ${err.message}`, 'error');
+    }
+  },
+
+  _resetUploadButtons() {
+    const btnStart = document.getElementById('btn-start-upload');
+    const btnCancel = document.getElementById('btn-cancel-upload-wizard');
+    if (btnStart) {
+      btnStart.disabled = false;
+      btnStart.style.display = 'block';
+    }
+    if (btnCancel) {
+      btnCancel.style.display = 'none';
+    }
+  },
+
+  async startImageUpload() {
+    const pathInput = document.getElementById('input-local-tar-path');
+    const remoteInput = document.getElementById('input-remote-load-path');
+    let localPath = pathInput ? pathInput.value.trim() : '';
+    let remotePath = remoteInput ? remoteInput.value.trim() : '';
+
+    if (!localPath) {
+      showToast('请点击【📁 浏览本地镜像文件】选取镜像，或输入本机文件完整绝对路径', 'warning');
       return;
     }
 
-    showToast('开始 SFTP 上传镜像至机器人 /tmp 目录...', 'info');
+    const reqData = { local_path: localPath, remote_path: remotePath };
+
+    showToast('正在检查远端镜像并准备传输...', 'info');
     const uploadBox = document.getElementById('upload-progress-box');
+    const btnStart = document.getElementById('btn-start-upload');
+    const btnCancel = document.getElementById('btn-cancel-upload-wizard');
+
     if (uploadBox) uploadBox.style.display = 'block';
+    if (btnStart) btnStart.disabled = true;
+    if (btnCancel) btnCancel.style.display = 'block';
 
     try {
-      const res = await API.uploadImage(formData);
+      const res = await API.uploadImage(reqData);
       if (!res.success) {
         showToast(`上传失败: ${res.msg}`, 'error');
+        this._resetUploadButtons();
+        return;
+      }
+      if (res.remote_path && remoteInput) {
+        remoteInput.value = res.remote_path;
+      }
+
+      if (res.skipped) {
+        // 远端已存在完全同名同大小镜像，直接跳过并自动执行安装
+        this._resetUploadButtons();
+        this.updateUploadUI({ percent: 100, transferred_bytes: 1, total_bytes: 1, speed_mbps: 0, eta_seconds: 0 });
+        showToast('远端已存在同名同大小镜像包，正在自动执行 Docker 镜像安装...', 'success');
+        setTimeout(() => this.startDockerLoad(true), 500);
         return;
       }
 
@@ -574,16 +679,23 @@ const Wizard = {
         this.updateUploadUI(prog);
         if (prog.status === 'completed') {
           clearInterval(this.uploadInterval);
-          showToast('镜像上传成功！正在自动执行 docker load ...', 'success');
-          document.getElementById('input-remote-load-path').value = res.remote_path;
+          this.uploadInterval = null;
+          this._resetUploadButtons();
+          showToast('镜像上传成功！正在自动执行 Docker 镜像安装 ...', 'success');
+          if (res.remote_path && remoteInput) {
+            remoteInput.value = res.remote_path;
+          }
           this.startDockerLoad(true); // 自动执行 docker load
-        } else if (prog.status === 'error') {
+        } else if (prog.status === 'error' || prog.status === 'canceled') {
           clearInterval(this.uploadInterval);
-          showToast(`上传出错: ${prog.error_msg}`, 'error');
+          this.uploadInterval = null;
+          this._resetUploadButtons();
+          showToast(`上传异常: ${prog.error_msg}`, 'error');
         }
       }, 500);
 
     } catch (err) {
+      this._resetUploadButtons();
       showToast(`上传请求异常: ${err.message}`, 'error');
     }
   },
@@ -603,7 +715,7 @@ const Wizard = {
 
   async startDockerLoad(autoAdvance = false) {
     const pathInput = document.getElementById('input-remote-load-path');
-    const remotePath = pathInput ? pathInput.value.trim() : '/tmp/rl_cu118_v2.tar.gz';
+    const remotePath = pathInput ? pathInput.value.trim() : '/home/ubuntu/vsis_dancer_cpu_1.0.tar.gz';
 
     showToast('正在远端执行 docker load -i ... (请稍候 1~3 分钟)', 'info');
     const consoleEl = document.getElementById('image-load-console');
@@ -622,13 +734,21 @@ const Wizard = {
           }
         }, (ok) => {
           if (ok) {
-            showToast('Docker 镜像导入完成！自动进入容器启动...', 'success');
+            if (consoleEl) {
+              const banner = document.createElement('div');
+              banner.className = 'upload-success-badge';
+              banner.style.cssText = 'margin-top: 10px; padding: 10px 14px; background: rgba(16, 185, 129, 0.18); border: 1px solid #10b981; border-radius: 6px; color: #10b981; font-weight: 700; font-size: 0.9rem; display: flex; align-items: center; gap: 8px; box-shadow: 0 0 12px rgba(16, 185, 129, 0.2);';
+              banner.innerHTML = '<span>✅</span> <span>Docker 镜像导入成功！请点击【下一步】继续。</span>';
+              consoleEl.appendChild(banner);
+              consoleEl.scrollTop = consoleEl.scrollHeight;
+            }
+            showToast('✅ Docker 镜像导入完成！', 'success');
             this.refreshImagesList();
             if (autoAdvance) {
-              setTimeout(() => this.goToStep(4, true), 1000);
+              setTimeout(() => this.goToStep(4, true), 1200);
             }
           } else {
-            showToast('镜像导入异常，请查看日志', 'error');
+            showToast('❌ 镜像导入异常，请查看上方终端输出', 'error');
           }
         });
       }
@@ -640,19 +760,68 @@ const Wizard = {
   // ==========================
   // Step 4: 固化容器启动与自启动
   // ==========================
+  renderRunningContainers(containers, targetElId = 'wizard-running-containers-list') {
+    const listEl = document.getElementById(targetElId);
+    if (!listEl) return;
+    if (!containers || containers.length === 0) {
+      listEl.innerHTML = '<div style="font-size: 0.8rem; color: var(--text-muted); padding: 4px 0;">⚪ 暂无正在运行中的容器</div>';
+      return;
+    }
+    let html = '<div style="display: flex; flex-direction: column; gap: 6px;">';
+    for (const c of containers) {
+      const isUp = c.is_running;
+      const statusBadge = isUp 
+        ? `<span class="container-status-badge running">🟢 运行中</span>`
+        : `<span class="container-status-badge stopped">⚪ ${c.status || '已停止'}</span>`;
+      
+      const isWizard = targetElId.includes('wizard');
+      const stopHandler = isWizard ? `Wizard.stopContainer('${c.name}')` : `TabImage.stopContainer('${c.name}')`;
+
+      const stopBtn = isUp 
+        ? `<button class="btn btn-danger btn-xs" style="padding: 4px 10px; font-size: 0.75rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; font-weight: 600; cursor: pointer; flex-shrink: 0;" onclick="${stopHandler}" title="停止并关闭该容器">⏹️ 关闭容器</button>`
+        : '';
+
+      const portInfo = c.ports ? `<div style="font-size: 0.72rem; color: var(--text-muted); font-family: monospace; word-break: break-all; margin-top: 2px;">端口: ${c.ports}</div>` : '';
+      html += `
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; background: rgba(0, 0, 0, 0.25); border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.05); gap: 12px;">
+          <div style="min-width: 0; flex: 1;">
+            <div style="font-weight: 700; font-size: 0.85rem; color: #ffffff; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <span>📦 ${c.name}</span>
+              <span style="font-size: 0.75rem; color: var(--accent-cyan); font-family: monospace; font-weight: normal; word-break: break-all;">[${c.image}]</span>
+            </div>
+            ${portInfo}
+          </div>
+          <div style="flex-shrink: 0; display: flex; align-items: center; gap: 8px; white-space: nowrap;">
+            ${statusBadge}
+            ${stopBtn}
+          </div>
+        </div>
+      `;
+    }
+    html += '</div>';
+    listEl.innerHTML = html;
+  },
+
   async refreshImagesList() {
     try {
       const res = await API.listImages();
       const select = document.getElementById('select-docker-image');
+      
+      // 1. 渲染当前宿主机已运行容器列表
+      if (res && res.running_containers) {
+        this.renderRunningContainers(res.running_containers, 'wizard-running-containers-list');
+      }
+
       if (!select) return;
 
       select.innerHTML = '';
-      if (!res.images || res.images.length === 0) {
-        select.innerHTML = '<option value="rl_cu118:2.0">rl_cu118:2.0 (推荐默认)</option>';
+      const availableImgs = res.available_images || res.images || [];
+      if (availableImgs.length === 0) {
+        select.innerHTML = '<option value="">(所有可用镜像均已在容器中运行)</option>';
         return;
       }
 
-      for (const img of res.images) {
+      for (const img of availableImgs) {
         const opt = document.createElement('option');
         const tag = `${img.repository}:${img.tag}`;
         opt.value = tag;
@@ -660,7 +829,7 @@ const Wizard = {
         select.appendChild(opt);
       }
     } catch (err) {
-      console.error('获取镜像列表失败:', err);
+      console.error('获取镜像与容器列表失败:', err);
     }
   },
 
@@ -701,7 +870,23 @@ const Wizard = {
   },
 
   async writeAutostartAndId() {
-    const robotId = document.getElementById('select-robot-id')?.value || 'A';
+    const inputEl = document.getElementById('select-robot-id');
+    const rawValue = inputEl ? inputEl.value.trim() : '';
+    const robotId = rawValue.toUpperCase();
+
+    // 校验规则（与群控控制台"添加机器人"一致）
+    if (!robotId) {
+      showToast('Robot ID 不能为空！请输入如 A、B、R1 等唯一标识。', 'error');
+      if (inputEl) inputEl.focus();
+      return;
+    }
+    if (robotId === 'ALL') {
+      showToast('ALL 为广播保留关键字，不能作为单机 ID！', 'error');
+      if (inputEl) inputEl.focus();
+      return;
+    }
+
+    if (inputEl) inputEl.value = robotId; // 写回大写
     showToast(`正在配置开机自启并写入 Robot ID [${robotId}] ...`, 'info');
 
     try {
@@ -713,6 +898,25 @@ const Wizard = {
       }
     } catch (err) {
       showToast(`写入失败: ${err.message}`, 'error');
+    }
+  },
+
+  async stopContainer(containerName) {
+    if (!containerName) return;
+    if (!confirm(`确定要关闭/停止正在运行的容器 [${containerName}] 吗？\n停止后该容器内的运控程序将退出，且该镜像将重新在待启动镜像列表中可选。`)) {
+      return;
+    }
+    showToast(`正在关闭容器 [${containerName}] ...`, 'info');
+    try {
+      const res = await API.stopContainer(containerName);
+      if (res.success) {
+        showToast(`✅ ${res.msg}`, 'success');
+        await this.refreshImagesList();
+      } else {
+        showToast(`关闭失败: ${res.msg}`, 'error');
+      }
+    } catch (err) {
+      showToast(`关闭容器异常: ${err.message}`, 'error');
     }
   },
 
@@ -747,7 +951,25 @@ const Wizard = {
     copyToClipboard(this.detectedMachineId, '64位机器码已复制到剪贴板！');
   },
 
+  handleLicenseFileInput(input) {
+    if (input && input.files && input.files.length > 0) {
+      this.handleLicenseFile(input.files[0]);
+    }
+  },
+
+  handleLicenseDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const licDropzone = document.getElementById('license-dropzone');
+    if (licDropzone) licDropzone.classList.remove('dragover');
+    const dt = e.dataTransfer;
+    if (dt && dt.files && dt.files.length > 0) {
+      this.handleLicenseFile(dt.files[0]);
+    }
+  },
+
   async handleLicenseFile(file) {
+    if (!file) return;
     const reader = new FileReader();
     reader.onload = async (e) => {
       const content = e.target.result;

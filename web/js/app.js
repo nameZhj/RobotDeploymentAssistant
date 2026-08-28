@@ -1,8 +1,8 @@
 /**
- * VSISLAB 机器人部署助手 主应用控制器
+ * VSISLAB 机器人助手 主应用控制器
  */
 const App = {
-  activeTab: 'tab-3d-player',
+  activeTab: 'tab-robot-control',
   statusInterval: null,
 
   async init() {
@@ -15,6 +15,9 @@ const App = {
     this.initGlobalCopyEnhancers();
 
     // 初始化子模块
+    if (typeof RobotControl !== 'undefined') {
+      RobotControl.init();
+    }
     Wizard.init();
     LogViewer.init();
     ManualMode.init();
@@ -24,8 +27,9 @@ const App = {
   },
 
   initGlobalCopyEnhancers() {
-    // 1. 为所有终端控制台容器挂载浮动复制按钮
+    // 1. 为终端控制台挂载浮动复制按钮 (跳过 #log-console-content，避免破坏其 Flex 滚动容器)
     document.querySelectorAll('.terminal-console').forEach(consoleEl => {
+      if (consoleEl.id === 'log-console-content') return;
       if (consoleEl.parentElement && consoleEl.parentElement.classList.contains('console-wrapper')) return;
 
       const wrapper = document.createElement('div');
@@ -42,6 +46,17 @@ const App = {
         e.stopPropagation();
         const text = consoleEl.innerText || consoleEl.textContent;
         copyToClipboard(text, '控制台输出内容已复制');
+        const origHtml = copyBtn.innerHTML;
+        copyBtn.innerHTML = '✅ 已复制';
+        copyBtn.style.borderColor = '#10b981';
+        copyBtn.style.color = '#10b981';
+        copyBtn.style.opacity = '1';
+        setTimeout(() => {
+          copyBtn.innerHTML = origHtml;
+          copyBtn.style.borderColor = '';
+          copyBtn.style.color = '';
+          copyBtn.style.opacity = '';
+        }, 1500);
       });
       wrapper.appendChild(copyBtn);
     });
@@ -53,7 +68,7 @@ const App = {
         if (selection && selection.length > 0) {
           try {
             navigator.clipboard.writeText(selection);
-          } catch (_) {}
+          } catch (_) { }
         }
       }
     });
@@ -84,15 +99,15 @@ const App = {
       if (res.connected) {
         // 主动校验 License 与部署状态
         if (!res.first_time) {
-          // License 校验通过且无 [SKIP] not licensed，容器运行中：静默关闭向导，切换主界面
+          // License 校验通过且无 [SKIP] not licensed，容器运行中：静默关闭向导，进入首页群控控制台
           Wizard.closeModal();
-          this.switchTab('tab-3d-player');
+          this.switchTab('tab-robot-control');
           // 不显示成功通知，静默完成
         } else {
           // License 校验错误或不存在 License 或 容器未启动：弹出向导
           const reason = !res.has_license ? '未检测到 License 授权文件'
             : (!res.license_valid ? 'License 校验未通过（存在 [SKIP] not licensed）'
-            : '容器尚未部署启动');
+              : '容器尚未部署启动');
           showToast(`⚠️ ${reason}，正在调出部署向导...`, 'warning', 4000);
           Wizard.openModal(1);
         }
@@ -210,18 +225,45 @@ const App = {
     const text = document.getElementById('status-text');
     const info = document.getElementById('conn-info-display');
 
-    if (res && res.connected) {
+    const isConnected = !!(res && res.connected);
+
+    if (isConnected) {
       if (dot) dot.className = 'status-dot online';
-      if (text) text.textContent = res.first_time ? '在线 (未部署)' : '在线 (已就绪)';
+      if (text) text.textContent = res.first_time ? '在线 (待部署)' : '在线 (已就绪)';
       if (info) {
         const lat = res.latency_ms >= 0 ? `${res.latency_ms}ms` : '--';
-        info.textContent = `${res.username || 'unitree'}@${res.host || '192.168.123.164'}:${res.port || 22} [${lat}]`;
+        info.textContent = `${res.host || '192.168.123.164'} [${lat}]`;
+      }
+      if (this.lastConnectedState === false) {
+        showToast(`🎉 成功连接机器人 (${res.host || '192.168.123.164'})`, 'success', 3500);
       }
     } else {
-      if (dot) dot.className = 'status-dot';
-      if (text) text.textContent = '离线 (Offline)';
-      if (info) info.textContent = `${res?.host || '192.168.123.164'}:${res?.port || 22} (未连接)`;
+      const isAuto = res?.auto_detecting || res?.auto_connect_enabled;
+      if (dot) {
+        dot.className = isAuto ? 'status-dot detecting' : 'status-dot';
+      }
+      if (text) {
+        text.textContent = isAuto ? '探测中...' : '未连接';
+      }
+      if (info) {
+        let msg = res?.auto_status_msg || '等待连接';
+        // 过滤并精简过长的异常信息
+        if (msg.includes('Error reading SSH') || msg.includes('Connection closed') || msg.includes('banner')) {
+          msg = '响应忙';
+        } else if (msg.includes('认证失败') || msg.includes('未通过')) {
+          msg = '认证失败';
+        } else if (msg.includes('未探测到') || msg.includes('等待上线')) {
+          msg = '等待上线';
+        } else if (msg.includes('探测到 IP') || msg.includes('探测到活跃目标')) {
+          msg = '正在连接';
+        } else if (msg.length > 15) {
+          msg = msg.slice(0, 14) + '...';
+        }
+        info.textContent = `${res?.host || '192.168.123.164'} (${msg})`;
+      }
     }
+
+    this.lastConnectedState = isConnected;
 
     // 更新设置菜单中的 License 状态（仅当接口返回了授权数据时才更新，防止每 4s 的 status 轮询覆盖它）
     const licStatusEl = document.getElementById('settings-license-status');
@@ -268,8 +310,10 @@ const App = {
         }
 
         if (resultConsole) {
-          resultConsole.innerHTML = `<div class="log-info">⏳ 正在上传并部署舞蹈 [${alias}] ...</div>`;
+          resultConsole.innerHTML = `<div class="log-info">⏳ 正在准备上传并部署舞蹈 [${alias}] ...</div>`;
         }
+
+        btnSubmitUpdate.disabled = true;
 
         const formData = new FormData();
         formData.append('dance_alias', alias);
@@ -278,22 +322,35 @@ const App = {
         if (vsisFile) formData.append('vsis_file', vsisFile);
         if (licFile) formData.append('license_file', licFile);
 
-        showToast(`正在上传并部署舞蹈 [${alias}] ...`, 'info');
+        showToast(`正在注入并自动重启舞蹈 [${alias}] ...`, 'info');
         try {
           const res = await API.updateDance(formData);
-          if (res.success) {
-            showToast(res.msg, 'success');
-            if (resultConsole) {
-              resultConsole.innerHTML += `<div class="log-success">✅ ${res.msg}</div>
-                <div class="log-info">💡 提示：点击【立即重启控制进程】使新舞蹈生效。</div>`;
-            }
+          if (res.success && res.task_id) {
+            API.listenStream(res.task_id, (line, isErr) => {
+              if (resultConsole) {
+                const div = document.createElement('div');
+                div.className = isErr ? 'log-error' : (line.includes('[SUCCESS]') || line.includes('[READY]') || line.includes('[DONE]') ? 'log-success' : 'log-info');
+                div.textContent = line;
+                resultConsole.appendChild(div);
+                resultConsole.scrollTop = resultConsole.scrollHeight;
+              }
+            }, (ok) => {
+              btnSubmitUpdate.disabled = false;
+              if (ok) {
+                showToast(`🎉 舞蹈 [${alias}] 部署、授权验证与自动热重启已完成！`, 'success');
+              } else {
+                showToast(`舞蹈 [${alias}] 部署遇到异常，请查看日志`, 'error');
+              }
+            });
           } else {
-            showToast(`更新失败: ${res.msg}`, 'error');
+            btnSubmitUpdate.disabled = false;
+            showToast(`更新失败: ${res.msg || '未知错误'}`, 'error');
             if (resultConsole) {
-              resultConsole.innerHTML += `<div class="log-error">❌ 更新失败: ${res.msg}</div>`;
+              resultConsole.innerHTML += `<div class="log-error">❌ 更新失败: ${res.msg || '未知错误'}</div>`;
             }
           }
         } catch (err) {
+          btnSubmitUpdate.disabled = false;
           showToast(`更新异常: ${err.message}`, 'error');
           if (resultConsole) {
             resultConsole.innerHTML += `<div class="log-error">❌ 异常: ${err.message}</div>`;
@@ -388,9 +445,14 @@ const App = {
       });
     }
 
-    // 全局防默认打开文件
-    window.addEventListener('dragover', (e) => e.preventDefault());
-    window.addEventListener('drop', (e) => e.preventDefault());
+    // 全局防默认打开文件（确保任何未捕获的拖拽都不会导致浏览器跳转离开当前页面）
+    window.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    });
+    window.addEventListener('drop', (e) => {
+      e.preventDefault();
+    });
 
     // 拖拽多区域监听（支持拖入侧边栏列表或 3D 视口）
     const dropZones = [

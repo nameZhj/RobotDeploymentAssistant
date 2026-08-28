@@ -21,7 +21,7 @@ const ManualMode = {
       id: 'docker_run',
       title: '3. 启动固化参数 Docker 容器',
       desc: '完全固化参数，挂载 /dev/、开启 GPU 直通与特权模式',
-      cmd: 'docker run -d --restart=on-failure --name vsis_g1 --cap-add=SYS_PTRACE --gpus all --shm-size=1024m --privileged --cap-add=NET_ADMIN --device /dev/:/dev/ -v /tmp/.X11-unix:/tmp/.X11-unix:rw -v /tmp:/tmp/ -v /run/udev/:/run/udev/ -p 400:22 -p 4001:4000 -p 4002:6006 rl_cu118:2.0',
+      cmd: 'docker run -d --restart=on-failure --name vsis_g1 --network=host --shm-size=8192m --privileged --cap-add=SYS_PTRACE --cap-add=NET_ADMIN --device /dev/:/dev/ -v /tmp/.X11-unix:/tmp/.X11-unix:rw -v /tmp:/tmp/ -v /run/udev/:/run/udev/ -v /etc/localtime:/etc/localtime:ro -v /etc/timezone:/etc/timezone:ro vsis_dancer_cpu:pure',
       sudo: true
     },
     {

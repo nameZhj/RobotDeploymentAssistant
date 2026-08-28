@@ -74,17 +74,20 @@ class DanceUpdater:
         if not ok_up:
             return False, f"上传 .vsis 动作文件失败: {msg_up}"
 
-        # 拷贝到宿主机或容器对应路径
         dest_dir = os.path.dirname(remote_dest_path).replace("\\", "/")
-        ssh_manager.execute_command(f"mkdir -p {dest_dir} && cp {temp_remote} {remote_dest_path} && rm -f {temp_remote}", sudo=True)
-
-        # 同时也拷贝进容器内部
+        # 1. 优先直拷进容器内部（核心路径）
         ssh_manager.execute_command(
-            f"docker exec vsis_g1 mkdir -p {dest_dir} && docker cp {remote_dest_path} vsis_g1:{remote_dest_path} || true",
+            f"docker exec vsis_g1 mkdir -p {dest_dir} && docker cp {temp_remote} vsis_g1:{remote_dest_path}",
             sudo=True
         )
 
-        return True, f"动作文件已部署至 {remote_dest_path}"
+        # 2. 宿主机同步保留副本（若路径支持写入）
+        ssh_manager.execute_command(f"mkdir -p {dest_dir} && cp {temp_remote} {remote_dest_path} 2>/dev/null || true", sudo=True)
+
+        # 3. 清理临时上传文件
+        ssh_manager.execute_command(f"rm -f {temp_remote}", sudo=True)
+
+        return True, f"动作文件已成功部署至 {remote_dest_path}"
 
     def restart_control_processes(self, stream_callback) -> bool:
         """
@@ -101,14 +104,12 @@ class DanceUpdater:
         stream_callback("[STEP 1/2] 停止当前旧进程...\n", False)
         ssh_manager.execute_command(stop_cmd, sudo=True)
         # 在容器中也执行 pkill
-        ssh_manager.execute_command("docker exec vsis_g1 pkill -f g1_ctrl_vsis || true", sudo=True)
-        ssh_manager.execute_command("docker exec vsis_g1 pkill -f lora_recv_group || true", sudo=True)
+        ssh_manager.execute_command("docker exec vsis_g1 pkill -f g1_ctrl_vsis 2>/dev/null || true", sudo=True)
+        ssh_manager.execute_command("docker exec vsis_g1 pkill -f lora_recv_group 2>/dev/null || true", sudo=True)
 
         # 2. 拉起 run_bg.sh
-        stream_callback("[STEP 2/2] 启动 run_bg.sh 重新拉起程序...\n", False)
-        restart_cmd = "nohup /home/ubuntu/vsis_mimic_deploy/run_bg.sh >/dev/null 2>&1 &"
-        ssh_manager.execute_command(restart_cmd, sudo=True)
-        ssh_manager.execute_command(f"docker exec -d vsis_g1 /home/ubuntu/vsis_mimic_deploy/run_bg.sh || true", sudo=True)
+        stream_callback("[STEP 2/2] 正在容器中执行 run_bg.sh 重新拉起程序...\n", False)
+        ssh_manager.execute_command("docker exec -d vsis_g1 bash -c 'cd /home/ubuntu/vsis_mimic_deploy && ./run_bg.sh' 2>/dev/null || nohup /home/ubuntu/vsis_mimic_deploy/run_bg.sh >/dev/null 2>&1 &", sudo=True)
 
         time.sleep(2)
         stream_callback("[SUCCESS] 控制进程热重启指令已发送完毕！\n", False)

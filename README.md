@@ -1,4 +1,4 @@
-# VSISLAB 机器人部署助手 (Robot Deployment Assistant)
+# VSISLAB 机器人助手 (Robot Deployment Assistant)
 
 > 面向宇树 **Unitree G1 / Go2** 机器人的商业化快速部署、硬件环境预检、容器自启固化、License 授权校验、实时日志诊断与 3D 动捕动作仿真系统。
 
@@ -25,12 +25,12 @@ pip install -r requirements.txt
 ```
 
 ### 2. 启动与本地开发
-- **调试启动**：双击运行项目根目录下的 **`run_test.bat`**（或执行 `python test_tool.py`），自动挂载 Flask 服务并启动桌面客户端。
+- **本地启动**：双击运行项目根目录下的 **`run.bat`**（或在终端中执行 `python main.py`），自动挂载 Flask 后台服务并唤起客户端桌面窗口。
 - **浏览器直连**：启动后可直接访问 `http://127.0.0.1:8088` 进行前端热调试。
 
 ### 3. 编译打包与发布
-- **一键打包**：运行 **`build.bat`**（或 `python build_package.py`），自动清理并生成单目录绿色客户端至 `dist/VSISLAB机器人部署助手`。
-- **生成安装包**：使用 Inno Setup 编译 `setup_installer.iss` 即可生成一键安装向导 `.exe`。
+- **一键打包**：在 PowerShell 中运行 **`.\build.ps1`** 或双击 **`build.bat`**（亦可执行 `python build_package.py`），自动编译生成唯一的正式版独立可执行文件 **`dist/VSISLAB机器人部署助手.exe`**。
+- **便携分发**：生成的单文件 EXE 内置了前端 Web 资源、串口驱动与专属应用图标，直接双击即可运行，无需依赖 Python 环境或额外目录。
 
 ---
 
@@ -45,22 +45,20 @@ RobotDeploymentAssistant/
 │   ├── license_service.py    # 机器码读取、RSA 授权解析与有效期校验
 │   ├── npz_service.py        # 3D 动作 NPZ 数据多维度解析与骨骼拓扑适配
 │   ├── dance_updater.py      # 舞蹈动作包解压与远端部署管理
+│   ├── serial_manager.py     # LoRa 广播串口通信与群控指令调度
 │   └── log_diagnostics.py    # Docker/主机日志拉取与正则智能诊断引擎
 ├── web/                      # 前端静态资源
+│   ├── assets/               # 应用图标 (app_icon.png) 与 3D 动捕预设
 │   ├── index.html            # 主界面与部署向导弹窗模板
 │   ├── css/style.css         # 统一暗黑设计系统与动效规范
-│   └── js/
-│       ├── api.js            # RESTful API 通信层与错误封装
-│       ├── app.js            # 顶层状态机、事件中心与拖拽批量上传
-│       ├── wizard.js         # 一键部署向导状态机与全流程自动化执行
-│       ├── dance_player3d.js # Three.js 3D 骨骼渲染器与相机跟随引擎
-│       ├── log_viewer.js     # 实时日志轮询与智能诊断告警看板
-│       ├── manual_mode.js    # 交互式远端 Shell 终端控制台
-│       └── tab_panels.js     # 独立功能页签（网卡/预检/镜像/动作等）
+│   └── js/                   # 模块化前端控制器 (API/向导/3D播放/群控等)
 ├── app.py                    # Flask 路由服务入口
-├── main.py                   # PyWebview 桌面客户端启动入口
-├── test_tool.py              # 开发调试启动与进程监听
-└── run_test.bat              # 便捷调试批处理脚本
+├── main.py                   # PyWebview 桌面客户端启动入口 (含任务栏图标与进程管理)
+├── build_package.py          # 正式版单文件 EXE 自动化构建工具
+├── build.ps1                 # PowerShell 原生一键打包脚本
+├── build.bat                 # Windows 批处理一键打包入口
+├── run.bat                   # 客户端快速运行入口
+└── requirements.txt          # Python 项目依赖清单
 ```
 
 ---
