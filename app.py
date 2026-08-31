@@ -5,6 +5,7 @@ import time
 import queue
 import logging
 import threading
+import zipfile
 from flask import Flask, request, jsonify, render_template, send_from_directory, Response
 from flask_cors import CORS
 
@@ -363,6 +364,42 @@ def select_local_file():
         return jsonify({"success": False, "msg": f"打开文件选择器失败: {str(e)}"})
 
 
+@app.route("/api/system/select_folder", methods=["POST", "GET"])
+def select_local_folder():
+    """打开 Windows 原生文件夹选择器获取动作文件夹的绝对路径"""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        selected_dir = filedialog.askdirectory(
+            title="选择舞蹈动作文件夹 (包含 .vsis 动作模型与配置文件)"
+        )
+        root.destroy()
+        if selected_dir:
+            norm_path = os.path.normpath(selected_dir)
+            files_count = 0
+            total_size = 0
+            for root_dir, _, files in os.walk(norm_path):
+                for f in files:
+                    fp = os.path.join(root_dir, f)
+                    total_size += os.path.getsize(fp)
+                    files_count += 1
+            return jsonify({
+                "success": True,
+                "folder_path": norm_path,
+                "folder_name": os.path.basename(norm_path),
+                "files_count": files_count,
+                "size_bytes": total_size,
+                "size_mb": round(total_size / (1024 * 1024), 2)
+            })
+        return jsonify({"success": False, "msg": "已取消选择文件夹"})
+    except Exception as e:
+        return jsonify({"success": False, "msg": f"打开文件夹选择器失败: {str(e)}"})
+
+
+
 @app.route("/api/images/cancel_upload", methods=["POST"])
 def cancel_upload():
     """取消正在进行的镜像上传"""
@@ -435,6 +472,57 @@ def config_autostart():
     return jsonify(res)
 
 
+@app.route("/api/robot/check_env", methods=["POST"])
+def check_robot_env():
+    task_id = f"check_env_{int(time.time())}"
+    q = queue.Queue()
+    stream_queues[task_id] = q
+
+    def _worker():
+        def _cb(line, is_err):
+            push_stream_msg(task_id, line, is_err)
+
+        res = deployment_core.check_and_fix_robot_environment(_cb)
+        ok = res.get("success", False) and res.get("has_valid_id", False)
+        push_stream_msg(task_id, f"__TASK_DONE__:{ok}\n", False)
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return jsonify({"success": True, "task_id": task_id})
+
+
+@app.route("/api/robot/process_status", methods=["GET"])
+def get_robot_process_status():
+    res = deployment_core.get_robot_process_status()
+    return jsonify(res)
+
+
+@app.route("/api/robot/start_processes", methods=["POST"])
+@app.route("/api/robot/start_process", methods=["POST"])
+def start_robot_processes_route():
+    task_id = f"robot_proc_start_{int(time.time())}"
+    q = queue.Queue()
+    stream_queues[task_id] = q
+
+    def _worker():
+        def _cb(line, is_err=False):
+            push_stream_msg(task_id, line, is_err)
+
+        ok, msg = deployment_core.start_robot_processes(_cb)
+        push_stream_msg(task_id, f"__TASK_DONE__:{ok}\n", False)
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return jsonify({"success": True, "task_id": task_id})
+
+
+@app.route("/api/robot/stop_processes", methods=["POST"])
+@app.route("/api/robot/stop_process", methods=["POST"])
+def stop_robot_processes_route():
+    ok, msg = deployment_core.stop_robot_processes()
+    return jsonify({"success": ok, "msg": msg})
+
+
+
+
 # ==========================================
 # 5. 机器码与 License 管理 API
 # ==========================================
@@ -496,26 +584,65 @@ def update_dance():
     q = queue.Queue()
     stream_queues[task_id] = q
 
-    dance_alias = request.form.get("dance_alias", "").strip().upper()
-    button_group = request.form.get("button_group", "R1").strip().upper()
-    button_action = request.form.get("button_action", "SELECT").strip().upper()
-    dest_path = request.form.get("dest_path", "/secure/config_vsis/mimic_exp2").strip()
+    dest_path = request.form.get("dest_path", "/secure/config_vsis").strip() if request.form else "/secure/config_vsis"
+    local_path = ""
 
-    # 提取并暂存上传的文件
-    temp_vsis_path = None
-    if "vsis_file" in request.files:
-        vsis_f = request.files["vsis_file"]
-        if vsis_f and vsis_f.filename:
-            temp_dir = os.path.join(os.path.dirname(__file__), "temp_uploads")
-            os.makedirs(temp_dir, exist_ok=True)
-            temp_vsis_path = os.path.join(temp_dir, vsis_f.filename)
-            vsis_f.save(temp_vsis_path)
+    # 1. 检查是否有上传的 .zip 文件或文件夹多文件
+    temp_zip_path = None
+    upload_file = request.files.get("zip_file") or request.files.get("file") or request.files.get("vsis_file")
+    folder_files = request.files.getlist("files")
 
-    lic_content = None
-    if "license_file" in request.files:
-        lic_f = request.files["license_file"]
-        if lic_f and lic_f.filename:
-            lic_content = lic_f.read().decode("utf-8", errors="ignore")
+    temp_dir = os.path.join(os.path.dirname(__file__), "temp_uploads")
+    os.makedirs(temp_dir, exist_ok=True)
+
+    if upload_file and upload_file.filename:
+        if upload_file.filename.lower().endswith(".zip"):
+            temp_zip_path = os.path.join(temp_dir, upload_file.filename)
+            upload_file.save(temp_zip_path)
+        else:
+            # 单个非 zip 文件（如单个 .vsis），打包成 zip
+            temp_zip_path = os.path.join(temp_dir, f"{os.path.splitext(upload_file.filename)[0]}.zip")
+            with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr(upload_file.filename, upload_file.read())
+    elif folder_files and len(folder_files) > 0:
+        # 拖拽或选择的整个动作文件夹（包含多个文件）
+        paths_list = request.form.getlist("paths")
+        temp_zip_path = os.path.join(temp_dir, f"dance_folder_{int(time.time())}.zip")
+        with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for idx, f in enumerate(folder_files):
+                if f and f.filename:
+                    rel_path = paths_list[idx] if (idx < len(paths_list) and paths_list[idx]) else f.filename
+                    rel_path = rel_path.replace("\\", "/").lstrip("/")
+                    # 去除多余的顶层包装文件夹名（若有），直接放置模型与配置文件
+                    parts = rel_path.split("/")
+                    if len(parts) > 1 and parts[0] in ("config_vsis", "mimic_exp2", "mimic", "dances", "secure"):
+                        rel_path = "/".join(parts[1:])
+                    zf.writestr(rel_path, f.read())
+    elif request.is_json:
+        data = request.json or {}
+        local_path = data.get("local_path", "").strip()
+    elif request.form:
+        local_path = request.form.get("local_path", "").strip()
+
+    if not temp_zip_path and local_path and os.path.exists(local_path):
+        if os.path.isdir(local_path):
+            temp_zip_path = os.path.join(temp_dir, f"dance_folder_{int(time.time())}.zip")
+            with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for root_dir, _, files in os.walk(local_path):
+                    for f in files:
+                        abs_f = os.path.join(root_dir, f)
+                        rel_path = os.path.relpath(abs_f, local_path).replace("\\", "/")
+                        parts = rel_path.split("/")
+                        if len(parts) > 1 and parts[0] in ("config_vsis", "mimic_exp2", "mimic", "dances", "secure"):
+                            rel_path = "/".join(parts[1:])
+                        zf.write(abs_f, rel_path)
+        else:
+            temp_zip_path = local_path
+
+    if not temp_zip_path or not os.path.exists(temp_zip_path):
+        return jsonify({"success": False, "msg": "未检测到上传的动作压缩包或动作文件夹，请选择文件后重试"})
+
+
 
     def _worker():
         def _cb(line, is_err=False):
@@ -527,49 +654,21 @@ def update_dance():
                 push_stream_msg(task_id, "__TASK_DONE__:False\n", False)
                 return
 
-            _cb(f"[STEP 1/4] 🚀 开始处理舞蹈动作包 [{dance_alias}] ...\n", False)
+            _cb(f"[STEP 1/2] 🚀 开始导入舞蹈动作包 [{os.path.basename(temp_zip_path)}] ...\n", False)
 
-            # 1. 部署 .vsis 动作权重文件
-            if temp_vsis_path:
-                _cb(f"[INFO] 正在上传 .vsis 动作文件并覆盖至 {dest_path} ...\n", False)
-                ok_vsis, msg_vsis = dance_updater.deploy_vsis_file(temp_vsis_path, dest_path)
-                if not ok_vsis:
-                    _cb(f"[ERROR] {msg_vsis}\n", True)
-                    push_stream_msg(task_id, "__TASK_DONE__:False\n", False)
-                    return
-                _cb(f"[SUCCESS] ✅ {msg_vsis}\n", False)
-            else:
-                _cb("[INFO] 未上传新 .vsis 文件，沿用当前已有的动作模型。\n", False)
+            # 1. 解压并覆盖至目标目录 /secure/config_vsis
+            ok_zip, msg_zip = dance_updater.deploy_zip_package(temp_zip_path, _cb, dest_path=dest_path)
+            if not ok_zip:
+                _cb(f"[ERROR] 动作包部署失败: {msg_zip}\n", True)
+                push_stream_msg(task_id, "__TASK_DONE__:False\n", False)
+                return
 
-            # 2. 部署与验证 License
-            _cb("[STEP 2/4] 检查并部署 License 授权...\n", False)
-            if lic_content and lic_content.strip():
-                _cb("[INFO] 正在写入新 license.json 并校验机器码授权...\n", False)
-                lic_res = license_service.deploy_license_to_robot(lic_content)
-                if not lic_res.get("success"):
-                    _cb(f"[ERROR] License 部署校验失败: {lic_res.get('msg')}\n", True)
-                    push_stream_msg(task_id, "__TASK_DONE__:False\n", False)
-                    return
-                _cb(f"[SUCCESS] ✅ License 授权校验通过: {lic_res.get('msg')}\n", False)
-            else:
-                _cb("[INFO] 未上传新 license.json，沿用当前已有的授权配置。\n", False)
-
-            # 3. 更新 YAML dance_map 映射
-            _cb(f"[STEP 3/4] 更新 group/lora_recv_group.yaml 映射: {dance_alias} -> [{button_group}, {button_action}] ...\n", False)
-            if dance_alias:
-                ok_map, msg_map = dance_updater.update_dance_map(dance_alias, button_group, button_action)
-                if not ok_map:
-                    _cb(f"[ERROR] {msg_map}\n", True)
-                    push_stream_msg(task_id, "__TASK_DONE__:False\n", False)
-                    return
-                _cb(f"[SUCCESS] ✅ {msg_map}\n", False)
-
-            # 4. 自动热重启机载进程
-            _cb("[STEP 4/4] 🔄 正在自动热重启机载运控与通信进程使新配置生效...\n", False)
+            # 2. 自动热重启机载进程
+            _cb("[STEP 2/2] 🔄 正在自动热重启机载运控与跳舞进程使新配置生效...\n", False)
             ok_restart = dance_updater.restart_control_processes(_cb)
             if ok_restart:
-                _cb(f"[SUCCESS] 🎉 舞蹈 [{dance_alias}] 导入、授权校验与自动热重启已圆满完成！\n", False)
-                _cb(f"[READY] 💡 群控测试指令: ALL|DANCE,{dance_alias}\n", False)
+                _cb("[SUCCESS] 🎉 舞蹈动作压缩包导入、解压覆盖与跳舞程序自动热重启已全部圆满完成！\n", False)
+                _cb("[READY] 💡 新舞蹈动作已就绪，可随时在群控页面下发指令进行测试。\n", False)
                 push_stream_msg(task_id, "__TASK_DONE__:True\n", False)
             else:
                 _cb("[WARN] 机载进程重启遇到异常，请在【镜像与容器管理】页面检查运行状态。\n", True)
@@ -578,60 +677,21 @@ def update_dance():
         except Exception as e:
             _cb(f"[ERROR] 执行异常: {str(e)}\n", True)
             push_stream_msg(task_id, "__TASK_DONE__:False\n", False)
+        finally:
+            # 清理临时上传的本地文件
+            if temp_zip_path and "temp_uploads" in temp_zip_path and os.path.exists(temp_zip_path):
+                try:
+                    os.remove(temp_zip_path)
+                except Exception:
+                    pass
 
     threading.Thread(target=_worker, daemon=True).start()
-    return jsonify({"success": True, "task_id": task_id})
+    return jsonify({"success": True, "task_id": task_id, "filename": os.path.basename(temp_zip_path)})
 
 
-@app.route("/api/robot/process_status", methods=["GET"])
-def get_robot_process_status():
-    if not ssh_manager.is_connected():
-        return jsonify({"success": False, "connected": False, "msg": "未连接至机器人"})
 
-    code1, out1, _ = ssh_manager.execute_command("ps aux | grep -E 'g1_ctrl_vsis|sec_run' | grep -v grep", sudo=True)
-    code2, out2, _ = ssh_manager.execute_command("ps aux | grep -E 'lora_recv_group' | grep -v grep", sudo=True)
-    code1_c, out1_c, _ = ssh_manager.execute_command("docker exec vsis_g1 ps aux 2>/dev/null | grep -E 'g1_ctrl_vsis|sec_run' | grep -v grep || true", sudo=True)
-    code2_c, out2_c, _ = ssh_manager.execute_command("docker exec vsis_g1 ps aux 2>/dev/null | grep -E 'lora_recv_group' | grep -v grep || true", sudo=True)
+# 6. 机器人机载运控与通信程序控制 API (已在前文统一声明)
 
-    g1_up = (code1 == 0 and bool(out1.strip())) or (code1_c == 0 and bool(out1_c.strip()))
-    lora_up = (code2 == 0 and bool(out2.strip())) or (code2_c == 0 and bool(out2_c.strip()))
-
-    return jsonify({
-        "success": True,
-        "connected": True,
-        "g1_ctrl_running": g1_up,
-        "lora_recv_running": lora_up,
-        "all_running": g1_up and lora_up
-    })
-
-
-@app.route("/api/robot/start_processes", methods=["POST"])
-def start_robot_processes():
-    task_id = f"start_robot_proc_{int(time.time())}"
-    q = queue.Queue()
-    stream_queues[task_id] = q
-
-    def _worker():
-        def _cb(line, is_err):
-            push_stream_msg(task_id, line, is_err)
-
-        ok = dance_updater.restart_control_processes(_cb)
-        push_stream_msg(task_id, f"__TASK_DONE__:{ok}\n", False)
-
-    threading.Thread(target=_worker, daemon=True).start()
-    return jsonify({"success": True, "task_id": task_id})
-
-
-@app.route("/api/robot/stop_processes", methods=["POST"])
-def stop_robot_processes():
-    if not ssh_manager.is_connected():
-        return jsonify({"success": False, "msg": "未连接至机器人"})
-
-    stop_cmd = "pkill -f g1_ctrl_vsis ; pkill -f lora_recv_group ; sleep 1"
-    ssh_manager.execute_command(stop_cmd, sudo=True)
-    ssh_manager.execute_command("docker exec vsis_g1 pkill -f g1_ctrl_vsis || true", sudo=True)
-    ssh_manager.execute_command("docker exec vsis_g1 pkill -f lora_recv_group || true", sudo=True)
-    return jsonify({"success": True, "msg": "已向机器人发送停止运控与 LoRa 进程指令 (pkill)"})
 
 
 # ==========================================
@@ -773,6 +833,54 @@ def disconnect_serial():
 def get_serial_status():
     status = serial_manager.get_status()
     return jsonify({"success": True, "data": status})
+
+
+@app.route("/api/serial/dance_list", methods=["GET", "POST"])
+def get_serial_dance_list():
+    """获取从串口同步到的最新舞蹈列表"""
+    data = request.json if request.is_json else {}
+    force_refresh = request.args.get("refresh", "0") in ["1", "true", "True"] or (data and data.get("refresh"))
+    
+    if force_refresh and serial_manager.ser is not None and serial_manager.ser.is_open:
+        res = serial_manager.request_dance_list(timeout=2.0)
+        return jsonify(res)
+        
+    res = serial_manager.get_dance_list()
+    return jsonify(res)
+
+
+@app.route("/api/serial/refresh_dance_list", methods=["POST"])
+def refresh_serial_dance_list():
+    """向串口重新发送 ALL|GETDANCELIST 并返回解析后的舞蹈列表"""
+    data = request.json or {}
+    timeout = float(data.get("timeout", 2.5))
+    res = serial_manager.request_dance_list(timeout=timeout)
+    return jsonify(res)
+
+
+@app.route("/api/serial/parse_dances", methods=["POST"])
+def parse_dances_api():
+    """解析传入的 YAML 舞蹈配置字符串并返回标准结构化数据"""
+    data = request.json or {}
+    raw_text = data.get("content", "").strip()
+    if not raw_text:
+        return jsonify({"success": False, "msg": "内容为空", "groups": []})
+    
+    from backend.serial_manager import parse_dance_map_yaml
+    groups = parse_dance_map_yaml(raw_text)
+    total_count = sum(len(g.get("items", [])) for g in groups)
+    
+    # 缓存解析结果
+    serial_manager.latest_dance_list_raw = raw_text
+    serial_manager.latest_dance_list_parsed = groups
+    
+    return jsonify({
+        "success": True,
+        "groups": groups,
+        "total_count": total_count,
+        "raw": raw_text
+    })
+
 
 
 # ==========================================

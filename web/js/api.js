@@ -121,6 +121,11 @@ const API = {
     return this.request('/api/system/select_file', { method: 'POST' });
   },
 
+  selectFolder() {
+    return this.request('/api/system/select_folder', { method: 'POST' });
+  },
+
+
   cancelUpload() {
     return this.request('/api/images/cancel_upload', { method: 'POST' });
   },
@@ -160,6 +165,13 @@ const API = {
       body: JSON.stringify({ robot_id: robotId })
     });
   },
+
+  checkRobotEnv() {
+    return this.request('/api/robot/check_env', {
+      method: 'POST'
+    });
+  },
+
 
   // 5. 机器码与 License
   getMachineId() {
@@ -287,6 +299,25 @@ const API = {
 
   getSerialStatus() {
     return this.request('/api/serial/status');
+  },
+
+  getSerialDanceList(forceRefresh = false) {
+    const url = forceRefresh ? '/api/serial/dance_list?refresh=1' : '/api/serial/dance_list';
+    return this.request(url);
+  },
+
+  refreshSerialDanceList(timeout = 2.5) {
+    return this.request('/api/serial/refresh_dance_list', {
+      method: 'POST',
+      body: JSON.stringify({ timeout })
+    });
+  },
+
+  parseSerialDances(yamlContent) {
+    return this.request('/api/serial/parse_dances', {
+      method: 'POST',
+      body: JSON.stringify({ content: yamlContent })
+    });
   },
 
   // 10. SSE 任务日志流监听

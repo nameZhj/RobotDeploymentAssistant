@@ -488,10 +488,15 @@ fi
             stream_callback("\n[SUCCESS] 🎉 Docker 镜像成功导入完成！\n", False)
             if code_img == 0 and img_out.strip():
                 stream_callback(f"[INFO] 机器人宿主机当前镜像列表:\n{img_out.strip()}\n", False)
+
+            # 导入镜像后自动执行环境巡检与权限修复
+            self.check_and_fix_robot_environment(stream_callback)
+
             return True, "镜像导入成功"
         else:
             stream_callback(f"[ERROR] 镜像导入失败，退出码: {code}\n", True)
             return False, f"镜像导入失败 (code {code})"
+
 
     def start_container(self, image_name: str, stream_callback) -> Tuple[bool, str]:
         """
@@ -559,13 +564,256 @@ fi
             startup_script = "#!/bin/bash\n/home/ubuntu/vsis_mimic_deploy/run_bg.sh\n"
             ssh_manager.write_remote_text_file(startup_script, "/docker_config/custom_startup.sh", sudo=True)
             ssh_manager.execute_command("chmod +x /docker_config/custom_startup.sh", sudo=True)
-            ssh_manager.execute_command(f"docker cp /docker_config/custom_startup.sh {container_name}:/docker_config/custom_startup.sh 2>/dev/null || true", sudo=True)
-            ssh_manager.execute_command(f"docker exec {container_name} chmod +x /docker_config/custom_startup.sh 2>/dev/null || true", sudo=True)
             stream_callback("[SUCCESS] ✅ 开机自启动钩子已写入！机器人每次开机将自动执行 run_bg.sh 拉起跳舞与 LoRa 进程。\n", False)
+
+            # 启动容器后自动执行环境巡检与权限修复
+            self.check_and_fix_robot_environment(stream_callback)
+
             return True, "容器启动成功"
         else:
             stream_callback(f"[WARNING] 容器已创建但未能处于 Up 状态，请检查镜像日志: docker logs {container_name}\n", True)
             return False, "容器未处于运行状态"
+
+    def check_and_fix_robot_environment(self, stream_callback=None) -> Dict[str, Any]:
+        """
+        安装/启动镜像后自动执行环境巡检与权限修复：
+        1. 检查 lora_robot_id.txt 中是否有有效 ID，没有则提示用户写入 ID
+        2. 检查 run_bg.sh 及运控/LoRa/串口设备权限，发现权限问题自动修复 (chmod +x / 666 / udev 规则)
+        """
+        def _cb(msg, is_err=False):
+            if stream_callback:
+                stream_callback(msg, is_err)
+
+        _cb("\n=======================================================\n", False)
+        _cb("🔍 [自动巡检] 正在检查 Robot ID 与机载程序 (run_bg.sh) 权限配置...\n", False)
+        _cb("=======================================================\n", False)
+
+        if not ssh_manager.is_connected():
+            _cb("[ERROR] 未连接至机器人，跳过自动巡检。\n", True)
+            return {"success": False, "msg": "未连接至机器人"}
+
+        # 1. 检查与自动修复 run_bg.sh 及相关可执行文件权限
+        _cb("[STEP 1/2] 正在校验并自动修复 run_bg.sh 启动脚本与底层设备权限...\n", False)
+
+        # 确保 udev 规则存在并覆盖 /dev/bus/usb/*/*
+        udev_rule_path = "/etc/udev/rules.d/99-ch341-permissions.rules"
+        udev_content = (
+            'KERNEL=="ttyCH341*", MODE="0666", GROUP="dialout"\n'
+            'KERNEL=="ttyUSB*", MODE="0666", GROUP="dialout"\n'
+            'SUBSYSTEM=="tty", KERNEL=="ttyCH341USB*", MODE="0666", GROUP="dialout"\n'
+            'SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", MODE="0666", GROUP="dialout"\n'
+            'SUBSYSTEM=="usb", ATTR{idVendor}=="1a86", MODE="0666", GROUP="dialout"\n'
+            'SUBSYSTEM=="usb", MODE="0666"\n'
+        )
+        ssh_manager.write_remote_text_file(udev_content, udev_rule_path, sudo=True)
+        ssh_manager.execute_command("udevadm control --reload-rules && udevadm trigger", sudo=True)
+        ssh_manager.execute_command("usermod -a -G dialout,plugdev,tty unitree ; usermod -a -G dialout,plugdev,tty ubuntu 2>/dev/null || true", sudo=True)
+
+        # 确保 run_bg.sh 是最新的高可靠开机自启与守护版本
+        run_bg_script = '''#!/bin/bash
+SCRIPT_DIR="/home/ubuntu/vsis_mimic_deploy"
+cd "$SCRIPT_DIR"
+
+mkdir -p "$SCRIPT_DIR/log"
+
+# 动态库路径配置
+export LD_LIBRARY_PATH="$SCRIPT_DIR/thirdparty/onnxruntime-linux-aarch64-1.22.0/lib:/home/ubuntu/unitree_sdk2/thirdparty/lib/aarch64:/usr/local/lib:$LD_LIBRARY_PATH"
+
+VSIS_PATH="$SCRIPT_DIR/secure/config_vsis/mimic_exp2"
+[ ! -d "$VSIS_PATH" ] && VSIS_PATH="$SCRIPT_DIR/secure/config_vsis/mimic"
+CONFIG_NAME="config.yaml"
+LICENSE_PATH="$SCRIPT_DIR/license.json"
+ROBOT_ID_FILE="$SCRIPT_DIR/group/lora_robot_id.txt"
+
+# 0. 停止旧进程
+pkill -9 -f g1_ctrl_vsis 2>/dev/null || true
+pkill -9 -f lora_recv_group 2>/dev/null || true
+sleep 1
+
+# 1. 赋予核心脚本执行权限与设备读写权限
+chmod +x "$SCRIPT_DIR/sec_run.sh" "$SCRIPT_DIR/g1_ctrl_vsis" "$SCRIPT_DIR/lora_recv_group" 2>/dev/null || true
+chmod 666 /dev/ttyCH341* /dev/ttyUSB* /dev/bus/usb/*/* 2>/dev/null || true
+
+# 2. 启动运控程序
+echo "[INFO] 启动运控: $VSIS_PATH ..."
+nohup "$SCRIPT_DIR/sec_run.sh" "$VSIS_PATH" "$CONFIG_NAME" "$LICENSE_PATH" > "$SCRIPT_DIR/log/sec_run.log" 2>&1 &
+
+# 3. 读取 Robot ID
+ROBOT_ID="A"
+if [ -f "$ROBOT_ID_FILE" ]; then
+    ROBOT_ID=$(cat "$ROBOT_ID_FILE" | tr -d ' \\r\\n')
+fi
+[ -z "$ROBOT_ID" ] && ROBOT_ID="A"
+
+# 4. LoRa 守护启动函数 (支持开机等待串口初始化与断线自动重拉)
+launch_lora_daemon() {
+    local target_id="$1"
+    
+    # 循环尝试检测串口并拉起 (最多等待串口初始化 30 秒)
+    for i in $(seq 1 30); do
+        SERIAL_DEV="/dev/ttyCH341USB0"
+        if [ ! -e "$SERIAL_DEV" ] && [ -e "/dev/ttyUSB0" ]; then
+            SERIAL_DEV="/dev/ttyUSB0"
+        fi
+        
+        if [ -e "$SERIAL_DEV" ]; then
+            chmod 666 "$SERIAL_DEV" /dev/bus/usb/*/* 2>/dev/null || true
+            echo "[INFO] 检测到串口设备 $SERIAL_DEV，正在启动 LoRa 接收程序 (Robot ID: $target_id)..." >> "$SCRIPT_DIR/log/lora_recv.log"
+            "$SCRIPT_DIR/lora_recv_group" eth0 "$SERIAL_DEV" "$target_id" 0 >> "$SCRIPT_DIR/log/lora_recv.log" 2>&1
+            EXIT_CODE=$?
+            echo "[WARN] lora_recv_group 退出 (code $EXIT_CODE)，2 秒后自动重试..." >> "$SCRIPT_DIR/log/lora_recv.log"
+        else
+            echo "[WAIT] 等待串口设备出现 ($i/30)..." >> "$SCRIPT_DIR/log/lora_recv.log"
+        fi
+        sleep 2
+    done
+}
+
+echo "[INFO] 启动 LoRa 接收守护进程 (Robot ID: $ROBOT_ID) ..."
+nohup bash -c "$(declare -f launch_lora_daemon); launch_lora_daemon '$ROBOT_ID'" >/dev/null 2>&1 &
+
+echo "[SUCCESS] 运控与 LoRa 接收程序已在后台启动完成。"
+'''
+        ssh_manager.write_remote_text_file(run_bg_script, "/home/ubuntu/vsis_mimic_deploy/run_bg.sh", sudo=True)
+
+        # 自动修复 run_bg.sh, sec_run.sh, g1_ctrl_vsis, lora_recv_group 权限及串口权限
+        fix_perm_cmd = (
+            "chmod +x /home/ubuntu/vsis_mimic_deploy/run_bg.sh "
+            "/home/ubuntu/vsis_mimic_deploy/sec_run.sh "
+            "/home/ubuntu/vsis_mimic_deploy/g1_ctrl_vsis "
+            "/home/ubuntu/vsis_mimic_deploy/lora_recv_group "
+            "/docker_config/custom_startup.sh 2>/dev/null || true ; "
+            "chmod 666 /dev/ttyCH341* /dev/ttyUSB* /dev/bus/usb/*/* 2>/dev/null || true ; "
+            "docker exec vsis_g1 chmod +x /home/ubuntu/vsis_mimic_deploy/run_bg.sh "
+            "/home/ubuntu/vsis_mimic_deploy/sec_run.sh "
+            "/home/ubuntu/vsis_mimic_deploy/g1_ctrl_vsis "
+            "/home/ubuntu/vsis_mimic_deploy/lora_recv_group "
+            "/docker_config/custom_startup.sh 2>/dev/null || true ; "
+            "docker exec vsis_g1 chmod 666 /dev/ttyCH341* /dev/ttyUSB* /dev/bus/usb/*/* 2>/dev/null || true"
+        )
+        ssh_manager.execute_command(fix_perm_cmd, sudo=True)
+        _cb("[SUCCESS] ✅ run_bg.sh、守护逻辑与 USB/串口权限已自动完成检查与修复 (赋予 0666 与 +x)！\n", False)
+
+        # 2. 检查 lora_robot_id.txt
+        _cb("[STEP 2/2] 正在检查 lora_robot_id.txt 中的群控标识 (Robot ID)...\n", False)
+        code_id, id_out, _ = ssh_manager.execute_command("cat /home/ubuntu/vsis_mimic_deploy/group/lora_robot_id.txt 2>/dev/null", sudo=True)
+        robot_id = id_out.strip().upper() if code_id == 0 else ""
+
+        has_valid_id = bool(robot_id and robot_id != "ALL" and len(robot_id) <= 20)
+        if has_valid_id:
+            _cb(f"[SUCCESS] ✅ 检测到已配置合法 Robot ID: [{robot_id}]\n", False)
+        else:
+            _cb(f"[WARN] ⚠️ 未检测到有效 Robot ID (当前值为 '{robot_id or '空'}')！\n", True)
+            _cb("[PROMPT_ROBOT_ID] 💡 提示：请在右侧【开机自启与 Robot ID】卡片中输入分配的唯一 ID (如 A, B, R1 等) 并点击【写入自启动钩子与 Robot ID】。\n", True)
+
+        _cb("=======================================================\n\n", False)
+        return {
+            "success": True,
+            "has_valid_id": has_valid_id,
+            "robot_id": robot_id,
+            "permissions_fixed": True
+        }
+
+    def get_robot_process_status(self) -> Dict[str, Any]:
+        """
+        检查机器人端机载运控程序 (g1_ctrl_vsis) 与 LoRa 接收程序 (lora_recv_group) 运行状态
+        """
+        if not ssh_manager.is_connected():
+            return {
+                "connected": False,
+                "g1_ctrl_running": False,
+                "lora_recv_running": False,
+                "all_running": False,
+                "msg": "未连接至机器人"
+            }
+
+        cmd = (
+            "ps aux | grep -E 'g1_ctrl_vsis|lora_recv_group' | grep -v grep ; "
+            "docker exec vsis_g1 ps aux 2>/dev/null | grep -E 'g1_ctrl_vsis|lora_recv_group' | grep -v grep || true"
+        )
+        code, out, _ = ssh_manager.execute_command(cmd, sudo=True)
+        g1_ctrl_running = "g1_ctrl_vsis" in out
+        lora_recv_running = "lora_recv_group" in out
+
+        return {
+            "connected": True,
+            "g1_ctrl_running": g1_ctrl_running,
+            "lora_recv_running": lora_recv_running,
+            "all_running": g1_ctrl_running and lora_recv_running,
+            "output": out.strip()
+        }
+
+    def start_robot_processes(self, stream_callback=None) -> Tuple[bool, str]:
+        """
+        在机器人端启动机载程序 (run_bg.sh)
+        """
+        def _cb(msg, is_err=False):
+            if stream_callback:
+                stream_callback(msg, is_err)
+
+        if not ssh_manager.is_connected():
+            _cb("[ERROR] 未连接至机器人！\n", True)
+            return False, "未连接至机器人"
+
+        _cb("[STEP 1/3] 正在对运行脚本与设备节点赋予执行与读写权限...\n", False)
+        fix_cmd = (
+            "chmod +x /home/ubuntu/vsis_mimic_deploy/run_bg.sh "
+            "/home/ubuntu/vsis_mimic_deploy/sec_run.sh "
+            "/home/ubuntu/vsis_mimic_deploy/g1_ctrl_vsis "
+            "/home/ubuntu/vsis_mimic_deploy/lora_recv_group 2>/dev/null || true ; "
+            "chmod 666 /dev/ttyCH341* /dev/ttyUSB* /dev/bus/usb/*/* 2>/dev/null || true ; "
+            "docker exec vsis_g1 chmod +x /home/ubuntu/vsis_mimic_deploy/run_bg.sh "
+            "/home/ubuntu/vsis_mimic_deploy/sec_run.sh "
+            "/home/ubuntu/vsis_mimic_deploy/g1_ctrl_vsis "
+            "/home/ubuntu/vsis_mimic_deploy/lora_recv_group 2>/dev/null || true ; "
+            "docker exec vsis_g1 chmod 666 /dev/ttyCH341* /dev/ttyUSB* /dev/bus/usb/*/* 2>/dev/null || true"
+        )
+        ssh_manager.execute_command(fix_cmd, sudo=True)
+
+        _cb("[STEP 2/3] 正在拉起机载程序 (run_bg.sh) ...\n", False)
+        start_cmd = (
+            "docker exec -d vsis_g1 bash -c 'cd /home/ubuntu/vsis_mimic_deploy && ./run_bg.sh' 2>/dev/null "
+            "|| (cd /home/ubuntu/vsis_mimic_deploy && nohup ./run_bg.sh >/dev/null 2>&1 &)"
+        )
+        ssh_manager.execute_command(start_cmd, sudo=True)
+
+        _cb("[STEP 3/3] 等待机载程序初始化并校验进程状态...\n", False)
+        for _ in range(3):
+            time.sleep(1.2)
+            status = self.get_robot_process_status()
+            if status.get("g1_ctrl_running") or status.get("lora_recv_running"):
+                _cb(f"[SUCCESS] ✅ 机载程序已成功启动！(运控: {'🟢 运行中' if status.get('g1_ctrl_running') else '⚪ 未运行'}, LoRa: {'🟢 运行中' if status.get('lora_recv_running') else '⚪ 未运行'})\n", False)
+                return True, "机载程序已成功拉起"
+
+        _cb("[SUCCESS] 🚀 机载程序启动指令已发送完毕！机载端正在后台初始化 (可点击【🔄 刷新】更新状态)。\n", False)
+        return True, "启动指令已下发"
+
+
+    def stop_robot_processes(self, stream_callback=None) -> Tuple[bool, str]:
+        """
+        停止机器人端机载运控与通信程序
+        """
+        def _cb(msg, is_err=False):
+            if stream_callback:
+                stream_callback(msg, is_err)
+
+        if not ssh_manager.is_connected():
+            _cb("[ERROR] 未连接至机器人！\n", True)
+            return False, "未连接至机器人"
+
+        _cb("[INFO] 正在停止机载运控与群控进程 (pkill -f g1_ctrl_vsis ; pkill -f lora_recv_group) ...\n", False)
+        cmd = (
+            "pkill -f g1_ctrl_vsis 2>/dev/null || true ; "
+            "pkill -f lora_recv_group 2>/dev/null || true ; "
+            "docker exec vsis_g1 pkill -f g1_ctrl_vsis 2>/dev/null || true ; "
+            "docker exec vsis_g1 pkill -f lora_recv_group 2>/dev/null || true"
+        )
+        ssh_manager.execute_command(cmd, sudo=True)
+        time.sleep(1.0)
+        _cb("[SUCCESS] ✅ 机器人机载运控与 LoRa 接收进程已停止。\n", False)
+        return True, "机载进程已成功停止"
+
+
 
     def stop_container(self, container_name: str) -> Tuple[bool, str]:
         """停止指定的 Docker 容器"""
@@ -600,8 +848,8 @@ fi
         if robot_id == "ALL":
             return {"success": False, "msg": "ALL 为群控广播保留关键字，不能作为单机 ID！"}
 
-        # 1. 写入 custom_startup.sh
-        startup_script_content = "#!/bin/bash\n/home/ubuntu/vsis_mimic_deploy/run_bg.sh\n"
+        # 1. 写入 custom_startup.sh (加 sleep 3 确保开机时 USB 串口驱动已完全加载)
+        startup_script_content = "#!/bin/bash\nsleep 3\n/home/ubuntu/vsis_mimic_deploy/run_bg.sh\n"
         ok_startup, msg_startup = ssh_manager.write_remote_text_file(
             startup_script_content,
             "/docker_config/custom_startup.sh",

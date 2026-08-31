@@ -61,6 +61,9 @@ const RobotControl = {
 
     this.logTerminal('system', '[SYSTEM] 机器人群控控制台已就绪。正在自动检测串口通信通道...');
 
+    // 0. 初始化加载并渲染舞蹈列表
+    this.fetchAndRenderDanceList(false);
+
     // 1. 自动检测并连接最佳串口（零点击自动连接 CH340/CH341）
     await this.autoDetectAndConnectSerial(false);
 
@@ -164,6 +167,15 @@ const RobotControl = {
       sendCustomBtn.addEventListener('click', doSend);
       customInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') doSend();
+      });
+    }
+
+    // 刷新舞蹈列表按钮 (ALL|GETDANCELIST)
+    const refreshDanceBtn = document.getElementById('ctrl-refresh-dance-btn');
+    if (refreshDanceBtn) {
+      refreshDanceBtn.addEventListener('click', () => {
+        this.logTerminal('system', '[DANCE] 正在向机器人发送 ALL|GETDANCELIST 重新同步舞蹈列表...');
+        this.fetchAndRenderDanceList(true);
       });
     }
 
@@ -581,6 +593,8 @@ const RobotControl = {
         }
 
         this.logTerminal('system', `[SERIAL AUTO] 成功自动识别并连接串口: ${this.activePort} (${this.activeDesc}) @ ${this.activeBaud} Baud`);
+        // 首次连接成功后后台已触发一次同步，前端读取缓存渲染，避免二次发送 GETDANCELIST
+        this.fetchAndRenderDanceList(false);
       } else {
         this.isConnected = false;
         if (statusBadge) statusBadge.className = 'status-badge disconnected';
@@ -654,6 +668,7 @@ const RobotControl = {
 
         this.logTerminal('system', `[SERIAL SUCCESS] 成功连接串口: ${portName}`);
         await this.refreshPortList();
+        this.fetchAndRenderDanceList(false);
       } else {
         this.logTerminal('error', `[SERIAL ERROR] 连接失败: ${res?.msg || '未知原因'}`);
       }
@@ -661,6 +676,7 @@ const RobotControl = {
       this.logTerminal('error', `[SERIAL ERROR] ${e.message || e}`);
     }
   },
+
 
   async disconnectSerial() {
     this.logTerminal('system', '[SERIAL] 断开前主动下发安全复位 (ALL|GAIT)...');
@@ -930,6 +946,157 @@ const RobotControl = {
 
     while (terminal.children.length > 200) {
       terminal.removeChild(terminal.firstChild);
+    }
+  },
+
+  // --- 动态串口舞蹈列表状态与渲染逻辑 ---
+  currentDanceGroups: [],
+
+  DEFAULT_DANCE_GROUPS: [
+    {
+      group_id: 'G1',
+      title: 'G1 动作组 (L1)',
+      items: [
+        { alias: 'G1_TURN_JUMP', name: '转身跳跃', short_code: 'TURN_JUMP', cmd: 'DANCE,G1_TURN_JUMP', keys: ['L1', 'DOWN'] },
+        { alias: 'G1_FRONT_FLIP', name: '前空翻', short_code: 'FRONT_FLIP', cmd: 'DANCE,G1_FRONT_FLIP', keys: ['L1', 'RIGHT'] },
+        { alias: 'G1_SIDE_FLIP', name: '侧空翻', short_code: 'SIDE_FLIP', cmd: 'DANCE,G1_SIDE_FLIP', keys: ['L1', 'A'] },
+        { alias: 'G1_CARTWHEEL', name: '侧手翻', short_code: 'CARTWHEEL', cmd: 'DANCE,G1_CARTWHEEL', keys: ['L1', 'B'] },
+        { alias: 'G1_TIKTOK', name: '抖音舞蹈1', short_code: 'TIKTOK', cmd: 'DANCE,G1_TIKTOK', keys: ['L1', 'X'] },
+        { alias: 'G1_TAIJI', name: '太极', short_code: 'TAIJI', cmd: 'DANCE,G1_TAIJI', keys: ['L1', 'Y'] },
+        { alias: 'G1_ROLL_BACK', name: '地面滚动-后向', short_code: 'ROLL_BACK', cmd: 'DANCE,G1_ROLL_BACK', keys: ['L1', 'SELECT'] },
+        { alias: 'G1_GYMNASTICS', name: '单腿支撑+旋转体操', short_code: 'GYMNASTICS', cmd: 'DANCE,G1_GYMNASTICS', keys: ['L1', 'F1'] },
+        { alias: 'G1_RUN', name: 'soma 奔跑', short_code: 'RUN', cmd: 'DANCE,G1_RUN', keys: ['L1', 'F3'] },
+        { alias: 'G1_CXK', name: 'ikun', short_code: 'CXK', cmd: 'DANCE,G1_CXK', keys: ['L1', 'START'] },
+        { alias: 'G1_JUMP', name: '双腿跳+单腿跳', short_code: 'JUMP', cmd: 'DANCE,G1_JUMP', keys: ['L1', 'L2'] },
+        { alias: 'G1_OPPO', name: 'oppo 原地舞蹈', short_code: 'OPPO', cmd: 'DANCE,G1_OPPO', keys: ['L1', 'R1'] }
+      ]
+    },
+    {
+      group_id: 'G2',
+      title: 'G2 动作组 (R1)',
+      items: [
+        { alias: 'G2_SPIN_KICK', name: '旋转飞踢-俯身', short_code: 'SPIN_KICK', cmd: 'DANCE,G2_SPIN_KICK', keys: ['R1', 'DOWN'] },
+        { alias: 'G2_MOONWALK', name: '太空步', short_code: 'MOONWALK', cmd: 'DANCE,G2_MOONWALK', keys: ['R1', 'RIGHT'] },
+        { alias: 'G2_TAIJI', name: '太极-KungfuAthlete', short_code: 'TAIJI', cmd: 'DANCE,G2_TAIJI', keys: ['R1', 'A'] },
+        { alias: 'G2_GYMNASTICS_07', name: '单腿支撑+旋转体操', short_code: 'GYMNASTICS_07', cmd: 'DANCE,G2_GYMNASTICS_07', keys: ['R1', 'B'] },
+        { alias: 'G2_GYMNASTICS_13', name: '单腿支撑+旋转体操', short_code: 'GYMNASTICS_13', cmd: 'DANCE,G2_GYMNASTICS_13', keys: ['R1', 'X'] },
+        { alias: 'G2_GYMNASTICS_19', name: '单腿支撑+旋转体操', short_code: 'GYMNASTICS_19', cmd: 'DANCE,G2_GYMNASTICS_19', keys: ['R1', 'Y'] },
+        { alias: 'G2_GYMNASTICS_20', name: '单腿支撑+旋转体操', short_code: 'GYMNASTICS_20', cmd: 'DANCE,G2_GYMNASTICS_20', keys: ['R1', 'SELECT'] },
+        { alias: 'G2_GOPAK', name: '蹲步舞/戈帕克舞', short_code: 'GOPAK', cmd: 'DANCE,G2_GOPAK', keys: ['R1', 'F1'] },
+        { alias: 'G2_FLYING_KICK', name: '飞旋踢', short_code: 'FLYING_KICK', cmd: 'DANCE,G2_FLYING_KICK', keys: ['R1', 'F3'] },
+        { alias: 'G2_SPIN_KICK_87', name: '旋转飞踢-俯身', short_code: 'SPIN_KICK_87', cmd: 'DANCE,G2_SPIN_KICK_87', keys: ['R1', 'START'] }
+      ]
+    },
+    {
+      group_id: 'G3',
+      title: 'G3 动作组 (L2)',
+      items: [
+        { alias: 'G3_DANCE1_S1', name: 'D1S1', short_code: 'DANCE1_S1', cmd: 'DANCE,G3_DANCE1_S1', keys: ['L2', 'DOWN'] },
+        { alias: 'G3_DANCE1_S2', name: '查尔斯顿', short_code: 'DANCE1_S2', cmd: 'DANCE,G3_DANCE1_S2', keys: ['L2', 'RIGHT'] },
+        { alias: 'G3_DANCE1_S3', name: 'D1S3', short_code: 'DANCE1_S3', cmd: 'DANCE,G3_DANCE1_S3', keys: ['L2', 'A'] },
+        { alias: 'G3_DANCE2_S1', name: 'D2S1', short_code: 'DANCE2_S1', cmd: 'DANCE,G3_DANCE2_S1', keys: ['L2', 'B'] },
+        { alias: 'G3_DANCE2_S2', name: 'D2S2', short_code: 'DANCE2_S2', cmd: 'DANCE,G3_DANCE2_S2', keys: ['L2', 'X'] },
+        { alias: 'G3_DANCE2_S3', name: 'D2S3', short_code: 'DANCE2_S3', cmd: 'DANCE,G3_DANCE2_S3', keys: ['L2', 'Y'] },
+        { alias: 'G3_DANCE2_S4', name: '地板动作', short_code: 'DANCE2_S4', cmd: 'DANCE,G3_DANCE2_S4', keys: ['L2', 'SELECT'] },
+        { alias: 'G3_DANCE2_S5', name: 'D2S5', short_code: 'DANCE2_S5', cmd: 'DANCE,G3_DANCE2_S5', keys: ['L2', 'F1'] },
+        { alias: 'G3_KUNGFU', name: '功夫', short_code: 'KUNGFU', cmd: 'DANCE,G3_KUNGFU', keys: ['L2', 'F3'] },
+        { alias: 'G3_ROLL_FORWARD', name: '地面滚动-前向', short_code: 'ROLL_FORWARD', cmd: 'DANCE,G3_ROLL_FORWARD', keys: ['L2', 'START'] },
+        { alias: 'G3_FALL_GETUP', name: '摔到恢复', short_code: 'FALL_GETUP', cmd: 'DANCE,G3_FALL_GETUP', keys: ['L2', 'L1'] }
+      ]
+    }
+  ],
+
+  async fetchAndRenderDanceList(isForceRefresh = false) {
+    const countTag = document.getElementById('ctrl-dance-count-tag');
+    if (countTag && isForceRefresh) {
+      countTag.textContent = '正在同步...';
+    }
+
+    try {
+      let res;
+      if (isForceRefresh) {
+        res = await API.refreshSerialDanceList(2.5);
+      } else {
+        res = await API.getSerialDanceList(false);
+      }
+
+      if (res && res.success && res.groups && res.groups.length > 0) {
+        this.currentDanceGroups = res.groups;
+        this.renderDanceGroups(res.groups);
+        const total = res.total_count || res.groups.reduce((acc, g) => acc + (g.items ? g.items.length : 0), 0);
+        this.logTerminal('system', `[DANCE SYNC] 成功从串口获取并更新 ${total} 支舞蹈动作列表。`);
+        return;
+      }
+    } catch (e) {
+      console.warn('获取串口舞蹈列表失败:', e);
+    }
+
+    // 若未获取到或初次加载，沿用默认 33 支预置动作列表
+    if (!this.currentDanceGroups || this.currentDanceGroups.length === 0) {
+      this.currentDanceGroups = this.DEFAULT_DANCE_GROUPS;
+    }
+    this.renderDanceGroups(this.currentDanceGroups);
+  },
+
+  renderDanceGroups(groups) {
+    const container = document.getElementById('ctrl-dance-scroll-container');
+    if (!container) return;
+
+    container.innerHTML = '';
+    let totalCount = 0;
+
+    groups.forEach(group => {
+      const catDiv = document.createElement('div');
+      catDiv.className = 'dance-category';
+
+      const titleDiv = document.createElement('div');
+      titleDiv.className = 'category-title';
+      titleDiv.textContent = group.title || `${group.group_id} 动作组`;
+      catDiv.appendChild(titleDiv);
+
+      const gridDiv = document.createElement('div');
+      gridDiv.className = 'dance-grid';
+
+      (group.items || []).forEach(item => {
+        totalCount++;
+        const btn = document.createElement('button');
+        btn.className = 'btn-cmd btn-dance';
+        btn.setAttribute('data-cmd', item.cmd || `DANCE,${item.alias}`);
+
+        const keyInfo = (item.keys && item.keys.length > 0) ? ` [${item.keys.join(', ')}]` : '';
+        btn.title = `${item.name} (${item.alias})${keyInfo}`;
+
+        const titleSpan = document.createElement('span');
+        titleSpan.className = 'dance-title';
+        titleSpan.textContent = item.name;
+
+        const codeSpan = document.createElement('span');
+        codeSpan.className = 'dance-code';
+        codeSpan.textContent = item.short_code || item.alias;
+
+        btn.appendChild(titleSpan);
+        btn.appendChild(codeSpan);
+
+        // 绑定点击发送与高亮反馈
+        btn.addEventListener('click', () => {
+          const cmd = btn.getAttribute('data-cmd');
+          if (cmd) {
+            this.sendCommand(cmd);
+            btn.classList.add('key-active');
+            setTimeout(() => btn.classList.remove('key-active'), 200);
+          }
+        });
+
+        gridDiv.appendChild(btn);
+      });
+
+      catDiv.appendChild(gridDiv);
+      container.appendChild(catDiv);
+    });
+
+    const countTag = document.getElementById('ctrl-dance-count-tag');
+    if (countTag) {
+      countTag.textContent = `共 ${totalCount} 项动作已就绪`;
     }
   }
 };

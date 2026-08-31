@@ -294,35 +294,222 @@ const App = {
   },
 
   bindDanceUpdateEvents() {
+    const folderInput = document.getElementById('input-update-folder');
+    const zipInput = document.getElementById('input-update-zip');
+    const dropzone = document.getElementById('dropzone-update-zip');
+    const textFilename = document.getElementById('text-zip-filename');
+    const textFilesize = document.getElementById('text-zip-filesize');
+    const btnBrowse = document.getElementById('btn-browse-dance-folder');
     const btnSubmitUpdate = document.getElementById('btn-submit-dance-update');
+
+    // 状态存储当前选中的单个项（单 zip 或单文件夹）
+    let currentSelectedTarget = null;
+
+    function updateSelectionDisplay(target) {
+      currentSelectedTarget = target;
+      if (!target) {
+        if (textFilename) textFilename.textContent = '点击选择动作文件夹 / 拖拽动作包至此处';
+        if (textFilesize) textFilesize.textContent = '支持点击选择文件夹，或拖拽单个动作文件夹 / .zip 压缩包导入';
+        if (dropzone) {
+          dropzone.style.borderColor = 'rgba(56, 189, 248, 0.35)';
+          dropzone.style.background = 'rgba(14, 165, 233, 0.04)';
+        }
+        return;
+      }
+      if (target.type === 'zip') {
+        const sizeMb = (target.file.size / (1024 * 1024)).toFixed(2);
+        if (textFilename) textFilename.textContent = `📦 ${target.file.name}`;
+        if (textFilesize) textFilesize.textContent = `文件大小: ${sizeMb} MB | 格式: .zip 压缩包`;
+      } else if (target.type === 'local_folder') {
+        if (textFilename) textFilename.textContent = `📁 动作文件夹: ${target.name} (共 ${target.files_count} 个文件)`;
+        if (textFilesize) textFilesize.textContent = `路径: ${target.path} | 大小: ${target.size_mb} MB | 将自动覆盖至 /secure/config_vsis`;
+      } else if (target.type === 'folder') {
+        const sizeMb = (target.totalSize / (1024 * 1024)).toFixed(2);
+        if (textFilename) textFilename.textContent = `📁 动作文件夹: ${target.name} (共 ${target.files.length} 个文件)`;
+        if (textFilesize) textFilesize.textContent = `总大小: ${sizeMb} MB | 将自动打包并覆盖至 /secure/config_vsis`;
+      }
+      if (dropzone) {
+        dropzone.style.borderColor = 'var(--accent-cyan)';
+        dropzone.style.background = 'rgba(14, 165, 233, 0.12)';
+      }
+    }
+
+    // 打开文件夹选择对话框（优先 Windows 原生目录选择器，兼容回退 input）
+    async function triggerFolderPicker() {
+      try {
+        const res = await API.selectFolder();
+        if (res && res.success && res.folder_path) {
+          updateSelectionDisplay({
+            type: 'local_folder',
+            path: res.folder_path,
+            name: res.folder_name,
+            files_count: res.files_count,
+            size_mb: res.size_mb
+          });
+          showToast(`已选择动作文件夹: ${res.folder_name} (包含 ${res.files_count} 个文件)`, 'success');
+          return;
+        } else if (res && res.msg && !res.msg.includes('取消')) {
+          showToast(res.msg, 'warning');
+        }
+      } catch (_) {
+        if (folderInput) folderInput.click();
+      }
+    }
+
+    if (btnBrowse) {
+      btnBrowse.addEventListener('click', (e) => {
+        e.stopPropagation();
+        triggerFolderPicker();
+      });
+    }
+
+    if (dropzone) {
+      dropzone.addEventListener('click', () => {
+        triggerFolderPicker();
+      });
+    }
+
+    // input 回退监听
+    if (folderInput) {
+      folderInput.addEventListener('change', (e) => {
+        const files = Array.from(e.target.files || []);
+        if (files.length > 0) {
+          let folderName = '动作文件夹';
+          if (files[0].webkitRelativePath) {
+            folderName = files[0].webkitRelativePath.split('/')[0] || folderName;
+          }
+          const totalSize = files.reduce((acc, f) => acc + f.size, 0);
+          updateSelectionDisplay({ type: 'folder', files: files, name: folderName, totalSize: totalSize });
+        }
+      });
+    }
+
+    if (zipInput) {
+      zipInput.addEventListener('change', (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          updateSelectionDisplay({ type: 'zip', file: file });
+        }
+      });
+    }
+
+    // 递归遍历拖拽目录树
+    async function traverseFileTree(item, path = '') {
+      if (item.isFile) {
+        return new Promise((resolve) => {
+          item.file((file) => {
+            file.relativePath = path + file.name;
+            resolve([file]);
+          }, () => resolve([]));
+        });
+      } else if (item.isDirectory) {
+        const dirReader = item.createReader();
+        const entries = await new Promise((resolve) => {
+          dirReader.readEntries((entries) => resolve(entries || []), () => resolve([]));
+        });
+        const promises = entries.map((entry) => traverseFileTree(entry, path + item.name + '/'));
+        const nested = await Promise.all(promises);
+        return nested.flat();
+      }
+      return [];
+    }
+
+    // 拖拽支持 (支持单个 zip 压缩包或单个动作文件夹)
+    if (dropzone) {
+      dropzone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.style.borderColor = 'var(--accent-cyan)';
+        dropzone.style.background = 'rgba(14, 165, 233, 0.18)';
+      });
+      dropzone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!currentSelectedTarget) {
+          dropzone.style.borderColor = 'rgba(56, 189, 248, 0.35)';
+          dropzone.style.background = 'rgba(14, 165, 233, 0.04)';
+        }
+      });
+      dropzone.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const items = e.dataTransfer.items;
+        if (items && items.length > 0) {
+          const entries = [];
+          for (let i = 0; i < items.length; i++) {
+            const entry = items[i].webkitGetAsEntry ? items[i].webkitGetAsEntry() : null;
+            if (entry) entries.push(entry);
+          }
+
+          if (entries.length === 1 && entries[0].isFile && entries[0].name.toLowerCase().endsWith('.zip')) {
+            const file = e.dataTransfer.files[0];
+            updateSelectionDisplay({ type: 'zip', file: file });
+            return;
+          }
+
+          if (entries.length > 0) {
+            const promises = entries.map((entry) => traverseFileTree(entry, ''));
+            const filesArrays = await Promise.all(promises);
+            const allFiles = filesArrays.flat();
+            if (allFiles.length > 0) {
+              const folderName = entries[0].name || '动作文件夹';
+              const totalSize = allFiles.reduce((acc, f) => acc + f.size, 0);
+              updateSelectionDisplay({ type: 'folder', files: allFiles, name: folderName, totalSize: totalSize });
+              return;
+            }
+          }
+        }
+
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          const files = Array.from(e.dataTransfer.files);
+          if (files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')) {
+            updateSelectionDisplay({ type: 'zip', file: files[0] });
+          } else {
+            const totalSize = files.reduce((acc, f) => acc + f.size, 0);
+            updateSelectionDisplay({ type: 'folder', files: files, name: files[0].name, totalSize: totalSize });
+          }
+        }
+      });
+    }
+
+    // 提交上传与自动重启
     if (btnSubmitUpdate) {
       btnSubmitUpdate.addEventListener('click', async () => {
-        const alias = document.getElementById('input-update-alias')?.value.trim();
-        const group = document.getElementById('select-update-group')?.value || 'R1';
-        const action = document.getElementById('select-update-action')?.value || 'SELECT';
-        const vsisFile = document.getElementById('input-update-vsis')?.files[0];
-        const licFile = document.getElementById('input-update-license')?.files[0];
+        const destPath = document.getElementById('input-update-dest-path')?.value.trim() || '/secure/config_vsis';
         const resultConsole = document.getElementById('dance-update-result');
 
-        if (!alias) {
-          showToast('请填写新舞蹈的别名 (如 G2_NEW_DANCE)', 'warning');
+        if (!currentSelectedTarget) {
+          showToast('请先选择动作文件夹或拖拽动作包 (.zip / 文件夹)', 'warning');
           return;
         }
 
+        const formData = new FormData();
+        formData.append('dest_path', destPath);
+
+        let displayTargetName = '';
+        if (currentSelectedTarget.type === 'local_folder') {
+          displayTargetName = `${currentSelectedTarget.name} (${currentSelectedTarget.files_count} 个文件)`;
+          formData.append('local_path', currentSelectedTarget.path);
+        } else if (currentSelectedTarget.type === 'zip') {
+          displayTargetName = currentSelectedTarget.file.name;
+          formData.append('zip_file', currentSelectedTarget.file);
+        } else if (currentSelectedTarget.type === 'folder') {
+          displayTargetName = `${currentSelectedTarget.name} (${currentSelectedTarget.files.length} 个文件)`;
+          currentSelectedTarget.files.forEach((file) => {
+            formData.append('files', file);
+            formData.append('paths', file.relativePath || file.webkitRelativePath || file.name);
+          });
+        }
+
         if (resultConsole) {
-          resultConsole.innerHTML = `<div class="log-info">⏳ 正在准备上传并部署舞蹈 [${alias}] ...</div>`;
+          resultConsole.innerHTML = `<div class="log-info">⏳ 正在准备上传动作包 [${displayTargetName}] ...</div>`;
         }
 
         btnSubmitUpdate.disabled = true;
+        btnSubmitUpdate.textContent = '⏳ 正在上传并解压覆盖中...';
 
-        const formData = new FormData();
-        formData.append('dance_alias', alias);
-        formData.append('button_group', group);
-        formData.append('button_action', action);
-        if (vsisFile) formData.append('vsis_file', vsisFile);
-        if (licFile) formData.append('license_file', licFile);
-
-        showToast(`正在注入并自动重启舞蹈 [${alias}] ...`, 'info');
+        showToast(`正在上传动作包 [${displayTargetName}] 并解压至 ${destPath} ...`, 'info');
         try {
           const res = await API.updateDance(formData);
           if (res.success && res.task_id) {
@@ -336,14 +523,16 @@ const App = {
               }
             }, (ok) => {
               btnSubmitUpdate.disabled = false;
+              btnSubmitUpdate.textContent = '🚀 一键上传并导入舞蹈动作包';
               if (ok) {
-                showToast(`🎉 舞蹈 [${alias}] 部署、授权验证与自动热重启已完成！`, 'success');
+                showToast(`🎉 动作包 [${displayTargetName}] 导入、解压覆盖与跳舞程序自动热重启已完成！`, 'success', 5000);
               } else {
-                showToast(`舞蹈 [${alias}] 部署遇到异常，请查看日志`, 'error');
+                showToast('舞蹈动作包导入遇到异常，请查看右侧执行日志', 'error');
               }
             });
           } else {
             btnSubmitUpdate.disabled = false;
+            btnSubmitUpdate.textContent = '🚀 一键上传并导入舞蹈动作包';
             showToast(`更新失败: ${res.msg || '未知错误'}`, 'error');
             if (resultConsole) {
               resultConsole.innerHTML += `<div class="log-error">❌ 更新失败: ${res.msg || '未知错误'}</div>`;
@@ -351,6 +540,7 @@ const App = {
           }
         } catch (err) {
           btnSubmitUpdate.disabled = false;
+          btnSubmitUpdate.textContent = '🚀 一键上传并导入舞蹈动作包';
           showToast(`更新异常: ${err.message}`, 'error');
           if (resultConsole) {
             resultConsole.innerHTML += `<div class="log-error">❌ 异常: ${err.message}</div>`;
@@ -359,6 +549,9 @@ const App = {
       });
     }
   },
+
+
+
 
   async init3dPlayer() {
     dancePlayer = new DancePlayer3D('dance3d-viewport');

@@ -315,17 +315,12 @@ const TabImage = {
         const d = res.data;
         const btnStart = document.getElementById('tp-btn-start-container');
         const btnAutostart = document.getElementById('tp-btn-write-autostart');
-        const consoleEl = document.getElementById('tp-container-console');
-
         if (btnStart) {
           btnStart.disabled = false;
           btnStart.classList.add('btn-primary');
           btnStart.classList.remove('btn-secondary');
           if (d.running) {
             btnStart.textContent = `🔄 重新固化启动 / 更新 vsis_g1 (当前运行中)`;
-            if (consoleEl && (consoleEl.innerHTML.includes('等待') || consoleEl.innerHTML.includes('点击上方按钮启动容器'))) {
-              consoleEl.innerHTML = `<div class="log-success">[就绪] 容器 vsis_g1 正在正常运行中。如需更换镜像或重新启动，可直接选择镜像后点击上方启动按钮。</div>`;
-            }
           } else {
             btnStart.textContent = `⚡ 固化启动容器 (vsis_g1)`;
           }
@@ -401,8 +396,7 @@ const TabImage = {
         this.uploadInterval = null;
       }
       this._resetUploadButtons();
-      const consoleEl = document.getElementById('tp-load-console');
-      if (consoleEl) consoleEl.innerHTML = '<div class="log-warn">上传已被用户取消。</div>';
+      this.appendLog('上传已被用户取消。', true, '🛑');
       showToast('已取消上传任务', 'info');
     } catch (err) {
       showToast(`取消上传失败: ${err.message}`, 'error');
@@ -468,7 +462,6 @@ const TabImage = {
     try {
       const res = await API.listImages();
       
-      // 1. 渲染当前宿主机已运行容器列表
       if (res && res.running_containers) {
         this.renderRunningContainers(res.running_containers, 'tp-running-containers-list');
       }
@@ -509,12 +502,11 @@ const TabImage = {
 
     showToast('正在检查远端镜像并准备传输...', 'info');
     const progressBox = document.getElementById('tp-upload-progress-box');
-    const consoleEl = document.getElementById('tp-load-console');
     const btnStart = document.getElementById('tp-btn-start-upload');
     const btnCancel = document.getElementById('tp-btn-cancel-upload');
 
     if (progressBox) progressBox.style.display = 'block';
-    if (consoleEl) consoleEl.innerHTML = '<div class="log-info">正在校验远端镜像状态...</div>';
+    this.appendLog('正在校验远端镜像状态...', false, '📤');
     if (btnStart) btnStart.disabled = true;
     if (btnCancel) btnCancel.style.display = 'block';
 
@@ -522,18 +514,17 @@ const TabImage = {
       const res = await API.uploadImage(reqData);
       if (!res.success) {
         showToast(`上传失败: ${res.msg}`, 'error');
-        if (consoleEl) consoleEl.innerHTML = `<div class="log-error">上传失败: ${res.msg}</div>`;
+        this.appendLog(`上传失败: ${res.msg}`, true);
         this._resetUploadButtons();
         return;
       }
       if (remoteInput && res.remote_path) remoteInput.value = res.remote_path;
 
       if (res.skipped) {
-        // 远端已存在完全一致的镜像文件，直接跳过并自动执行安装！
         this._resetUploadButtons();
         this._updateProgress({ percent: 100, transferred_bytes: 1, total_bytes: 1, speed_mbps: 0, eta_seconds: 0 });
         showToast('远端已存在同名同大小镜像包，正在自动执行 Docker 镜像安装...', 'success');
-        if (consoleEl) consoleEl.innerHTML = `<div class="log-success">✅ 检测到远端已存在完全一致的镜像文件 (${res.remote_path})，无需重复上传，立即自动安装镜像！</div>`;
+        this.appendLog(`✅ 检测到远端已存在完全一致的镜像文件 (${res.remote_path})，无需重复上传，立即自动安装镜像！`, false);
         setTimeout(() => this.dockerLoad(), 500);
         return;
       }
@@ -547,20 +538,20 @@ const TabImage = {
           this.uploadInterval = null;
           this._resetUploadButtons();
           showToast('镜像上传成功！正在自动执行 Docker 镜像安装...', 'success');
-          if (consoleEl) consoleEl.innerHTML = `<div class="log-success">✅ 文件上传成功 (${res.remote_path})，立即自动执行 docker load 安装镜像...</div>`;
+          this.appendLog(`✅ 文件上传成功 (${res.remote_path})，立即自动执行 docker load 安装镜像...`, false);
           setTimeout(() => this.dockerLoad(), 600);
         } else if (prog.status === 'error' || prog.status === 'canceled') {
           clearInterval(this.uploadInterval);
           this.uploadInterval = null;
           this._resetUploadButtons();
           showToast(`上传异常: ${prog.error_msg}`, 'error');
-          if (consoleEl) consoleEl.innerHTML = `<div class="log-error">传输已终止: ${prog.error_msg}</div>`;
+          this.appendLog(`传输已终止: ${prog.error_msg}`, true);
         }
       }, 500);
     } catch (err) {
       this._resetUploadButtons();
       showToast(`上传请求异常: ${err.message}`, 'error');
-      if (consoleEl) consoleEl.innerHTML = `<div class="log-error">请求异常: ${err.message}</div>`;
+      this.appendLog(`请求异常: ${err.message}`, true);
     }
   },
 
@@ -585,70 +576,53 @@ const TabImage = {
       return;
     }
 
-    const consoleEl = document.getElementById('tp-load-console');
-    if (consoleEl) consoleEl.innerHTML = '<div class="log-info">正在执行 docker load -i ...</div>';
+    this.appendLog(`正在执行 docker load -i ${remotePath} ...`, false, '⚡');
 
     try {
       const res = await API.loadImage(remotePath);
       if (res.success && res.task_id) {
         API.listenStream(res.task_id, (line, isErr) => {
-          if (consoleEl) {
-            const div = document.createElement('div');
-            div.className = isErr ? 'log-error' : 'log-info';
-            div.textContent = line;
-            consoleEl.appendChild(div);
-            consoleEl.scrollTop = consoleEl.scrollHeight;
-          }
+          this.appendLog(line, isErr);
         }, async (ok) => {
           if (ok) {
-            if (consoleEl) {
-              const banner = document.createElement('div');
-              banner.className = 'upload-success-badge';
-              banner.style.cssText = 'margin-top: 10px; padding: 10px 14px; background: rgba(16, 185, 129, 0.18); border: 1px solid #10b981; border-radius: 6px; color: #10b981; font-weight: 700; font-size: 0.9rem; display: flex; align-items: center; gap: 8px; box-shadow: 0 0 12px rgba(16, 185, 129, 0.2);';
-              banner.innerHTML = '<span>✅</span> <span>Docker 镜像导入成功！请在右侧选择镜像并点击【固化启动容器】。</span>';
-              consoleEl.appendChild(banner);
-              consoleEl.scrollTop = consoleEl.scrollHeight;
-            }
+            this.appendLog('✅ Docker 镜像导入成功！请在左侧选择镜像并点击【固化启动容器】。', false);
             showToast('✅ Docker 镜像导入成功！', 'success');
             await this.loadImages();
+            await this.checkAndFixEnvironment();
           } else {
-            showToast('❌ 镜像导入异常，请查看上方终端输出', 'error');
+            showToast('❌ 镜像导入异常，请查看右侧终端输出', 'error');
           }
         });
       }
     } catch (err) {
       showToast(`执行异常: ${err.message}`, 'error');
+      this.appendLog(`执行异常: ${err.message}`, true);
     }
   },
 
   async startContainer() {
     const select = document.getElementById('tp-docker-image-select');
     const imgName = select && select.value ? select.value : 'vsis_dancer:gpu-0.1';
-    const consoleEl = document.getElementById('tp-container-console');
-    if (consoleEl) consoleEl.innerHTML = '<div class="log-info">正在执行固化容器启动命令...</div>';
+    this.appendLog(`正在执行固化容器启动命令 (镜像: ${imgName})...`, false, '🚀');
 
     try {
       const res = await API.startContainer(imgName);
       if (res.success && res.task_id) {
         API.listenStream(res.task_id, (line, isErr) => {
-          if (consoleEl) {
-            const div = document.createElement('div');
-            div.className = isErr ? 'log-error' : 'log-info';
-            div.textContent = line;
-            consoleEl.appendChild(div);
-            consoleEl.scrollTop = consoleEl.scrollHeight;
-          }
+          this.appendLog(line, isErr);
         }, async (ok) => {
           if (ok) {
             showToast('✓ 容器 vsis_g1 已固化启动，开机自启动钩子已就绪！', 'success');
             await this.loadImages();
+            await this.checkAndFixEnvironment();
           } else {
-            showToast('容器启动失败，请查看上方日志', 'error');
+            showToast('容器启动失败，请查看右侧日志', 'error');
           }
         });
       }
     } catch (err) {
       showToast(`启动异常: ${err.message}`, 'error');
+      this.appendLog(`启动异常: ${err.message}`, true);
     }
   },
 
@@ -657,7 +631,6 @@ const TabImage = {
     const rawValue = inputEl ? inputEl.value.trim() : '';
     const robotId = rawValue.toUpperCase();
 
-    // 校验规则（与群控控制台“添加机器人”一致）
     if (!robotId) {
       showToast('Robot ID 不能为空！请输入如 A、B、R1 等唯一标识。', 'error');
       if (inputEl) inputEl.focus();
@@ -669,13 +642,21 @@ const TabImage = {
       return;
     }
 
-    if (inputEl) inputEl.value = robotId; // 写回大写
+    if (inputEl) inputEl.value = robotId;
+    this.appendLog(`正在配置开机自启并写入 Robot ID [${robotId}] ...`, false, '⚙️');
     showToast(`正在配置开机自启并写入 Robot ID [${robotId}] ...`, 'info');
     try {
       const res = await API.configAutostart(robotId);
-      showToast(res.success ? res.msg : `写入失败: ${res.msg}`, res.success ? 'success' : 'error');
+      if (res.success) {
+        this.appendLog(`✅ ${res.msg}`, false);
+        showToast(res.msg, 'success');
+      } else {
+        this.appendLog(`❌ 写入失败: ${res.msg}`, true);
+        showToast(`写入失败: ${res.msg}`, 'error');
+      }
     } catch (err) {
       showToast(`写入失败: ${err.message}`, 'error');
+      this.appendLog(`写入异常: ${err.message}`, true);
     }
   },
 
@@ -684,17 +665,21 @@ const TabImage = {
     if (!confirm(`确定要关闭/停止正在运行的容器 [${containerName}] 吗？\n停止后该容器内的运控程序将退出，且该镜像将重新在待启动镜像列表中可选。`)) {
       return;
     }
+    this.appendLog(`正在关闭容器 [${containerName}] ...`, false, '⏹️');
     showToast(`正在关闭容器 [${containerName}] ...`, 'info');
     try {
       const res = await API.stopContainer(containerName);
       if (res.success) {
+        this.appendLog(`✅ ${res.msg}`, false);
         showToast(`✅ ${res.msg}`, 'success');
         await this.loadImages();
       } else {
+        this.appendLog(`❌ 关闭失败: ${res.msg}`, true);
         showToast(`关闭失败: ${res.msg}`, 'error');
       }
     } catch (err) {
       showToast(`关闭容器异常: ${err.message}`, 'error');
+      this.appendLog(`关闭异常: ${err.message}`, true);
     }
   },
 
@@ -715,16 +700,12 @@ const TabImage = {
     const ctrlSub = document.getElementById('tp-ctrl-sub-badge');
     const loraSub = document.getElementById('tp-lora-sub-badge');
 
-    if (!badgeEl || !textEl || !dotEl) return;
-
     try {
       const res = await API.getRobotProcessStatus();
-      if (!res.connected) {
-        dotEl.style.background = '#94a3b8';
-        dotEl.className = 'pulse-dot';
-        textEl.textContent = '机器人未连接';
-        badgeEl.style.borderColor = 'rgba(255,255,255,0.1)';
-        badgeEl.style.background = 'rgba(255,255,255,0.05)';
+      if (!res || !res.connected) {
+        if (dotEl) { dotEl.style.background = '#94a3b8'; dotEl.className = 'pulse-dot'; }
+        if (textEl) textEl.textContent = '未连接';
+        if (badgeEl) { badgeEl.style.borderColor = 'rgba(255,255,255,0.1)'; badgeEl.style.background = 'rgba(255,255,255,0.05)'; }
         if (ctrlSub) { ctrlSub.className = 'container-status-badge stopped'; ctrlSub.textContent = '未连接'; }
         if (loraSub) { loraSub.className = 'container-status-badge stopped'; loraSub.textContent = '未连接'; }
         return;
@@ -739,110 +720,160 @@ const TabImage = {
         loraSub.textContent = res.lora_recv_running ? '🟢 运行中' : '⚪ 未运行';
       }
 
-      if (res.all_running) {
-        dotEl.style.background = '#34d399';
-        dotEl.className = 'pulse-dot active';
-        textEl.textContent = '运控与LoRa运行中';
-        badgeEl.style.borderColor = 'rgba(52, 211, 153, 0.4)';
-        badgeEl.style.background = 'rgba(16, 185, 129, 0.12)';
-      } else if (res.g1_ctrl_running && !res.lora_recv_running) {
-        dotEl.style.background = '#fbbf24';
-        dotEl.className = 'pulse-dot active';
-        textEl.textContent = '运控运行中 (LoRa未就绪)';
-        badgeEl.style.borderColor = 'rgba(251, 191, 36, 0.4)';
-        badgeEl.style.background = 'rgba(245, 158, 11, 0.12)';
-      } else if (!res.g1_ctrl_running && res.lora_recv_running) {
-        dotEl.style.background = '#fbbf24';
-        dotEl.className = 'pulse-dot active';
-        textEl.textContent = 'LoRa已就绪 (运控未运行)';
-        badgeEl.style.borderColor = 'rgba(251, 191, 36, 0.4)';
-        badgeEl.style.background = 'rgba(245, 158, 11, 0.12)';
-      } else {
-        dotEl.style.background = '#f87171';
-        dotEl.className = 'pulse-dot';
-        textEl.textContent = '运控未运行 (离线)';
-        badgeEl.style.borderColor = 'rgba(239, 68, 68, 0.3)';
-        badgeEl.style.background = 'rgba(239, 68, 68, 0.08)';
+      if (dotEl && textEl && badgeEl) {
+        if (res.all_running) {
+          dotEl.style.background = '#34d399';
+          dotEl.className = 'pulse-dot active';
+          textEl.textContent = '运控与LoRa运行中';
+          badgeEl.style.borderColor = 'rgba(52, 211, 153, 0.4)';
+          badgeEl.style.background = 'rgba(16, 185, 129, 0.12)';
+        } else if (res.g1_ctrl_running && !res.lora_recv_running) {
+          dotEl.style.background = '#fbbf24';
+          dotEl.className = 'pulse-dot active';
+          textEl.textContent = '运控运行中 (LoRa未就绪)';
+          badgeEl.style.borderColor = 'rgba(251, 191, 36, 0.4)';
+          badgeEl.style.background = 'rgba(245, 158, 11, 0.12)';
+        } else if (!res.g1_ctrl_running && res.lora_recv_running) {
+          dotEl.style.background = '#fbbf24';
+          dotEl.className = 'pulse-dot active';
+          textEl.textContent = 'LoRa已就绪 (运控未运行)';
+          badgeEl.style.borderColor = 'rgba(251, 191, 36, 0.4)';
+          badgeEl.style.background = 'rgba(245, 158, 11, 0.12)';
+        } else {
+          dotEl.style.background = '#f87171';
+          dotEl.className = 'pulse-dot';
+          textEl.textContent = '运控未运行 (离线)';
+          badgeEl.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+          badgeEl.style.background = 'rgba(239, 68, 68, 0.08)';
+        }
       }
     } catch (_) {}
   },
 
   async startRobotProcesses() {
-    const consoleEl = document.getElementById('tp-process-console');
     const btnStart = document.getElementById('tp-btn-start-process');
-    if (consoleEl) consoleEl.innerHTML = '<div class="log-info">正在远程拉起机器人机载程序 (run_bg.sh)...</div>';
-    if (btnStart) btnStart.disabled = true;
-
-    showToast('正在启动机载程序 (run_bg.sh)...', 'info');
+    this.appendLog('正在远程拉起机器人机载程序 (run_bg.sh)...', false, '🤖');
+    if (btnStart) {
+      btnStart.disabled = true;
+      btnStart.textContent = '⏳ 正在启动机载程序...';
+    }
 
     try {
       const res = await API.startRobotProcesses();
-      if (res.success && res.task_id) {
+      if (res && res.success && res.task_id) {
         API.listenStream(res.task_id, (line, isErr) => {
-          if (consoleEl) {
-            const div = document.createElement('div');
-            div.className = isErr ? 'log-error' : 'log-info';
-            div.textContent = line;
-            consoleEl.appendChild(div);
-            consoleEl.scrollTop = consoleEl.scrollHeight;
-          }
+          this.appendLog(line, isErr);
         }, async (ok) => {
-          if (btnStart) btnStart.disabled = false;
+          if (btnStart) {
+            btnStart.disabled = false;
+            btnStart.textContent = '🚀 启动机载程序 (run_bg.sh)';
+          }
           if (ok) {
-            showToast('🚀 机载程序启动指令已发送', 'success');
-            if (consoleEl) {
-              const div = document.createElement('div');
-              div.className = 'log-success';
-              div.textContent = '✅ 机载程序 (run_bg.sh) 启动完成，正在后台运行。';
-              consoleEl.appendChild(div);
-              consoleEl.scrollTop = consoleEl.scrollHeight;
-            }
+            this.appendLog('✅ 机载程序 (run_bg.sh) 启动完成，正在后台运行。', false);
           } else {
-            showToast('机载程序启动遇到异常，请检查上方日志', 'error');
+            this.appendLog('⚠️ 机载程序启动遇到异常，请检查上方日志输出。', true);
           }
           await this.checkProcessStatus();
         });
       } else {
-        if (btnStart) btnStart.disabled = false;
-        showToast(`启动失败: ${res.msg || '未知错误'}`, 'error');
-        if (consoleEl) consoleEl.innerHTML = `<div class="log-error">启动失败: ${res.msg || '未知错误'}</div>`;
+        if (btnStart) {
+          btnStart.disabled = false;
+          btnStart.textContent = '🚀 启动机载程序 (run_bg.sh)';
+        }
+        this.appendLog(`启动失败: ${res?.msg || '未知错误'}`, true);
       }
     } catch (err) {
-      if (btnStart) btnStart.disabled = false;
-      showToast(`请求异常: ${err.message}`, 'error');
-      if (consoleEl) consoleEl.innerHTML = `<div class="log-error">请求异常: ${err.message}</div>`;
+      if (btnStart) {
+        btnStart.disabled = false;
+        btnStart.textContent = '🚀 启动机载程序 (run_bg.sh)';
+      }
+      this.appendLog(`请求异常: ${err.message || err}`, true);
     }
   },
 
   async stopRobotProcesses() {
     if (!confirm('确定要停止机器人机载跳舞运控与 LoRa 接收进程 (pkill) 吗？')) return;
-    const consoleEl = document.getElementById('tp-process-console');
-    if (consoleEl) consoleEl.innerHTML = '<div class="log-info">正在发送停止机载进程指令 (pkill -f g1_ctrl_vsis ; pkill -f lora_recv_group)...</div>';
-
-    showToast('正在停止机载进程...', 'info');
+    this.appendLog('正在发送停止机载进程指令 (pkill -f g1_ctrl_vsis ; pkill -f lora_recv_group)...', false, '⏹️');
 
     try {
       const res = await API.stopRobotProcesses();
-      if (res.success) {
-        showToast('⏹️ 机载进程已停止', 'info');
-        if (consoleEl) {
-          const div = document.createElement('div');
-          div.className = 'log-warn';
-          div.textContent = '⏹️ 已向机器人发送停止指令！';
-          consoleEl.appendChild(div);
-          consoleEl.scrollTop = consoleEl.scrollHeight;
-        }
-        setTimeout(() => this.checkProcessStatus(), 1200);
+      if (res && res.success) {
+        this.appendLog('⚠️ 机器人机载运控与 LoRa 接收进程已停止。', false);
+        setTimeout(() => this.checkProcessStatus(), 1000);
       } else {
-        showToast(`停止失败: ${res.msg || '未知错误'}`, 'error');
-        if (consoleEl) consoleEl.innerHTML = `<div class="log-error">停止失败: ${res.msg || '未知错误'}</div>`;
+        this.appendLog(`停止失败: ${res?.msg || '未知错误'}`, true);
       }
     } catch (err) {
-      showToast(`请求异常: ${err.message}`, 'error');
-      if (consoleEl) consoleEl.innerHTML = `<div class="log-error">请求异常: ${err.message}</div>`;
+      this.appendLog(`请求异常: ${err.message || err}`, true);
+    }
+  },
+
+  appendLog(msg, isErr = false, prefix = '') {
+    const consoleEl = document.getElementById('tp-unified-console');
+    if (!consoleEl) return;
+
+    if (consoleEl.children.length === 1 && consoleEl.firstElementChild.classList.contains('log-info') && consoleEl.firstElementChild.textContent.includes('就绪。')) {
+      consoleEl.innerHTML = '';
+    }
+
+    const div = document.createElement('div');
+    const now = new Date();
+    const timeStr = now.toTimeString().split(' ')[0];
+    const prefixStr = prefix ? `${prefix} ` : '';
+    const textMsg = String(msg || '');
+
+    if (isErr || textMsg.includes('ERROR') || textMsg.includes('failed') || textMsg.includes('失败') || textMsg.includes('Permission denied')) {
+      div.className = 'log-error';
+      div.textContent = `[${timeStr}] ${prefixStr}${textMsg}`;
+    } else if (textMsg.includes('WARN') || textMsg.includes('警告') || textMsg.includes('warning') || textMsg.includes('⚠️')) {
+      div.className = 'log-warn';
+      div.textContent = `[${timeStr}] ${prefixStr}${textMsg}`;
+    } else if (textMsg.includes('SUCCESS') || textMsg.includes('✅') || textMsg.includes('成功') || textMsg.includes('🎉') || textMsg.includes('就绪')) {
+      div.className = 'log-success';
+      div.textContent = `[${timeStr}] ${prefixStr}${textMsg}`;
+    } else {
+      div.className = 'log-line';
+      div.textContent = `[${timeStr}] ${prefixStr}${textMsg}`;
+    }
+
+    consoleEl.appendChild(div);
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  },
+
+  clearConsole() {
+    const consoleEl = document.getElementById('tp-unified-console');
+    if (consoleEl) {
+      consoleEl.innerHTML = '<div class="log-info">控制台日志已清空。就绪。</div>';
+    }
+  },
+
+  async checkAndFixEnvironment() {
+    this.appendLog('正在对机器人环境进行完整巡检与权限修复...', false, '🔍');
+    showToast('正在巡检与修复机器人运行环境...', 'info');
+
+    try {
+      const res = await API.checkRobotEnv();
+      if (res && res.success && res.task_id) {
+        API.listenStream(res.task_id, (line, isErr) => {
+          this.appendLog(line, isErr);
+        }, async (ok) => {
+          if (ok) {
+            showToast('✅ 机器人环境巡检与权限修复已完成', 'success');
+            await this.checkStatus();
+            await this.checkProcessStatus();
+          } else {
+            showToast('环境巡检发现警告或需要手动设置，请查看日志', 'warning');
+          }
+        });
+      } else {
+        this.appendLog(`环境巡检请求失败: ${res?.msg || '未知错误'}`, true);
+      }
+    } catch (e) {
+      this.appendLog(`环境巡检异常: ${e.message || e}`, true);
     }
   }
 };
+
 
 
 // ===========================================

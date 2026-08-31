@@ -771,10 +771,11 @@ body {
   box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
 }
 
-.terminal-console .log-info { color: #60a5fa; user-select: text !important; }
-.terminal-console .log-success { color: #34d399; user-select: text !important; }
-.terminal-console .log-warn { color: #fbbf24; user-select: text !important; }
-.terminal-console .log-error { color: #f87171; user-select: text !important; font-weight: 600; }
+.terminal-console .log-info { color: #60a5fa; user-select: text !important; margin: 2px 0; }
+.terminal-console .log-success { color: #34d399; user-select: text !important; margin: 2px 0; }
+.terminal-console .log-warn { color: #fbbf24; user-select: text !important; margin: 2px 0; }
+.terminal-console .log-error { color: #f87171; user-select: text !important; font-weight: 600; margin: 2px 0; }
+.terminal-console .log-line { color: #d1d5db; user-select: text !important; margin: 2px 0; }
 .terminal-console .log-section-header {
   color: var(--accent-cyan);
   font-weight: 700;
@@ -1888,27 +1889,44 @@ body {
   flex-direction: column;
   gap: 8px;
   min-height: 0;
+  height: 100%;
   overflow: hidden;
 }
 
 .dance-scroll-container {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  flex: 0 0 auto;
+  gap: 6px;
+  flex: 0 1 200px;
+  max-height: 210px;
+  min-height: 110px;
   overflow-y: auto;
-  padding-right: 3px;
-  max-height: 60vh;
+  padding-right: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 6px;
+}
+
+.dance-scroll-container::-webkit-scrollbar {
+  width: 4px;
+}
+
+.dance-scroll-container::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.35);
+  border-radius: 4px;
+}
+
+.dance-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: #a855f7;
 }
 
 .dance-category {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .category-title {
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 700;
   color: var(--accent-cyan);
   display: flex;
@@ -1926,10 +1944,29 @@ body {
   border-radius: 2px;
 }
 
+.btn-xs {
+  padding: 2px 7px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 4px;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  background: rgba(56, 189, 248, 0.1);
+  color: var(--accent-cyan);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-xs:hover {
+  background: rgba(56, 189, 248, 0.25);
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.3);
+  transform: translateY(-1px);
+}
+
 .dance-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(105px, 1fr));
-  gap: 5px;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 4px;
 }
 
 .btn-dance {
@@ -1937,11 +1974,11 @@ body {
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  padding: 4px 7px;
-  min-height: 38px;
+  padding: 3px 6px;
+  min-height: 33px;
   background: rgba(139, 92, 246, 0.12);
   border: 1px solid rgba(139, 92, 246, 0.28);
-  border-radius: 6px;
+  border-radius: 5px;
   color: var(--text-primary);
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1964,7 +2001,7 @@ body {
 }
 
 .dance-title {
-  font-size: 0.74rem;
+  font-size: 0.71rem;
   font-weight: 600;
   color: #f1f5f9;
   line-height: 1.15;
@@ -1976,7 +2013,7 @@ body {
 
 .dance-code {
   font-family: var(--font-mono, monospace);
-  font-size: 0.6rem;
+  font-size: 0.58rem;
   color: #a78bfa;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -2003,10 +2040,10 @@ body {
   box-shadow: 0 0 14px rgba(245, 158, 11, 0.4);
 }
 
-/* 发送日志监视器 (充满剩余空间) */
+/* 发送日志监视器 (固定且弹性占据剩余空间，永不被挤出视野) */
 .terminal-section {
-  flex: 1;
-  min-height: 120px;
+  flex: 1 1 180px;
+  min-height: 140px;
   display: flex;
   flex-direction: column;
   background: #050811;
@@ -2051,7 +2088,8 @@ body {
 }
 
 .terminal-output {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 90px;
   padding: 6px 8px;
   font-family: var(--font-mono, monospace);
   font-size: 0.72rem;
@@ -2061,6 +2099,20 @@ body {
   gap: 3px;
   background: #060913;
 }
+
+.terminal-output::-webkit-scrollbar {
+  width: 4px;
+}
+
+.terminal-output::-webkit-scrollbar-thumb {
+  background: rgba(0, 210, 255, 0.25);
+  border-radius: 4px;
+}
+
+.terminal-output::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-cyan);
+}
+
 
 .log-line {
   line-height: 1.35;
