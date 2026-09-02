@@ -82,6 +82,9 @@ const App = {
         e.stopPropagation();
         const isHidden = content.style.display === 'none';
         content.style.display = isHidden ? 'block' : 'none';
+        if (isHidden) {
+          this.refreshLicenseStatus();
+        }
       });
       document.addEventListener('click', (e) => {
         if (!content.contains(e.target) && e.target !== btn) {
@@ -97,26 +100,41 @@ const App = {
       this.updateStatusDisplay(res);
 
       if (res.connected) {
-        // 主动校验 License 与部署状态
-        if (!res.first_time) {
-          // License 校验通过且无 [SKIP] not licensed，容器运行中：静默关闭向导，进入首页群控控制台
+        // 主动校验 License 与部署全流程状态
+        if (!res.first_time && res.has_license && res.license_valid && res.is_container_running && res.is_ctrl_running) {
+          // 全套就绪且 License 校验通过：静默关闭向导，进入首页群控控制台
           Wizard.closeModal();
           this.switchTab('tab-robot-control');
-          // 不显示成功通知，静默完成
         } else {
-          // License 校验错误或不存在 License 或 容器未启动：弹出向导
-          const reason = !res.has_license ? '未检测到 License 授权文件'
-            : (!res.license_valid ? 'License 校验未通过（存在 [SKIP] not licensed）'
-              : '容器尚未部署启动');
-          showToast(`⚠️ ${reason}，正在调出部署向导...`, 'warning', 4000);
-          Wizard.openModal(1);
+          // 未完成授权部署或 License 校验未通过：智能定位并调出向导对应步骤
+          let targetStep = 1;
+          let reason = '';
+
+          if (!res.is_container_running) {
+            reason = 'Docker 容器尚未部署运行';
+            targetStep = 3;
+          } else if (!res.has_license) {
+            reason = '未检测到 License 授权文件';
+            targetStep = 5;
+          } else if (!res.license_valid) {
+            reason = 'License 机器码不匹配或包含未授权舞蹈';
+            targetStep = 5;
+          } else if (!res.is_ctrl_running || !res.is_lora_running) {
+            reason = '机载运控与通信程序尚未就绪';
+            targetStep = 5;
+          } else {
+            reason = '首次向导配置未完成';
+            targetStep = 1;
+          }
+
+          showToast(`⚠️ ${reason}，正在进入部署向导 (步骤 ${targetStep})...`, 'warning', 4000);
+          Wizard.openModal(targetStep);
         }
       } else {
-        // 机器人离线时保持在主界面，不提示（状态指示灯已体现）
+        // 机器人离线时保持在主界面，不弹窗（状态指示灯已体现）
         Wizard.closeModal();
       }
     } catch (err) {
-      // 静默处理网络异常，不打扰用户
       console.warn('Startup check failed:', err);
     }
   },
@@ -263,24 +281,92 @@ const App = {
       }
     }
 
+    if (isConnected && this.lastConnectedState === false) {
+      // 刚连接成功时，自动触发一次 License 状态拉取
+      this.refreshLicenseStatus();
+    }
+
     this.lastConnectedState = isConnected;
 
-    // 更新设置菜单中的 License 状态（仅当接口返回了授权数据时才更新，防止每 4s 的 status 轮询覆盖它）
+    // 若当前响应中包含授权信息，同步更新设置菜单
+    if (res && 'has_license' in res) {
+      this.updateLicenseDisplay(res);
+    }
+  },
+
+  async refreshLicenseStatus() {
     const licStatusEl = document.getElementById('settings-license-status');
-    if (licStatusEl && res && 'has_license' in res) {
-      if (res.connected) {
-        if (res.license_valid) {
-          const exp = res.license_data?.expire_date || '永久授权';
-          const dances = res.license_data?.dance_count || 0;
-          licStatusEl.innerHTML = `<span style="color: var(--accent-cyan);">✅ 已授权</span><br>有效期: ${exp}<br>授权舞蹈: ${dances} 首`;
-        } else if (res.has_license) {
-          licStatusEl.innerHTML = `<span style="color: var(--accent-red);">❌ 校验失败</span><br>可能因机器码不匹配`;
-        } else {
-          licStatusEl.innerHTML = `<span style="color: var(--accent-red);">⚠️ 未授权</span><br>缺少 License 文件`;
-        }
+    if (!licStatusEl) return;
+
+    if (!this.lastConnectedState) {
+      licStatusEl.innerHTML = `
+        <div style="color: var(--text-muted); font-size: 0.78rem; padding: 4px 0;">
+          ⚪ 机器人离线 (请先在顶部连接)
+        </div>
+      `;
+      return;
+    }
+
+    try {
+      const res = await API.getLicenseStatus();
+      this.updateLicenseDisplay(res);
+    } catch (err) {
+      console.warn('获取 License 状态失败:', err);
+    }
+  },
+
+  updateLicenseDisplay(res) {
+    const licStatusEl = document.getElementById('settings-license-status');
+    if (!licStatusEl) return;
+
+    if (!res || !res.connected) {
+      licStatusEl.innerHTML = `
+        <div style="color: var(--text-muted); font-size: 0.78rem; padding: 4px 0;">
+          ⚪ 机器人离线 (请先在顶部连接)
+        </div>
+      `;
+      return;
+    }
+
+    if (res.has_license) {
+      const p = res.license_data || {};
+      const exp = p.expire_date || '永久授权';
+      const dances = p.dance_count !== undefined ? p.dance_count : (p.dances?.length || 0);
+      const customer = p.customer || '商业客户';
+      const model = p.model || 'Unitree G1';
+
+      if (res.license_valid) {
+        licStatusEl.innerHTML = `
+          <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px;">
+            <div style="color: #34d399; font-weight: 700; font-size: 0.84rem; display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+              <span>✅ 授权已生效</span>
+              <span class="card-badge" style="font-size: 0.65rem; padding: 1px 5px;">${model}</span>
+            </div>
+            <div style="font-size: 0.75rem; color: #a7f3d0; line-height: 1.5;">
+              <div><b>授权客户:</b> ${customer}</div>
+              <div><b>有效期限:</b> <span style="color: #6ee7b7; font-weight: 600;">${exp}</span></div>
+              <div><b>包含舞蹈:</b> <span style="color: #6ee7b7; font-weight: 600;">${dances}</span> 首动作</div>
+            </div>
+          </div>
+        `;
       } else {
-        licStatusEl.innerHTML = `未检测到授权信息`;
+        licStatusEl.innerHTML = `
+          <div style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px;">
+            <div style="color: #f87171; font-weight: 700; font-size: 0.84rem; margin-bottom: 4px;">❌ 授权校验未通过</div>
+            <div style="font-size: 0.75rem; color: #fca5a5; line-height: 1.4;">
+              <div>日志检测到 <code>[SKIP] not licensed</code></div>
+              <div style="color: #f87171; margin-top: 2px;">可能由于机器码不匹配，请重新导入</div>
+            </div>
+          </div>
+        `;
       }
+    } else {
+      licStatusEl.innerHTML = `
+        <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px;">
+          <div style="color: #fbbf24; font-weight: 700; font-size: 0.84rem; margin-bottom: 2px;">⚠️ 未检测到 License 文件</div>
+          <div style="font-size: 0.75rem; color: #fde68a;">机器人机载缺少 license.json 授权文件</div>
+        </div>
+      `;
     }
   },
 

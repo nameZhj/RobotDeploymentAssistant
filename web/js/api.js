@@ -7,11 +7,13 @@ const API = {
   async request(endpoint, options = {}) {
     const url = `${this.baseUrl}${endpoint}`;
     try {
+      const headers = { ...(options.headers || {}) };
+      if (options.body && !headers['Content-Type'] && typeof options.body === 'string') {
+        headers['Content-Type'] = 'application/json';
+      }
+
       const resp = await fetch(url, {
-        headers: {
-          'Content-Type': 'application/json',
-          ...(options.headers || {})
-        },
+        headers,
         ...options
       });
       if (!resp.ok) {
@@ -159,6 +161,13 @@ const API = {
     });
   },
 
+  restartContainer(containerName = 'vsis_g1') {
+    return this.request('/api/container/restart', {
+      method: 'POST',
+      body: JSON.stringify({ container_name: containerName })
+    });
+  },
+
   configAutostart(robotId = 'A') {
     return this.request('/api/container/autostart', {
       method: 'POST',
@@ -174,6 +183,10 @@ const API = {
 
 
   // 5. 机器码与 License
+  getLicenseStatus() {
+    return this.request('/api/license/status');
+  },
+
   getMachineId() {
     return this.request('/api/machine_id');
   },
@@ -299,6 +312,10 @@ const API = {
 
   getSerialStatus() {
     return this.request('/api/serial/status');
+  },
+
+  getSerialMessages(since = 0) {
+    return this.request(`/api/serial/messages?since=${since}`);
   },
 
   getSerialDanceList(forceRefresh = false) {

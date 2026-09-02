@@ -69,6 +69,9 @@ const RobotControl = {
 
     // 2. 启动后台串口热插拔与状态监听（每 4 秒检测一次，若插入新串口自动连接）
     this.startAutoPortMonitor();
+
+    // 3. 启动实时串口 TX/RX 字符串双向监听与控制台打印
+    this.startMessagePolling();
   },
 
   loadStoredFleet() {
@@ -949,73 +952,80 @@ const RobotControl = {
     }
   },
 
-  // --- 动态串口舞蹈列表状态与渲染逻辑 ---
-  currentDanceGroups: [],
+  // --- 实时串口 TX / RX 字符串消息双向轮询与实时展示 ---
+  lastMsgTimestamp: 0,
+  msgPollingTimer: null,
+  _lastRenderedDanceCount: 0,
 
-  DEFAULT_DANCE_GROUPS: [
-    {
-      group_id: 'G1',
-      title: 'G1 动作组 (L1)',
-      items: [
-        { alias: 'G1_TURN_JUMP', name: '转身跳跃', short_code: 'TURN_JUMP', cmd: 'DANCE,G1_TURN_JUMP', keys: ['L1', 'DOWN'] },
-        { alias: 'G1_FRONT_FLIP', name: '前空翻', short_code: 'FRONT_FLIP', cmd: 'DANCE,G1_FRONT_FLIP', keys: ['L1', 'RIGHT'] },
-        { alias: 'G1_SIDE_FLIP', name: '侧空翻', short_code: 'SIDE_FLIP', cmd: 'DANCE,G1_SIDE_FLIP', keys: ['L1', 'A'] },
-        { alias: 'G1_CARTWHEEL', name: '侧手翻', short_code: 'CARTWHEEL', cmd: 'DANCE,G1_CARTWHEEL', keys: ['L1', 'B'] },
-        { alias: 'G1_TIKTOK', name: '抖音舞蹈1', short_code: 'TIKTOK', cmd: 'DANCE,G1_TIKTOK', keys: ['L1', 'X'] },
-        { alias: 'G1_TAIJI', name: '太极', short_code: 'TAIJI', cmd: 'DANCE,G1_TAIJI', keys: ['L1', 'Y'] },
-        { alias: 'G1_ROLL_BACK', name: '地面滚动-后向', short_code: 'ROLL_BACK', cmd: 'DANCE,G1_ROLL_BACK', keys: ['L1', 'SELECT'] },
-        { alias: 'G1_GYMNASTICS', name: '单腿支撑+旋转体操', short_code: 'GYMNASTICS', cmd: 'DANCE,G1_GYMNASTICS', keys: ['L1', 'F1'] },
-        { alias: 'G1_RUN', name: 'soma 奔跑', short_code: 'RUN', cmd: 'DANCE,G1_RUN', keys: ['L1', 'F3'] },
-        { alias: 'G1_CXK', name: 'ikun', short_code: 'CXK', cmd: 'DANCE,G1_CXK', keys: ['L1', 'START'] },
-        { alias: 'G1_JUMP', name: '双腿跳+单腿跳', short_code: 'JUMP', cmd: 'DANCE,G1_JUMP', keys: ['L1', 'L2'] },
-        { alias: 'G1_OPPO', name: 'oppo 原地舞蹈', short_code: 'OPPO', cmd: 'DANCE,G1_OPPO', keys: ['L1', 'R1'] }
-      ]
-    },
-    {
-      group_id: 'G2',
-      title: 'G2 动作组 (R1)',
-      items: [
-        { alias: 'G2_SPIN_KICK', name: '旋转飞踢-俯身', short_code: 'SPIN_KICK', cmd: 'DANCE,G2_SPIN_KICK', keys: ['R1', 'DOWN'] },
-        { alias: 'G2_MOONWALK', name: '太空步', short_code: 'MOONWALK', cmd: 'DANCE,G2_MOONWALK', keys: ['R1', 'RIGHT'] },
-        { alias: 'G2_TAIJI', name: '太极-KungfuAthlete', short_code: 'TAIJI', cmd: 'DANCE,G2_TAIJI', keys: ['R1', 'A'] },
-        { alias: 'G2_GYMNASTICS_07', name: '单腿支撑+旋转体操', short_code: 'GYMNASTICS_07', cmd: 'DANCE,G2_GYMNASTICS_07', keys: ['R1', 'B'] },
-        { alias: 'G2_GYMNASTICS_13', name: '单腿支撑+旋转体操', short_code: 'GYMNASTICS_13', cmd: 'DANCE,G2_GYMNASTICS_13', keys: ['R1', 'X'] },
-        { alias: 'G2_GYMNASTICS_19', name: '单腿支撑+旋转体操', short_code: 'GYMNASTICS_19', cmd: 'DANCE,G2_GYMNASTICS_19', keys: ['R1', 'Y'] },
-        { alias: 'G2_GYMNASTICS_20', name: '单腿支撑+旋转体操', short_code: 'GYMNASTICS_20', cmd: 'DANCE,G2_GYMNASTICS_20', keys: ['R1', 'SELECT'] },
-        { alias: 'G2_GOPAK', name: '蹲步舞/戈帕克舞', short_code: 'GOPAK', cmd: 'DANCE,G2_GOPAK', keys: ['R1', 'F1'] },
-        { alias: 'G2_FLYING_KICK', name: '飞旋踢', short_code: 'FLYING_KICK', cmd: 'DANCE,G2_FLYING_KICK', keys: ['R1', 'F3'] },
-        { alias: 'G2_SPIN_KICK_87', name: '旋转飞踢-俯身', short_code: 'SPIN_KICK_87', cmd: 'DANCE,G2_SPIN_KICK_87', keys: ['R1', 'START'] }
-      ]
-    },
-    {
-      group_id: 'G3',
-      title: 'G3 动作组 (L2)',
-      items: [
-        { alias: 'G3_DANCE1_S1', name: 'D1S1', short_code: 'DANCE1_S1', cmd: 'DANCE,G3_DANCE1_S1', keys: ['L2', 'DOWN'] },
-        { alias: 'G3_DANCE1_S2', name: '查尔斯顿', short_code: 'DANCE1_S2', cmd: 'DANCE,G3_DANCE1_S2', keys: ['L2', 'RIGHT'] },
-        { alias: 'G3_DANCE1_S3', name: 'D1S3', short_code: 'DANCE1_S3', cmd: 'DANCE,G3_DANCE1_S3', keys: ['L2', 'A'] },
-        { alias: 'G3_DANCE2_S1', name: 'D2S1', short_code: 'DANCE2_S1', cmd: 'DANCE,G3_DANCE2_S1', keys: ['L2', 'B'] },
-        { alias: 'G3_DANCE2_S2', name: 'D2S2', short_code: 'DANCE2_S2', cmd: 'DANCE,G3_DANCE2_S2', keys: ['L2', 'X'] },
-        { alias: 'G3_DANCE2_S3', name: 'D2S3', short_code: 'DANCE2_S3', cmd: 'DANCE,G3_DANCE2_S3', keys: ['L2', 'Y'] },
-        { alias: 'G3_DANCE2_S4', name: '地板动作', short_code: 'DANCE2_S4', cmd: 'DANCE,G3_DANCE2_S4', keys: ['L2', 'SELECT'] },
-        { alias: 'G3_DANCE2_S5', name: 'D2S5', short_code: 'DANCE2_S5', cmd: 'DANCE,G3_DANCE2_S5', keys: ['L2', 'F1'] },
-        { alias: 'G3_KUNGFU', name: '功夫', short_code: 'KUNGFU', cmd: 'DANCE,G3_KUNGFU', keys: ['L2', 'F3'] },
-        { alias: 'G3_ROLL_FORWARD', name: '地面滚动-前向', short_code: 'ROLL_FORWARD', cmd: 'DANCE,G3_ROLL_FORWARD', keys: ['L2', 'START'] },
-        { alias: 'G3_FALL_GETUP', name: '摔到恢复', short_code: 'FALL_GETUP', cmd: 'DANCE,G3_FALL_GETUP', keys: ['L2', 'L1'] }
-      ]
-    }
-  ],
+  startMessagePolling() {
+    if (this.msgPollingTimer) clearInterval(this.msgPollingTimer);
+    let pollCount = 0;
+    this.msgPollingTimer = setInterval(async () => {
+      // 仅在当前处于群控页面且串口处于连接时轮询
+      if (App.activeTab !== 'tab-robot-control' || !this.isConnected) return;
+      pollCount++;
+      try {
+        const res = await API.getSerialMessages(this.lastMsgTimestamp);
+        let hasDanceMsg = false;
+        if (res && res.success && Array.isArray(res.messages) && res.messages.length > 0) {
+          res.messages.forEach(msg => {
+            if (msg.timestamp > this.lastMsgTimestamp) {
+              this.lastMsgTimestamp = msg.timestamp;
+            }
+            // 在界面监视器中打印每一条串口收发字符串
+            const tag = (msg.type === 'rx') ? 'rx' : 'tx';
+            const prefix = (msg.type === 'rx') ? '[RX]' : '[TX]';
+            this.logTerminal(tag, `${prefix} ${msg.text}`);
+            if (msg.type === 'rx' && (msg.text.includes(':') || msg.text.includes('Group') || msg.text.includes('['))) {
+              hasDanceMsg = true;
+            }
+          });
+        }
+
+        // 若收到动作列表相关回传，或每 3 秒检测一次后端最新解析缓存（自动同步全部舞蹈）
+        if (hasDanceMsg || pollCount % 6 === 0) {
+          this.syncDanceListFromCache();
+        }
+      } catch (_) {}
+    }, 500);
+  },
+
+  async syncDanceListFromCache() {
+    if (!this.isConnected) return;
+    try {
+      const res = await API.getSerialDanceList(false);
+      if (res && res.success && Array.isArray(res.groups) && res.groups.length > 0) {
+        const total = res.total_count || res.groups.reduce((acc, g) => acc + (g.items ? g.items.length : 0), 0);
+        if (total !== this._lastRenderedDanceCount || this.currentDanceGroups.length === 0) {
+          this._lastRenderedDanceCount = total;
+          this.currentDanceGroups = res.groups;
+          this.renderDanceGroups(res.groups);
+        }
+      }
+    } catch (_) {}
+  },
+
+  // --- 动态串口舞蹈列表状态与渲染逻辑 (严格由串口 ALL|GETDANCELIST 驱动，绝不硬编码) ---
+  currentDanceGroups: [],
 
   async fetchAndRenderDanceList(isForceRefresh = false) {
     const countTag = document.getElementById('ctrl-dance-count-tag');
-    if (countTag && isForceRefresh) {
-      countTag.textContent = '正在同步...';
+
+    // 1. 若串口未连接，直接渲染未连接状态
+    if (!this.isConnected) {
+      this.currentDanceGroups = [];
+      this.renderDisconnectedState();
+      return;
     }
+
+    // 2. 串口已连接，展示同步等待态
+    this.renderLoadingState(isForceRefresh);
+    if (countTag) countTag.textContent = isForceRefresh ? '正在下发 ALL|GETDANCELIST...' : '正在同步动作列表...';
 
     try {
       let res;
       if (isForceRefresh) {
-        res = await API.refreshSerialDanceList(2.5);
+        res = await API.refreshSerialDanceList(5.5);
       } else {
         res = await API.getSerialDanceList(false);
       }
@@ -1024,18 +1034,70 @@ const RobotControl = {
         this.currentDanceGroups = res.groups;
         this.renderDanceGroups(res.groups);
         const total = res.total_count || res.groups.reduce((acc, g) => acc + (g.items ? g.items.length : 0), 0);
-        this.logTerminal('system', `[DANCE SYNC] 成功从串口获取并更新 ${total} 支舞蹈动作列表。`);
+        this.logTerminal('system', `[DANCE SYNC] 成功从串口接收并动态解析 ${total} 支机载动作 (来源: ALL|GETDANCELIST)`);
         return;
       }
     } catch (e) {
       console.warn('获取串口舞蹈列表失败:', e);
+      this.logTerminal('error', `[DANCE ERROR] 串口动作列表同步异常: ${e.message || e}`);
     }
 
-    // 若未获取到或初次加载，沿用默认 33 支预置动作列表
-    if (!this.currentDanceGroups || this.currentDanceGroups.length === 0) {
-      this.currentDanceGroups = this.DEFAULT_DANCE_GROUPS;
-    }
-    this.renderDanceGroups(this.currentDanceGroups);
+    // 3. 串口已连接但机载端暂无响应或未返回 dance_map
+    this.renderNoDataState();
+  },
+
+  renderDisconnectedState() {
+    const container = document.getElementById('ctrl-dance-scroll-container');
+    const countTag = document.getElementById('ctrl-dance-count-tag');
+    if (countTag) countTag.textContent = '🔌 串口未连接';
+    if (!container) return;
+
+    container.innerHTML = `
+      <div class="dance-status-card">
+        <div class="dance-status-icon">🔌</div>
+        <div class="dance-status-title">LoRa 串口通信未连接</div>
+        <div class="dance-status-desc">
+          动作与特技列表完全由目标机器人机载主控动态提供。<br>
+          请插入 USB LoRa 串口发射器 (CH340/CH341) 并连接，系统将自动下发 <code>ALL|GETDANCELIST</code> 实时拉取机载动作映射表。
+        </div>
+      </div>
+    `;
+  },
+
+  renderLoadingState(isForce = false) {
+    const container = document.getElementById('ctrl-dance-scroll-container');
+    if (!container) return;
+
+    container.innerHTML = `
+      <div class="dance-status-card">
+        <div class="dance-loading-spinner"></div>
+        <div class="dance-status-title">正在通过串口同步机载动作列表...</div>
+        <div class="dance-status-desc">
+          正在向机器人发送 <code>ALL|GETDANCELIST</code>，等待机载端 <code>lora_recv_group</code> 返回 <code>dance_map</code> YAML 映射...
+        </div>
+      </div>
+    `;
+  },
+
+  renderNoDataState() {
+    const container = document.getElementById('ctrl-dance-scroll-container');
+    const countTag = document.getElementById('ctrl-dance-count-tag');
+    if (countTag) countTag.textContent = '⚠️ 暂未获取到机载动作';
+    if (!container) return;
+
+    container.innerHTML = `
+      <div class="dance-status-card">
+        <div class="dance-status-icon">📡</div>
+        <div class="dance-status-title">已下发 ALL|GETDANCELIST，暂未收到机载响应</div>
+        <div class="dance-status-desc">
+          串口已连接，但机载主控暂未返回有效的 <code>dance_map</code> 动作配置。<br>
+          请确认机器人机载程序 (<code>g1_ctrl_vsis</code> / <code>lora_recv_group</code>) 处于正常运行状态且 LoRa 频段一致。
+        </div>
+        <button class="btn btn-primary btn-xs" style="margin-top: 10px; padding: 4px 14px; font-size: 0.8rem;" onclick="RobotControl.fetchAndRenderDanceList(true)">
+          🔄 重新发送 ALL|GETDANCELIST
+        </button>
+      </div>
+    `;
   },
 
   renderDanceGroups(groups) {
@@ -1096,7 +1158,7 @@ const RobotControl = {
 
     const countTag = document.getElementById('ctrl-dance-count-tag');
     if (countTag) {
-      countTag.textContent = `共 ${totalCount} 项动作已就绪`;
+      countTag.textContent = `🟢 串口实时同步 (共 ${totalCount} 项动作)`;
     }
   }
 };

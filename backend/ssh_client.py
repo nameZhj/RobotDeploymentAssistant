@@ -114,7 +114,9 @@ class SSHManager:
         return False
 
     def test_latency(self) -> float:
-        """测试与机器人的连接延迟 (ms)"""
+        """测试与机器人的连接延迟 (ms)。上传期间直接返回低延迟占位，禁止建立新 TCP 连接干扰上传"""
+        if self.upload_progress.get("is_uploading"):
+            return 0.5
         if not self.is_connected():
             return -1.0
         try:
@@ -188,6 +190,8 @@ class SSHManager:
         """
         通过独立 SFTP 会话上传本地文件至机器人，彻底避免与主命令/心跳通道竞争导致 Socket 10054
         """
+        self.cancel_upload_flag = False
+
         if not os.path.exists(local_path):
             err_msg = f"本地文件不存在: {local_path}"
             self.upload_progress["status"] = "error"
@@ -235,46 +239,38 @@ class SSHManager:
                 eta = int(remaining_bytes / (speed * 1024 * 1024)) if speed > 0 else 0
 
                 self.upload_progress.update({
+                    "is_uploading": True,
+                    "filename": filename,
                     "transferred_bytes": transferred,
+                    "total_bytes": total,
                     "percent": percent,
                     "speed_mbps": round(speed, 2),
                     "eta_seconds": eta,
+                    "status": "uploading",
+                    "error_msg": "",
                 })
                 last_time = now
                 last_bytes = transferred
                 if progress_callback:
                     progress_callback(self.upload_progress)
 
+        # 0. 暂停后台网络自愈重连，防止上传过程产生并发探测与 OpenSSH 队列争抢
+        try:
+            from .network_manager import network_manager
+            network_manager.pause_auto_reconnect(3600.0)
+        except Exception:
+            pass
+
         upload_client = None
         sftp = None
         try:
-            # 建立独立的 SFTP 上传专用连接，彻底与主界面的常规命令/状态心跳轮询解耦，杜绝 Socket 10054
-            upload_client = paramiko.SSHClient()
-            upload_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            upload_client.connect(
-                hostname=self.host,
-                port=self.port,
-                username=self.username,
-                password=self.password,
-                timeout=15.0,
-                banner_timeout=15.0,
-                auth_timeout=15.0,
-                look_for_keys=False,
-                allow_agent=False
-            )
-            transport = upload_client.get_transport()
-            if transport:
-                transport.set_keepalive(15)
-
-            # 确保远端父目录存在并授予完全写入权限（避免因用户权限问题报 Errno 13 Permission denied）
+            # 1. 确保远端父目录存在并授予完全写入权限（特别是 /home/ubuntu）
             remote_dir = os.path.dirname(remote_path).replace("\\", "/")
             if remote_dir and remote_dir != "/":
-                self.execute_command(f"mkdir -p {remote_dir} && chmod a+rwx {remote_dir}", sudo=True)
+                self.execute_command(f"mkdir -p '{remote_dir}' && chmod 777 '{remote_dir}'", sudo=True)
 
-            sftp = upload_client.open_sftp()
-
-            # 远端存储空间前置检查 (预留 200MB 安全裕量)
-            code_df, df_out, _ = self.execute_command(f"df -k {remote_dir or '/tmp'} | tail -n 1")
+            # 2. 远端存储空间前置检查 (预留 200MB 安全裕量)
+            code_df, df_out, _ = self.execute_command(f"df -k '{remote_dir or '/tmp'}' | tail -n 1")
             if code_df == 0 and df_out.strip():
                 parts = df_out.strip().split()
                 if len(parts) >= 4:
@@ -291,7 +287,46 @@ class SSHManager:
                     except Exception:
                         pass
 
-            # 检查如果远端已存在完全一致大小的文件，可直接跳过重复传输
+            # 3. 建立 100% 独立的专属 SFTP 客户端与传输通道，与主命令心跳彻底解耦
+            for attempt in range(3):
+                try:
+                    upload_client = paramiko.SSHClient()
+                    upload_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                    upload_client.connect(
+                        hostname=self.host,
+                        port=self.port,
+                        username=self.username,
+                        password=self.password,
+                        timeout=25.0,
+                        banner_timeout=25.0,
+                        auth_timeout=25.0,
+                        look_for_keys=False,
+                        allow_agent=False
+                    )
+                    up_transport = upload_client.get_transport()
+                    if up_transport:
+                        up_transport.set_keepalive(15)
+                        try:
+                            # 优化 TCP 栈：禁用 Nagle 算法，减少小包延迟
+                            up_transport.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                            # 放大发送/接收缓冲区至 2MB
+                            up_transport.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 2 * 1024 * 1024)
+                            up_transport.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2 * 1024 * 1024)
+                        except Exception:
+                            pass
+                    sftp = upload_client.open_sftp()
+                    logger.info(f"[SFTP-DEDICATED] 独立上传通道已就绪 (keepalive=15s, TCP_NODELAY=on, sndbuf=2MB)，开始传输 {filename} ...")
+                    break
+                except Exception as ex_conn:
+                    logger.warning(f"独立 SFTP 通道建立尝试 {attempt+1}/3 失败: {ex_conn}")
+                    if attempt < 2:
+                        time.sleep(1.5)
+                    else:
+                        raise ex_conn
+
+
+
+            # 4. 检查如果远端已存在完全一致大小的文件，可直接跳过重复传输
             try:
                 rstat = sftp.stat(remote_path)
                 if rstat.st_size == total_bytes:
@@ -310,17 +345,14 @@ class SSHManager:
             except Exception:
                 pass
 
-            logger.info(f"开始独立 SFTP 管道高速上传: {local_path} -> {remote_path} ({round(total_bytes/(1024*1024), 2)} MB)")
-
-            # 使用 512KB 分块 + 管道化流式写入
-            chunk_size = 512 * 1024
+            # 5. 采用 32KB 分块 + 64 队列滑动窗口流控 (维持 2MB 在途队列)
+            # 嵌入式 ARM sftp-server 缓冲有限，超过 2MB 在途积压时服务端会主动断连 (EOFError)
+            chunk_size = 32 * 1024
+            max_in_flight = 64
             transferred = 0
             with open(local_path, "rb") as fl:
                 with sftp.file(remote_path, "wb") as fr:
-                    try:
-                        fr.set_pipelined(True)
-                    except Exception:
-                        pass
+                    fr.set_pipelined(True)
                     while True:
                         if self.cancel_upload_flag:
                             logger.info(f"用户已取消 SFTP 上传任务: {remote_path}")
@@ -330,7 +362,7 @@ class SSHManager:
                                 "is_uploading": False
                             })
                             # 异步清理残缺文件
-                            threading.Thread(target=lambda: self.execute_command(f"rm -f {remote_path}", sudo=True), daemon=True).start()
+                            threading.Thread(target=lambda: self.execute_command(f"rm -f '{remote_path}'", sudo=True), daemon=True).start()
                             return False, "上传已由用户手动取消"
 
                         chunk = fl.read(chunk_size)
@@ -338,6 +370,12 @@ class SSHManager:
                             break
                         fr.write(chunk)
                         transferred += len(chunk)
+
+                        # 滑动窗口流控：维持在途未确认请求 <= max_in_flight
+                        while len(fr._reqs) > max_in_flight:
+                            req = fr._reqs.popleft()
+                            sftp._read_response(req)
+
                         _sftp_callback(transferred, total_bytes)
 
             self.upload_progress["status"] = "completed"
@@ -347,13 +385,19 @@ class SSHManager:
                 progress_callback(self.upload_progress)
             return True, f"文件成功上传至 {remote_path}"
         except Exception as e:
-            err_msg = f"SFTP 上传失败: {str(e)}"
+            err_details = f"{type(e).__name__}: {str(e)}" if str(e) else repr(e)
+            err_msg = f"SFTP 上传失败: {err_details}"
             logger.error(err_msg)
             self.upload_progress["status"] = "error"
             self.upload_progress["error_msg"] = err_msg
             self.upload_progress["is_uploading"] = False
             return False, err_msg
         finally:
+            try:
+                from .network_manager import network_manager
+                network_manager.pause_auto_reconnect(1.0)
+            except Exception:
+                pass
             if sftp:
                 try:
                     sftp.close()

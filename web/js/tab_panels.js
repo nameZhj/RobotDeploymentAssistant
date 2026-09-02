@@ -238,11 +238,62 @@ const TabPrecheck = {
   },
 
   async fixCh341() {
-    showToast('正在启动 CH341 串口驱动编译与安装任务...', 'info');
+    const allFixBtns = document.querySelectorAll('#btn-wizard-fix-ch341, #btn-tp-fix-ch341, .btn-fix-ch341-item');
+    allFixBtns.forEach(btn => {
+      btn.disabled = true;
+      if (!btn.dataset.origText) btn.dataset.origText = btn.innerHTML;
+      btn.innerHTML = '⏳ 正在修复 LoRa 通信环境...';
+      btn.classList.add('loading');
+    });
+
+    showToast('正在启动 LoRa 串口与群控通信环境全面自愈修复...', 'info');
     const modal = document.getElementById('fix-stream-modal');
     const consoleEl = document.getElementById('fix-stream-console');
+    const progressBar = document.getElementById('fix-step-progress-bar');
+    const progressPct = document.getElementById('fix-step-percent');
+    const progressTxt = document.getElementById('fix-step-status-text');
+    const modalTitle = document.getElementById('fix-modal-title');
+    const modalIcon = document.getElementById('fix-modal-icon');
+
+    if (modalTitle) modalTitle.textContent = '正在执行 LoRa 串口驱动与群控通信环境深度自愈修复';
+    if (modalIcon) modalIcon.textContent = '🛠️';
+    if (progressBar) progressBar.style.width = '10%';
+    if (progressPct) progressPct.textContent = '10%';
+    if (progressTxt) progressTxt.textContent = '⏳ 正在连接机器人并初始化修复环境...';
+
     if (modal) modal.style.display = 'flex';
-    if (consoleEl) consoleEl.innerHTML = '<div class="log-info">开始编译安装 CH341 驱动...</div>';
+    if (consoleEl) consoleEl.innerHTML = '<div class="log-info">[INFO] 准备开始 LoRa 通信自愈修复，下发指令并监听输出...</div>';
+
+    const updateProgress = (line) => {
+      if (!progressBar || !progressPct || !progressTxt) return;
+      const l = line.toLowerCase();
+      if (l.includes('step 1') || l.includes('检查 ch341 内核驱动')) {
+        progressBar.style.width = '20%';
+        progressPct.textContent = '20%';
+        progressTxt.textContent = '🔍 [1/6] 检查与加载 CH341 Linux 内核驱动模块...';
+      } else if (l.includes('step 2') || l.includes('配置 udev') || l.includes('权限')) {
+        progressBar.style.width = '35%';
+        progressPct.textContent = '35%';
+        progressTxt.textContent = '🛡️ [2/6] 配置 udev 规则并放行 0666 设备读写权限...';
+      } else if (l.includes('step 3') || l.includes('lora_recv_group.yaml')) {
+        progressBar.style.width = '50%';
+        progressPct.textContent = '50%';
+        progressTxt.textContent = '⚙️ [3/6] 优化 lora_recv_group.yaml 串口稳定参数...';
+      } else if (l.includes('step 4') || l.includes('热补丁') || l.includes('make.sh')) {
+        progressBar.style.width = '70%';
+        progressPct.textContent = '70%';
+        progressTxt.textContent = '🔧 [4/6] 注入多端口自适应热补丁并编译 lora_recv_group...';
+      } else if (l.includes('step 5') || l.includes('run_bg.sh')) {
+        progressBar.style.width = '85%';
+        progressPct.textContent = '85%';
+        progressTxt.textContent = '📝 [5/6] 写入自适应多节点扫描 run_bg.sh 启动与守护脚本...';
+      } else if (l.includes('step 6') || l.includes('拉起 lora')) {
+        progressBar.style.width = '95%';
+        progressPct.textContent = '95%';
+        progressTxt.textContent = '🚀 [6/6] 校验并守护拉起机载 LoRa 接收程序...';
+      }
+    };
+
     try {
       const res = await API.fixCh341();
       if (res.success && res.task_id) {
@@ -254,13 +305,45 @@ const TabPrecheck = {
             consoleEl.appendChild(div);
             consoleEl.scrollTop = consoleEl.scrollHeight;
           }
+          updateProgress(line);
         }, (ok) => {
-          showToast(ok ? 'CH341 驱动安装完成！' : '驱动安装遇到问题，请检查日志', ok ? 'success' : 'error');
-          TabPrecheck.run();
+          allFixBtns.forEach(btn => {
+            btn.disabled = false;
+            btn.innerHTML = btn.dataset.origText || '🛠️ 一键修复 LoRa 通信';
+            btn.classList.remove('loading');
+          });
+
+          if (ok) {
+            if (progressBar) progressBar.style.width = '100%';
+            if (progressPct) progressPct.textContent = '100%';
+            if (progressTxt) progressTxt.textContent = '✅ LoRa 串口与群控通信环境自愈修复成功！';
+            showToast('✅ LoRa 通信环境修复完成！', 'success', 3000);
+            setTimeout(() => {
+              const m = document.getElementById('fix-stream-modal');
+              if (m) m.style.display = 'none';
+              TabPrecheck.run();
+            }, 1200);
+          } else {
+            if (progressTxt) progressTxt.textContent = '❌ 修复遇到问题，请检查日志输出';
+            showToast('❌ 修复遇到问题，请检查日志', 'error', 4000);
+            TabPrecheck.run();
+          }
         });
+      } else {
+        allFixBtns.forEach(btn => {
+          btn.disabled = false;
+          btn.innerHTML = btn.dataset.origText || '🛠️ 一键修复 LoRa 通信';
+          btn.classList.remove('loading');
+        });
+        showToast('启动修复任务失败: ' + (res.msg || '未知错误'), 'error');
       }
     } catch (err) {
-      showToast(`修复触发异常: ${err.message}`, 'error');
+      allFixBtns.forEach(btn => {
+        btn.disabled = false;
+        btn.innerHTML = btn.dataset.origText || '🛠️ 一键修复 LoRa 通信';
+        btn.classList.remove('loading');
+      });
+      showToast('调用修复接口异常: ' + err.message, 'error');
     }
   },
 
@@ -331,21 +414,35 @@ const TabImage = {
           inputRobotId.value = d.robot_id;
         }
 
-        if (btnAutostart) {
-          btnAutostart.disabled = false;
-          if (d.autostart_configured) {
-            btnAutostart.classList.remove('btn-secondary');
-            btnAutostart.classList.add('btn-success');
-            btnAutostart.textContent = `⚙️ 重新写入开机自启动与 Robot ID [${d.robot_id}]`;
-          } else {
-            btnAutostart.classList.remove('btn-secondary');
-            btnAutostart.classList.add('btn-success');
-            btnAutostart.textContent = `📝 一键写入开机自启动与 Robot ID`;
-          }
-        }
+        this.isIdConfigured = !!d.autostart_configured;
+        this.updateWriteIdButtonText();
       }
     } catch (e) {
       console.warn('Check container/autostart status failed:', e);
+    }
+  },
+
+  setRobotId(id) {
+    const inputEl = document.getElementById('tp-robot-id-select');
+    if (inputEl) {
+      inputEl.value = id;
+    }
+    this.updateWriteIdButtonText();
+  },
+
+  updateWriteIdButtonText() {
+    const inputEl = document.getElementById('tp-robot-id-select');
+    const val = inputEl ? inputEl.value.trim().toUpperCase() : '';
+    const btn = document.getElementById('tp-btn-write-autostart');
+    if (!btn) return;
+    const idLabel = val ? ` [${val}]` : '';
+    btn.disabled = false;
+    btn.classList.remove('btn-secondary');
+    btn.classList.add('btn-success');
+    if (this.isIdConfigured) {
+      btn.textContent = `⚙️ 重新写入 ID${idLabel}`;
+    } else {
+      btn.textContent = `💾 写入 ID${idLabel}`;
     }
   },
 
@@ -475,6 +572,17 @@ const TabImage = {
         return;
       }
 
+      // 优先将 vsis_dancer 镜像排在首位
+      availableImgs.sort((a, b) => {
+        const aName = `${a.repository}:${a.tag}`.toLowerCase();
+        const bName = `${b.repository}:${b.tag}`.toLowerCase();
+        const aMatch = aName.includes('vsis_dancer') || (aName.includes('vsis') && aName.includes('dancer'));
+        const bMatch = bName.includes('vsis_dancer') || (bName.includes('vsis') && bName.includes('dancer'));
+        if (aMatch && !bMatch) return -1;
+        if (!aMatch && bMatch) return 1;
+        return 0;
+      });
+
       for (const img of availableImgs) {
         const opt = document.createElement('option');
         const tag = `${img.repository}:${img.tag}`;
@@ -576,6 +684,41 @@ const TabImage = {
       return;
     }
 
+    const btnLoad = document.getElementById('tp-btn-docker-load');
+    if (btnLoad && btnLoad.disabled) return;
+    if (btnLoad) {
+      btnLoad.disabled = true;
+      btnLoad.classList.add('loading');
+      btnLoad.textContent = '⏳ 安装中 (1~3分钟)...';
+    }
+
+    const pBox = document.getElementById('tp-docker-load-progress-box');
+    const pBar = document.getElementById('tp-docker-load-progress-bar');
+    const pPct = document.getElementById('tp-docker-load-pct');
+    const pText = document.getElementById('tp-docker-load-stage-text');
+    const pSub = document.getElementById('tp-docker-load-subtext');
+    if (pBox) pBox.style.display = 'block';
+
+    let currentPct = 15;
+    const setProgress = (pct, stage, sub) => {
+      currentPct = Math.max(currentPct, pct);
+      if (pBar) {
+        pBar.style.width = `${currentPct}%`;
+        pBar.style.background = currentPct >= 100 ? '#10b981' : 'linear-gradient(90deg, #0ea5e9, #10b981)';
+      }
+      if (pPct) pPct.textContent = `${Math.round(currentPct)}%`;
+      if (pText && stage) pText.textContent = stage;
+      if (pSub && sub) pSub.textContent = sub;
+    };
+    setProgress(15, '⏳ 检查镜像包压缩状态与磁盘空间...', '准备文件解压与 Docker 归档导入...');
+
+    let ticker = setInterval(() => {
+      if (currentPct < 92) {
+        currentPct += 0.6;
+        setProgress(currentPct);
+      }
+    }, 800);
+
     this.appendLog(`正在执行 docker load -i ${remotePath} ...`, false, '⚡');
 
     try {
@@ -583,18 +726,56 @@ const TabImage = {
       if (res.success && res.task_id) {
         API.listenStream(res.task_id, (line, isErr) => {
           this.appendLog(line, isErr);
+
+          const text = String(line || '');
+          if (text.includes('[STEP 1/3]')) {
+            setProgress(20, '🔍 步骤 1/3: 检查镜像包格式与磁盘...', '检测 GZIP / TAR 压缩状态与 NVMe 剩余空间');
+          } else if (text.includes('[STEP 2/3]') || text.includes('解压') || text.includes('pigz') || text.includes('gzip')) {
+            setProgress(45, '📦 步骤 2/3: 正在物理完整解压镜像 TAR 归档...', '利用多核 pigz/gzip 高速解压缩 (预计 30~60 秒)');
+          } else if (text.includes('解压完成')) {
+            setProgress(65, '✅ TAR 归档解压完成，准备导入 Docker 引擎...', '已落盘，正在调用 docker load 引擎');
+          } else if (text.includes('[STEP 3/3]') || text.includes('docker load')) {
+            setProgress(75, '⚡ 步骤 3/3: 正在向 Docker 引擎加载镜像层...', '写入 Layer 分层数据与 OCI 格式元数据');
+          } else if (text.includes('Loaded image') || text.includes('ctr') || text.includes('skopeo')) {
+            setProgress(90, '🎉 镜像层加载成功，正在巡检环境权限...', '执行权限配置与开机环境适配');
+          } else if (text.includes('[SUCCESS]') || text.includes('🎉')) {
+            setProgress(100, '✅ Docker 镜像导入与环境适配全部完成！', '镜像已成功注册至 Docker，可选择镜像并固化启动');
+          }
         }, async (ok) => {
+          if (ticker) clearInterval(ticker);
+          if (btnLoad) {
+            btnLoad.disabled = false;
+            btnLoad.classList.remove('loading');
+            btnLoad.textContent = '⚡ 执行 docker load';
+          }
           if (ok) {
+            setProgress(100, '✅ Docker 镜像安装与导入成功！', '已成功加载至宿主机，请在下方选择镜像固化启动。');
             this.appendLog('✅ Docker 镜像导入成功！请在左侧选择镜像并点击【固化启动容器】。', false);
             showToast('✅ Docker 镜像导入成功！', 'success');
             await this.loadImages();
             await this.checkAndFixEnvironment();
           } else {
+            setProgress(currentPct, '❌ 镜像安装遇到异常', '请查看右侧控制台详细错误日志');
+            if (pBar) pBar.style.background = '#f87171';
             showToast('❌ 镜像导入异常，请查看右侧终端输出', 'error');
           }
         });
+      } else {
+        if (ticker) clearInterval(ticker);
+        if (btnLoad) {
+          btnLoad.disabled = false;
+          btnLoad.classList.remove('loading');
+          btnLoad.textContent = '⚡ 执行 docker load';
+        }
+        showToast(`启动失败: ${res?.msg || '未知错误'}`, 'error');
       }
     } catch (err) {
+      if (ticker) clearInterval(ticker);
+      if (btnLoad) {
+        btnLoad.disabled = false;
+        btnLoad.classList.remove('loading');
+        btnLoad.textContent = '⚡ 执行 docker load';
+      }
       showToast(`执行异常: ${err.message}`, 'error');
       this.appendLog(`执行异常: ${err.message}`, true);
     }
@@ -602,25 +783,66 @@ const TabImage = {
 
   async startContainer() {
     const select = document.getElementById('tp-docker-image-select');
-    const imgName = select && select.value ? select.value : 'vsis_dancer:gpu-0.1';
-    this.appendLog(`正在执行固化容器启动命令 (镜像: ${imgName})...`, false, '🚀');
+    const imgName = select && select.value ? select.value : 'rl_cu118:2.0';
+
+    const btnStart = document.getElementById('tp-btn-start-container');
+    if (btnStart) {
+      btnStart.disabled = true;
+      btnStart.classList.add('loading');
+      btnStart.textContent = '⏳ 正在启动 vsis_g1 容器...';
+    }
 
     try {
+      // 步骤 1 (优先): 优先配置开机自启并写入 Robot ID
+      this.appendLog('【步骤 1/2 优先执行】正在配置开机自启并写入 Robot ID...', false, '⚙️');
+      const inputEl = document.getElementById('tp-robot-id-select');
+      const robotId = (inputEl && inputEl.value.trim() ? inputEl.value.trim() : 'A').toUpperCase();
+      if (inputEl) inputEl.value = robotId;
+
+      const autostartRes = await API.configAutostart(robotId);
+      if (!autostartRes.success) {
+        this.appendLog(`❌ 写入 Robot ID 失败: ${autostartRes.msg}`, true);
+        showToast(`写入失败: ${autostartRes.msg}`, 'error');
+        if (btnStart) { btnStart.disabled = false; btnStart.classList.remove('loading'); btnStart.textContent = '⚡ 固化启动 vsis_g1 容器'; }
+        return;
+      }
+      this.isIdConfigured = true;
+      this.appendLog(`✅ Robot ID [${robotId}] 与开机自启动钩子写入成功！`, false);
+
+      // 步骤 2 (然后): 固化启动容器 vsis_g1 (不自动执行 run_bg.sh)
+      this.appendLog(`【步骤 2/2 然后执行】正在固化启动容器 vsis_g1 (镜像: ${imgName})...`, false, '🚀');
       const res = await API.startContainer(imgName);
       if (res.success && res.task_id) {
         API.listenStream(res.task_id, (line, isErr) => {
           this.appendLog(line, isErr);
         }, async (ok) => {
           if (ok) {
-            showToast('✓ 容器 vsis_g1 已固化启动，开机自启动钩子已就绪！', 'success');
+            this.appendLog('✅ 容器 vsis_g1 已固化启动完成！已就绪。', false);
+            showToast('✓ 容器 vsis_g1 已固化启动就绪！', 'success');
             await this.loadImages();
-            await this.checkAndFixEnvironment();
           } else {
             showToast('容器启动失败，请查看右侧日志', 'error');
           }
+          if (btnStart) {
+            btnStart.disabled = false;
+            btnStart.classList.remove('loading');
+            btnStart.textContent = '⚡ 固化启动 vsis_g1 容器';
+          }
         });
+      } else {
+        if (btnStart) {
+          btnStart.disabled = false;
+          btnStart.classList.remove('loading');
+          btnStart.textContent = '⚡ 固化启动 vsis_g1 容器';
+        }
+        showToast(`启动失败: ${res?.msg || '未知错误'}`, 'error');
       }
     } catch (err) {
+      if (btnStart) {
+        btnStart.disabled = false;
+        btnStart.classList.remove('loading');
+        btnStart.textContent = '⚡ 固化启动 vsis_g1 容器';
+      }
       showToast(`启动异常: ${err.message}`, 'error');
       this.appendLog(`启动异常: ${err.message}`, true);
     }
@@ -643,20 +865,60 @@ const TabImage = {
     }
 
     if (inputEl) inputEl.value = robotId;
+    this.updateWriteIdButtonText();
+
+    const btn = document.getElementById('tp-btn-write-autostart');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = `⏳ 正在写入 ID [${robotId}] ...`;
+    }
+
     this.appendLog(`正在配置开机自启并写入 Robot ID [${robotId}] ...`, false, '⚙️');
     showToast(`正在配置开机自启并写入 Robot ID [${robotId}] ...`, 'info');
+
     try {
+      // 1. 写入 ID 与自启钩子
       const res = await API.configAutostart(robotId);
-      if (res.success) {
-        this.appendLog(`✅ ${res.msg}`, false);
-        showToast(res.msg, 'success');
-      } else {
+      if (!res.success) {
         this.appendLog(`❌ 写入失败: ${res.msg}`, true);
         showToast(`写入失败: ${res.msg}`, 'error');
+        if (btn) btn.disabled = false;
+        this.updateWriteIdButtonText();
+        return;
       }
+
+      this.isIdConfigured = true;
+      this.appendLog(`✅ Robot ID [${robotId}] 与自启动钩子写入成功！`, false);
+
+      // 2. 检查宿主机当前容器状态，若 vsis_g1 已存在/运行，自动重启容器
+      const cStatus = await API.getContainerStatus();
+      const hasContainer = cStatus.success && cStatus.data && (cStatus.data.running || cStatus.data.container_exists);
+
+      if (hasContainer) {
+        this.appendLog(`[INFO] 检测到 vsis_g1 容器已就绪，正在自动重启容器以应用新 ID [${robotId}] ...`, false, '🔄');
+        showToast(`已写入 ID [${robotId}]，正在自动重启 vsis_g1 容器...`, 'info');
+        if (btn) btn.textContent = '⏳ 正在重启容器 vsis_g1 ...';
+
+        const restartRes = await API.restartContainer('vsis_g1');
+        if (restartRes.success) {
+          this.appendLog(`[SUCCESS] ✅ 容器 vsis_g1 已重启，新 ID [${robotId}] 已应用生效！`, false);
+          showToast(`🎉 Robot ID [${robotId}] 已写入，容器已重启就绪！`, 'success');
+        } else {
+          this.appendLog(`❌ 重启容器失败: ${restartRes.msg}`, true);
+          showToast(`重启容器失败: ${restartRes.msg}`, 'error');
+        }
+      } else {
+        this.appendLog(`[INFO] 容器尚未创建。Robot ID [${robotId}] 已就绪，请在上方点击【⚡ 固化启动 vsis_g1 容器】。`, false);
+        showToast(`✅ Robot ID [${robotId}] 写入成功！请启动容器`, 'success');
+      }
+
+      if (btn) btn.disabled = false;
+      this.updateWriteIdButtonText();
     } catch (err) {
       showToast(`写入失败: ${err.message}`, 'error');
       this.appendLog(`写入异常: ${err.message}`, true);
+      if (btn) btn.disabled = false;
+      this.updateWriteIdButtonText();
     }
   },
 
@@ -724,25 +986,25 @@ const TabImage = {
         if (res.all_running) {
           dotEl.style.background = '#34d399';
           dotEl.className = 'pulse-dot active';
-          textEl.textContent = '运控与LoRa运行中';
+          textEl.textContent = '运行中';
           badgeEl.style.borderColor = 'rgba(52, 211, 153, 0.4)';
           badgeEl.style.background = 'rgba(16, 185, 129, 0.12)';
         } else if (res.g1_ctrl_running && !res.lora_recv_running) {
           dotEl.style.background = '#fbbf24';
           dotEl.className = 'pulse-dot active';
-          textEl.textContent = '运控运行中 (LoRa未就绪)';
+          textEl.textContent = '仅运控';
           badgeEl.style.borderColor = 'rgba(251, 191, 36, 0.4)';
           badgeEl.style.background = 'rgba(245, 158, 11, 0.12)';
         } else if (!res.g1_ctrl_running && res.lora_recv_running) {
           dotEl.style.background = '#fbbf24';
           dotEl.className = 'pulse-dot active';
-          textEl.textContent = 'LoRa已就绪 (运控未运行)';
+          textEl.textContent = '仅通信';
           badgeEl.style.borderColor = 'rgba(251, 191, 36, 0.4)';
           badgeEl.style.background = 'rgba(245, 158, 11, 0.12)';
         } else {
           dotEl.style.background = '#f87171';
           dotEl.className = 'pulse-dot';
-          textEl.textContent = '运控未运行 (离线)';
+          textEl.textContent = '未运行';
           badgeEl.style.borderColor = 'rgba(239, 68, 68, 0.3)';
           badgeEl.style.background = 'rgba(239, 68, 68, 0.08)';
         }
@@ -1037,21 +1299,81 @@ const TabLicense = {
       return;
     }
     const btn = document.getElementById('tp-deploy-btn');
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ 正在部署并重启验证...'; }
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ 正在部署 License...'; }
 
-    showToast('正在写入 License 并重启运控进程校验日志...', 'info');
+    showToast('正在写入 License 并校验授权...', 'info');
     try {
       const res = await API.deployLicense(this.licenseContent);
       if (res.success) {
-        showToast('✓ License 部署并校验成功！日志无 [SKIP] not licensed', 'success', 3500);
-        let html = `<div style="background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3); border-radius: 8px; padding: 16px;">
-          <div style="color: #34d399; font-weight: 700; margin-bottom: 8px;">✅ 部署与校验成功！</div>
-          <div style="font-size: 0.85rem; color: #a7f3d0;">${res.msg}</div>`;
-        if (res.log_snippet) {
-          html += `<div style="margin-top: 8px; font-family: monospace; font-size: 0.75rem; color: #a7f3d0; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; white-space: pre-wrap; max-height: 120px; overflow-y: auto;">${res.log_snippet}</div>`;
-        }
-        html += '</div>';
+        showToast('✓ License 部署成功！正在自动拉起机载程序 (run_bg.sh)...', 'success', 3000);
+        let html = `
+          <div style="background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3); border-radius: 8px; padding: 16px; margin-bottom: 12px;">
+            <div style="color: #34d399; font-weight: 700; margin-bottom: 8px;">✅ 授权与生效校验成功！</div>
+            <div style="font-size: 0.85rem; color: #a7f3d0;">${res.msg}</div>
+            ${res.log_snippet ? `<div style="margin-top: 8px; font-family: monospace; font-size: 0.75rem; color: #a7f3d0; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; white-space: pre-wrap; max-height: 120px; overflow-y: auto;">${res.log_snippet}</div>` : ''}
+          </div>
+          <div id="tp-license-process-box" style="background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 8px; padding: 14px;">
+            <div style="font-weight: 700; color: var(--accent-cyan); margin-bottom: 6px;" id="tp-lic-proc-title">🚀 正在拉起机载运控与通信程序 (run_bg.sh)...</div>
+            <div style="font-size: 0.78rem; color: var(--text-secondary);" id="tp-lic-proc-desc">正在启动跳舞运控 (g1_ctrl_vsis) 与 LoRa 接收程序，请稍候...</div>
+            <div style="display: flex; gap: 8px; margin-top: 8px;">
+              <span id="tp-lic-ctrl-badge" class="container-status-badge stopped" style="font-size: 0.72rem; padding: 2px 8px;">🦾 运控: 启动中</span>
+              <span id="tp-lic-lora-badge" class="container-status-badge stopped" style="font-size: 0.72rem; padding: 2px 8px;">📡 LoRa: 启动中</span>
+            </div>
+          </div>
+        `;
         this._showResult(html);
+
+        // 自动拉起机载程序 run_bg.sh 并实时监听真实运控日志
+        try {
+          const startRes = await API.startRobotProcesses();
+          if (startRes && startRes.success && startRes.task_id) {
+            API.listenStream(startRes.task_id, (line) => {
+              const procDesc = document.getElementById('tp-lic-proc-desc');
+              const procTitle = document.getElementById('tp-lic-proc-title');
+              if (line.includes('[PROGRESS')) {
+                const match = line.match(/\[PROGRESS\s+(\d+)%\]\s*(.*)/i);
+                if (match && procTitle) {
+                  procTitle.textContent = `🚀 启动进度 [${match[1]}%]: ${match[2] || ''}`;
+                }
+              } else if (line.includes('[运控日志]')) {
+                const clean = line.replace('[运控日志]', '').trim();
+                if (clean && procDesc) procDesc.textContent = `[运控] ${clean}`;
+              } else if (line.includes('[LoRa日志]')) {
+                const clean = line.replace('[LoRa日志]', '').trim();
+                if (clean && procDesc) procDesc.textContent = `[LoRa] ${clean}`;
+              }
+            }, async (ok) => {
+              const pRes = await API.getRobotProcessStatus();
+              const ctrlB = document.getElementById('tp-lic-ctrl-badge');
+              const loraB = document.getElementById('tp-lic-lora-badge');
+              const procTitle = document.getElementById('tp-lic-proc-title');
+              const procDesc = document.getElementById('tp-lic-proc-desc');
+
+              if (ctrlB) {
+                ctrlB.className = pRes?.g1_ctrl_running ? 'container-status-badge running' : 'container-status-badge stopped';
+                ctrlB.textContent = pRes?.g1_ctrl_running ? '🦾 运行中' : '🦾 未运行';
+              }
+              if (loraB) {
+                loraB.className = pRes?.lora_recv_running ? 'container-status-badge running' : 'container-status-badge stopped';
+                loraB.textContent = pRes?.lora_recv_running ? '📡 运行中' : '📡 未运行';
+              }
+
+              if (ok && pRes?.all_running) {
+                if (procTitle) procTitle.textContent = '🎉 机载程序已启动就绪！';
+                if (procDesc) procDesc.textContent = '✅ 运控与通信服务运行正常。';
+                showToast('🎉 机载程序启动成功！', 'success');
+              } else {
+                if (procTitle) procTitle.textContent = '⚠️ 启动指令已完成';
+                if (procDesc) procDesc.textContent = '服务正在后台运行，可刷新查看最新状态。';
+                showToast('机载程序已拉起', 'info');
+              }
+              this.syncAllStates();
+            });
+          }
+        } catch (e) {
+          console.warn('拉起机载程序异常:', e);
+        }
+
       } else {
         showToast(`❌ 机器端校验失败: ${res.msg}`, 'error');
         let html = `<div style="background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 8px; padding: 16px;">
@@ -1061,11 +1383,31 @@ const TabLicense = {
         }
         html += '</div>';
         this._showResult(html);
+        this.syncAllStates();
       }
     } catch (err) {
       showToast(`部署 License 异常: ${err.message}`, 'error');
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '🚀 部署 License 至机器人'; }
+      if (btn) { btn.disabled = false; btn.textContent = '🚀 重新部署 License 至机器人'; }
+    }
+  },
+
+  syncAllStates() {
+    if (window.App) {
+      if (typeof App.runStartupCheck === 'function') App.runStartupCheck();
+      if (typeof App.refreshLicenseStatus === 'function') App.refreshLicenseStatus();
+    }
+    if (window.TabImage && typeof TabImage.checkProcessStatus === 'function') {
+      TabImage.checkProcessStatus();
+    }
+    if (window.TabImage && typeof TabImage.loadImages === 'function') {
+      TabImage.loadImages();
+    }
+    if (window.Wizard && typeof Wizard.checkProcessStatus === 'function') {
+      Wizard.checkProcessStatus();
+    }
+    if (window.TabDanceUpdate && typeof TabDanceUpdate.loadDances === 'function') {
+      TabDanceUpdate.loadDances();
     }
   }
 };

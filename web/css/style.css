@@ -323,6 +323,58 @@ body {
   display: none;
 }
 
+/* 镜像与容器管理 Tab：完美自适应全高无滚动条仪表盘 */
+#tab-image.active {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.image-dashboard-grid {
+  display: grid;
+  grid-template-columns: 1.12fr 0.88fr;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  align-items: stretch;
+}
+
+.image-dashboard-left {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.image-dashboard-right {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.image-dashboard-right .console-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  margin-bottom: 0;
+}
+
+.image-dashboard-right .terminal-console {
+  flex: 1;
+  min-height: 140px;
+  height: auto;
+  overflow-y: auto;
+}
+
 /* 控制台包装器：在 Flex 容器中自适应撑满 */
 .console-wrapper {
   position: relative;
@@ -554,6 +606,21 @@ body {
   color: var(--accent-cyan) !important;
   box-shadow: 0 0 12px rgba(0, 210, 255, 0.35), inset 0 0 8px rgba(0, 210, 255, 0.15) !important;
   font-weight: 700 !important;
+}
+
+.btn:disabled,
+.btn[disabled] {
+  opacity: 0.55 !important;
+  cursor: not-allowed !important;
+  pointer-events: none !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.btn.loading {
+  position: relative;
+  opacity: 0.75 !important;
+  cursor: wait !important;
 }
 
 .btn-sm {
@@ -901,14 +968,14 @@ body {
 .wizard-steps {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 28px;
+  margin-bottom: 16px;
   position: relative;
 }
 
 .wizard-steps::before {
   content: '';
   position: absolute;
-  top: 18px;
+  top: 15px;
   left: 30px;
   right: 30px;
   height: 2px;
@@ -922,13 +989,13 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   cursor: pointer;
 }
 
 .step-circle {
-  width: 36px;
-  height: 36px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background: var(--bg-secondary);
   border: 2px solid rgba(255, 255, 255, 0.2);
@@ -936,7 +1003,7 @@ body {
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   color: var(--text-muted);
   transition: all 0.3s;
 }
@@ -1085,7 +1152,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 24px;
+  padding: 12px 20px;
   background: rgba(15, 23, 42, 0.95);
   border-bottom: 1px solid var(--border-color);
 }
@@ -1094,7 +1161,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 1.15rem;
+  font-size: 1.05rem;
   font-weight: 700;
   color: var(--text-primary);
 }
@@ -1103,9 +1170,9 @@ body {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.15);
   color: var(--text-secondary);
-  font-size: 1.1rem;
-  width: 32px;
-  height: 32px;
+  font-size: 1rem;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   cursor: pointer;
   display: flex;
@@ -1122,7 +1189,7 @@ body {
 }
 
 .wizard-modal-body {
-  padding: 24px;
+  padding: 16px 20px;
   overflow-y: auto;
   flex: 1;
 }
@@ -2038,6 +2105,64 @@ body {
   background: linear-gradient(135deg, rgba(245, 158, 11, 0.3), rgba(217, 119, 6, 0.4));
   border-color: #f59e0b;
   box-shadow: 0 0 14px rgba(245, 158, 11, 0.4);
+}
+
+/* 动态串口动作状态卡片 (未连接 / 同步中 / 无响应) */
+.dance-status-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  text-align: center;
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px dashed rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  margin: 10px 0;
+  min-height: 120px;
+}
+
+.dance-status-icon {
+  font-size: 2rem;
+  margin-bottom: 8px;
+  opacity: 0.85;
+}
+
+.dance-status-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.dance-status-desc {
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  max-width: 420px;
+}
+
+.dance-status-desc code {
+  background: rgba(56, 189, 248, 0.12);
+  color: var(--accent-cyan);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.72rem;
+}
+
+.dance-loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(56, 189, 248, 0.2);
+  border-top-color: var(--accent-cyan);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 10px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* 发送日志监视器 (固定且弹性占据剩余空间，永不被挤出视野) */

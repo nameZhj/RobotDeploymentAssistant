@@ -204,8 +204,9 @@ def run_precheck():
 
 
 @app.route("/api/fix/ch341", methods=["POST"])
-def fix_ch341():
-    task_id = f"fix_ch341_{int(time.time())}"
+@app.route("/api/fix/lora", methods=["POST"])
+def fix_lora():
+    task_id = f"fix_lora_{int(time.time())}"
     q = queue.Queue()
     stream_queues[task_id] = q
 
@@ -213,7 +214,7 @@ def fix_ch341():
         def _cb(line, is_err):
             push_stream_msg(task_id, line, is_err)
 
-        ok = deployment_core.fix_ch341_driver(_cb)
+        ok = deployment_core.fix_lora_environment(_cb)
         push_stream_msg(task_id, f"__TASK_DONE__:{ok}\n", False)
 
     threading.Thread(target=_worker, daemon=True).start()
@@ -324,6 +325,20 @@ def upload_image():
             "local_path": local_path,
             "skipped": True
         })
+
+    # 重置取消标记并预设上传中状态
+    ssh_manager.cancel_upload_flag = False
+    ssh_manager.upload_progress.update({
+        "is_uploading": True,
+        "filename": filename,
+        "transferred_bytes": 0,
+        "total_bytes": file_size,
+        "percent": 0.0,
+        "speed_mbps": 0.0,
+        "eta_seconds": 0,
+        "status": "uploading",
+        "error_msg": "",
+    })
 
     def _worker():
         ssh_manager.upload_file(local_path, remote_path)
@@ -464,6 +479,14 @@ def stop_container_route():
     return jsonify({"success": ok, "msg": msg})
 
 
+@app.route("/api/container/restart", methods=["POST"])
+def restart_container_route():
+    data = request.json or {}
+    container_name = data.get("container_name", "vsis_g1")
+    ok, msg = deployment_core.restart_container(container_name)
+    return jsonify({"success": ok, "msg": msg})
+
+
 @app.route("/api/container/autostart", methods=["POST"])
 def config_autostart():
     data = request.json or {}
@@ -526,6 +549,20 @@ def stop_robot_processes_route():
 # ==========================================
 # 5. 机器码与 License 管理 API
 # ==========================================
+@app.route("/api/license/status", methods=["GET"])
+def get_license_status():
+    if not ssh_manager.is_connected():
+        return jsonify({
+            "connected": False,
+            "has_license": False,
+            "license_valid": False,
+            "msg": "未连接至机器人",
+            "license_data": {}
+        })
+    res = license_service.check_remote_license_status()
+    return jsonify(res)
+
+
 @app.route("/api/machine_id", methods=["GET"])
 def get_machine_id():
     res = deployment_core.read_machine_id()
@@ -835,14 +872,22 @@ def get_serial_status():
     return jsonify({"success": True, "data": status})
 
 
+@app.route("/api/serial/messages", methods=["GET"])
+def get_serial_messages():
+    """获取最近由串口产生并接收到的实时 TX/RX 消息字符串"""
+    since = float(request.args.get("since", 0.0))
+    msgs = serial_manager.get_recent_messages(since_ts=since)
+    return jsonify({"success": True, "messages": msgs, "count": len(msgs)})
+
+
 @app.route("/api/serial/dance_list", methods=["GET", "POST"])
 def get_serial_dance_list():
     """获取从串口同步到的最新舞蹈列表"""
-    data = request.json if request.is_json else {}
-    force_refresh = request.args.get("refresh", "0") in ["1", "true", "True"] or (data and data.get("refresh"))
+    data = request.get_json(silent=True) if request.method == "POST" else {}
+    force_refresh = request.args.get("refresh", "0") in ["1", "true", "True"] or bool(data and data.get("refresh"))
     
     if force_refresh and serial_manager.ser is not None and serial_manager.ser.is_open:
-        res = serial_manager.request_dance_list(timeout=2.0)
+        res = serial_manager.request_dance_list(timeout=2.5, force=True)
         return jsonify(res)
         
     res = serial_manager.get_dance_list()
@@ -852,16 +897,16 @@ def get_serial_dance_list():
 @app.route("/api/serial/refresh_dance_list", methods=["POST"])
 def refresh_serial_dance_list():
     """向串口重新发送 ALL|GETDANCELIST 并返回解析后的舞蹈列表"""
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     timeout = float(data.get("timeout", 2.5))
-    res = serial_manager.request_dance_list(timeout=timeout)
+    res = serial_manager.request_dance_list(timeout=timeout, force=True)
     return jsonify(res)
 
 
 @app.route("/api/serial/parse_dances", methods=["POST"])
 def parse_dances_api():
     """解析传入的 YAML 舞蹈配置字符串并返回标准结构化数据"""
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     raw_text = data.get("content", "").strip()
     if not raw_text:
         return jsonify({"success": False, "msg": "内容为空", "groups": []})

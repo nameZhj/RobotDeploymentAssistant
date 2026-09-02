@@ -22,6 +22,7 @@ class TestSerialSyncPolicy(unittest.TestCase):
         sm.send_command.assert_not_called()
 
         # 2. 用户点击刷新，强制触发 request_dance_list(force=True) -> 触发一次 GETDANCELIST
+        sm.latest_dance_list_parsed = [{"group": 1, "items": [{"alias": "G1_TEST"}]}]
         sm.request_dance_list(force=True, timeout=0.01)
         sm.send_command.assert_called_once_with("ALL", "GETDANCELIST")
 

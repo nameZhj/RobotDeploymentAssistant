@@ -28,6 +28,7 @@ class NetworkManager:
         self.auto_connect_enabled = True
         self.auto_detecting = False
         self.last_auto_check_time = 0.0
+        self._last_attempt_time = 0.0
         self.last_auto_status_msg = "初始化中"
         self._daemon_thread: Optional[threading.Thread] = None
         self._stop_daemon_event = threading.Event()
@@ -223,6 +224,16 @@ class NetworkManager:
                     "target_ip": ssh_manager.host,
                     "msg": f"机器人已处于连接状态 ({ssh_manager.host}:{ssh_manager.port})，延迟: {lat:.1f}ms"
                 }
+
+        # 避免并发或高频尝试造成 OpenSSH 握手队列过载 (冷却 6.0 秒)
+        now = time.time()
+        if now - self._last_attempt_time < 6.0:
+            return {
+                "success": False,
+                "connected": False,
+                "msg": f"正在等待重连冷却 ({int(6.0 - (now - self._last_attempt_time))}s)..."
+            }
+        self._last_attempt_time = now
 
         # 0. 优先检测本机物理以太网卡是否已插入网线并就绪
         if sys.platform == "win32":

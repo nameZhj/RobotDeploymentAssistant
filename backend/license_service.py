@@ -16,20 +16,32 @@ class LicenseService:
         pass
 
     def parse_license_content(self, content_str: str) -> Dict[str, Any]:
-        """解析 License JSON 内容以供前端预览展示（不作阻断式强校验，由机器端自行校验）"""
+        """解析 License JSON 内容以供前端与后端校验"""
         if not content_str or not content_str.strip():
             return {"success": False, "msg": "License 文件内容为空"}
 
         try:
+            import base64
             data = json.loads(content_str.strip())
             
+            # 若含有 payload_b64 (商业化 Ed25519 签名标准结构)，进行 Base64 解码提取
+            payload_b64 = data.get("payload_b64")
+            if payload_b64:
+                try:
+                    payload = json.loads(base64.b64decode(payload_b64).decode('utf-8'))
+                    for k, v in payload.items():
+                        if k not in data or not data[k]:
+                            data[k] = v
+                except Exception as ex:
+                    logger.warning(f"解析 payload_b64 失败: {ex}")
+
             machine_id = data.get("machine_id") or data.get("machine_code") or data.get("hardware_id", "")
             machine_id = str(machine_id).strip().lower()
 
-            expire_date = data.get("expire_date") or data.get("valid_until") or data.get("expiration", "永久授权 (Permanent)")
+            expire_date = data.get("expire_at") or data.get("expire_date") or data.get("valid_until") or data.get("expiration", "永久授权 (Permanent)")
             
             # 提取舞蹈列表
-            dances_raw = data.get("authorized_dances") or data.get("dances") or data.get("dance_list") or []
+            dances_raw = data.get("features") or data.get("authorized_dances") or data.get("dances") or data.get("dance_list") or []
             if isinstance(dances_raw, dict):
                 dance_list = list(dances_raw.keys())
             elif isinstance(dances_raw, list):
@@ -37,8 +49,8 @@ class LicenseService:
             else:
                 dance_list = []
 
-            customer = data.get("customer") or data.get("client") or "商业客户"
-            model = data.get("robot_model") or data.get("model") or "Unitree G1"
+            customer = data.get("customer_id") or data.get("customer") or data.get("client") or "商业客户"
+            model = data.get("product") or data.get("robot_model") or data.get("model") or "Unitree G1"
             signature = data.get("signature") or data.get("sign") or ""
 
             return {
@@ -55,12 +67,12 @@ class LicenseService:
                 }
             }
         except Exception as e:
-            # 即使不是标准 JSON 也返回成功，由机器端自主校验
             return {
-                "success": True,
+                "success": False,
+                "msg": f"License 解析失败: {str(e)}",
                 "data": {
                     "machine_id": "",
-                    "expire_date": "由机器端校验",
+                    "expire_date": "未知",
                     "dances": [],
                     "dance_count": 0,
                     "customer": "自定义文件",
@@ -72,7 +84,7 @@ class LicenseService:
 
     def verify_license(self, license_data: Dict[str, Any], current_machine_id: Optional[str] = None) -> Dict[str, Any]:
         """
-        前端预览比对（仅供参考，以机器端日志 [SKIP] not licensed 为唯一真实标准）
+        前端预览比对与合法性初步校验
         """
         lic_mid = str(license_data.get("machine_id", "")).strip().lower()
         curr_mid = str(current_machine_id or "").strip().lower()
@@ -80,10 +92,11 @@ class LicenseService:
         expire_date = license_data.get("expire_date", "永久授权")
         dances = license_data.get("dances", [])
 
-        # 始终允许用户提交给机器端进行真实校验
+        is_match = bool(lic_mid and curr_mid and lic_mid == curr_mid)
+
         return {
-            "is_match": True,
-            "msg": "License 文件已就绪，点击下方按钮将由机器人主控程序执行真实加密校验",
+            "is_match": is_match,
+            "msg": "License 机器码与当前机器人完全匹配" if is_match else f"机器码不匹配: License 授权目标为 [{lic_mid[:8]}...]，本机指纹为 [{curr_mid[:8]}...]",
             "current_machine_id": curr_mid,
             "license_machine_id": lic_mid,
             "dances": dances,
@@ -95,10 +108,12 @@ class LicenseService:
     def check_remote_license_status(self) -> Dict[str, Any]:
         """
         探测机器人远端部署与 License 状态：
-        唯一标准：
+        校验标准：
         1. 检查是否存在 /home/ubuntu/vsis_mimic_deploy/license.json
-        2. 容器正在运行
-        3. 机器人主控日志中各舞蹈无 [SKIP] not licensed
+        2. 提取 license 中的 machine_id 与当前真机指纹比对
+        3. 容器正在运行
+        4. 机器人主控日志中各舞蹈无 [SKIP] not licensed
+        5. 机载主控与 LoRa 程序处于活跃运行状态
         """
         if not ssh_manager.is_connected():
             return {
@@ -108,6 +123,20 @@ class LicenseService:
                 "license_valid": False,
                 "is_container_running": False,
                 "msg": "未连接至机器人"
+            }
+
+        # 上传超大镜像期间，挂起高频后台容器与文件巡检，保障网络与 CPU 完全专注于数据上传
+        if ssh_manager.upload_progress.get("is_uploading"):
+            return {
+                "connected": True,
+                "first_time": True,
+                "has_license": False,
+                "license_valid": False,
+                "is_container_running": False,
+                "machine_id": "",
+                "robot_id": "A",
+                "license_data": {},
+                "msg": "正在高速流式传输镜像包..."
             }
 
         # 1. 尝试读取远端 License 是否存在
@@ -124,18 +153,37 @@ class LicenseService:
         
         # 2. 读取当前机器码
         m_res = deployment_core.read_machine_id()
-        current_mid = m_res.get("machine_id", "")
+        current_mid = m_res.get("machine_id", "").strip().lower()
 
-        # 3. 检查容器运行状态 (包含 400 端口或 vsis_g1 容器)
+        parsed_license = {}
+        lic_mid = ""
+        if has_license:
+            p = self.parse_license_content(lic_content)
+            if p.get("success"):
+                parsed_license = p.get("data", {})
+                lic_mid = str(parsed_license.get("machine_id", "")).strip().lower()
+
+        # 3. 机器码严格一致性比对
+        is_mid_matched = False
+        if has_license and lic_mid and current_mid:
+            is_mid_matched = (lic_mid == current_mid)
+
+        # 4. 检查容器运行状态 (包含 400 端口或 vsis_g1 容器)
         code_p400, p400_out, _ = ssh_manager.execute_command("docker ps --filter publish=400 --format '{{.Names}}'", sudo=True)
         code_ps, ps_out, _ = ssh_manager.execute_command("docker ps --filter name=vsis_g1 --format '{{.Names}}'", sudo=True)
         is_container_running = bool((code_p400 == 0 and p400_out.strip()) or (code_ps == 0 and "vsis_g1" in ps_out))
 
-        # 4. 读取 Robot ID
+        # 5. 检查机载程序运行状态
+        code_ctrl, out_ctrl, _ = ssh_manager.execute_command("pgrep -f g1_ctrl_vsis", sudo=True)
+        is_ctrl_running = bool(code_ctrl == 0 and out_ctrl.strip())
+        code_lora, out_lora, _ = ssh_manager.execute_command("pgrep -f lora_recv_group", sudo=True)
+        is_lora_running = bool(code_lora == 0 and out_lora.strip())
+
+        # 6. 读取 Robot ID
         ok_id, id_txt = ssh_manager.read_remote_text_file("/home/ubuntu/vsis_mimic_deploy/group/lora_robot_id.txt")
         robot_id = id_txt.strip() if ok_id and id_txt.strip() else "A"
 
-        # 5. 校验日志中是否存在 [SKIP] not licensed
+        # 7. 校验日志中是否存在 [SKIP] not licensed
         has_skip = False
         if has_license and is_container_running:
             check_cmd = "cat /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>/dev/null | tail -n 80"
@@ -145,34 +193,23 @@ class LicenseService:
                 _, log_out, _ = ssh_manager.execute_command(f"docker exec {c_name} cat /home/ubuntu/vsis_mimic_deploy/log/sec_run.log 2>/dev/null | tail -n 80", sudo=True)
             has_skip = bool("[SKIP] not licensed" in log_out or "not licensed" in log_out)
 
-        license_valid = bool(has_license and not has_skip)
-        first_time = not (has_license and license_valid and is_container_running)
-
-        parsed_license = {}
-        if has_license:
-            p = self.parse_license_content(lic_content)
-            if p.get("success"):
-                parsed_license = p.get("data", {})
+        # 只有在：有 License + 机器码匹配 + 日志无跳过 时，才算 License 有效
+        license_valid = bool(has_license and is_mid_matched and not has_skip)
+        
+        # 判定是否首次部署向导 (全套就绪才判定为 False，否则一律 True 引导进入向导)
+        first_time = not (has_license and license_valid and is_container_running and is_ctrl_running and is_lora_running)
 
         return {
             "connected": True,
             "first_time": first_time,
             "has_license": has_license,
             "license_valid": license_valid,
+            "is_mid_matched": is_mid_matched,
             "is_container_running": is_container_running,
+            "is_ctrl_running": is_ctrl_running,
+            "is_lora_running": is_lora_running,
             "machine_id": current_mid,
-            "robot_id": robot_id,
-            "license_data": parsed_license,
-            "msg": "已完成部署且 License 验证通过，直接进入群控运行模式" if not first_time else "检测到未授权或未部署完成，需进入一键部署向导"
-        }
-
-        return {
-            "connected": True,
-            "first_time": first_time,
-            "has_license": has_license,
-            "license_valid": license_valid,
-            "is_container_running": is_container_running,
-            "machine_id": current_mid,
+            "license_machine_id": lic_mid,
             "robot_id": robot_id,
             "license_data": parsed_license,
             "msg": "已完成部署且 License 验证通过，直接进入群控运行模式" if not first_time else "检测到未授权或未部署完成，需进入一键部署向导"
