@@ -39,3 +39,7 @@ Desktop.ini
 $RECYCLE.BIN/
 .DS_Store
 
+# Tests
+tests/
+
+
