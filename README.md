@@ -2,11 +2,6 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/Version-2.0.0-00d2ff?style=flat-square)
-![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-blue?style=flat-square)
-![Robot](https://img.shields.io/badge/Target%20Robot-Unitree%20G1%20%2F%20Go2-00ff88?style=flat-square)
-![Python](https://img.shields.io/badge/Python-3.10%2B-yellow?style=flat-square)
-![License](https://img.shields.io/badge/License-Commercial%20Suite-purple?style=flat-square)
 
 <p align="center">
   <b>面向宇树 Unitree G1 / Go2 机器人的商业化一键部署、硬件环境深度预检、Docker 固化容器管理、开机自启守护、64位硬件机器码与 License 授权校验、LoRa 广播串口群控与多机编队调度、3D WebGL 动捕仿真及实时日志诊断系统。</b>
