@@ -1,0 +1,247 @@
+      <!-- ======================================= -->
+      <!-- ======================================= -->
+      <!-- ======================================= -->
+      <!-- TAB 4: 镜像与容器管理 -->
+      <!-- ======================================= -->
+      <section class="tab-content-panel" id="tab-image">
+        
+        <div class="image-dashboard-grid">
+          <!-- 左侧：3 个清晰连贯的配置运维卡片 -->
+          <div class="image-dashboard-left">
+            <!-- 卡片 1: 📤 镜像上传与加载 (Docker Load) -->
+            <div class="card" style="padding: 12px 14px; margin-bottom: 0;">
+              <div class="card-header" style="margin-bottom: 6px; padding-bottom: 4px;">
+                <div class="card-title" style="font-size: 0.88rem; display: flex; align-items: center; gap: 6px;">
+                  <span>📤 步骤 1：镜像上传与加载 (Docker Load)</span>
+                </div>
+                <button class="btn btn-secondary btn-xs" onclick="TabImage.loadImages()" title="重新获取镜像与容器列表"
+                  style="padding: 2px 6px; font-size: 0.72rem;">🔄 刷新镜像</button>
+              </div>
+
+              <!-- 上传本地镜像输入行 -->
+              <div class="form-group" style="margin-bottom: 6px;">
+                <div style="display: flex; gap: 6px;">
+                  <input type="text" class="form-control" id="tp-local-tar-path"
+                    placeholder="点击浏览或输入本地镜像绝对路径 (.tar / .tar.gz)..."
+                    style="font-family: monospace; font-size: 0.76rem; flex: 1;">
+                  <button type="button" class="btn btn-secondary btn-xs" id="btn-tp-browse-tar"
+                    onclick="TabImage.browseTarFile()"
+                    style="white-space: nowrap; font-weight: 600; padding: 3px 10px;">
+                    📁 浏览...
+                  </button>
+                  <button class="btn btn-primary btn-xs" id="tp-btn-start-upload" onclick="TabImage.uploadImage()"
+                    style="white-space: nowrap; font-weight: 700; padding: 3px 10px;">
+                    🚀 上传
+                  </button>
+                  <button class="btn btn-danger btn-xs" id="tp-btn-cancel-upload"
+                    style="display: none; padding: 3px 8px;" onclick="TabImage.cancelUpload()">
+                    🛑 取消
+                  </button>
+                </div>
+                <div id="tp-image-file-label"
+                  style="font-size: 0.72rem; color: var(--accent-cyan); margin-top: 2px; min-height: 14px;">未选择文件</div>
+              </div>
+
+              <!-- 上传进度条 -->
+              <div id="tp-upload-progress-box"
+                style="display: none; margin-bottom: 6px; background: rgba(0,0,0,0.3); border-radius: 4px; padding: 6px 8px; border: 1px solid rgba(56, 189, 248, 0.2);">
+                <div
+                  style="background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; height: 6px; margin-bottom: 3px;">
+                  <div id="tp-upload-bar"
+                    style="height: 100%; background: var(--accent-cyan); width: 0%; transition: width 0.3s;"></div>
+                </div>
+                <div
+                  style="display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--text-muted);">
+                  <span id="tp-upload-info">等待上传...</span>
+                  <span id="tp-upload-pct" style="color: var(--accent-cyan); font-weight: 700;">0%</span>
+                </div>
+              </div>
+
+              <!-- 远端路径与执行 Docker Load 行 -->
+              <div
+                style="display: flex; gap: 6px; align-items: center; border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 6px;">
+                <input type="text" class="form-control" id="tp-remote-path-input"
+                  value="/home/ubuntu/vsis_dancer_cpu_1.0.tar.gz"
+                  style="font-family: monospace; font-size: 0.75rem; flex: 1;" title="远端 tar 包路径">
+                <button class="btn btn-secondary btn-xs" id="tp-btn-docker-load" onclick="TabImage.dockerLoad()"
+                  style="white-space: nowrap; font-weight: 700; padding: 3px 10px;">
+                  ⚡ 执行 docker load
+                </button>
+              </div>
+
+              <!-- Tab 4 镜像安装进度条 -->
+              <div id="tp-docker-load-progress-box"
+                style="display: none; margin-top: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 6px; padding: 6px 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                  <span id="tp-docker-load-stage-text"
+                    style="font-size: 0.72rem; font-weight: 600; color: var(--accent-cyan);">⏳ 正在执行解压与镜像加载...</span>
+                  <span id="tp-docker-load-pct"
+                    style="font-size: 0.72rem; font-weight: 700; color: var(--accent-cyan); font-family: monospace;">15%</span>
+                </div>
+                <div style="background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; height: 5px;">
+                  <div id="tp-docker-load-progress-bar"
+                    style="height: 100%; background: linear-gradient(90deg, #0ea5e9, #10b981); width: 15%; transition: width 0.4s ease;">
+                  </div>
+                </div>
+                <div id="tp-docker-load-subtext" style="font-size: 0.68rem; color: var(--text-muted); margin-top: 2px;">
+                  正在准备远端文件解压与 Docker 归档导入...
+                </div>
+              </div>
+            </div>
+
+            <!-- 卡片 2: ⚙️ 容器启动与 Robot ID 固化 (左右 2 列并排) -->
+            <div class="card" style="padding: 12px 14px; margin-bottom: 0;">
+              <div class="grid-2" style="gap: 10px; margin-bottom: 0;">
+                <!-- 左列: Robot ID 分配与自启写入 -->
+                <div
+                  style="background: rgba(0,0,0,0.2); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 6px; padding: 8px 10px;">
+                  <div
+                    style="font-weight: 700; font-size: 0.78rem; color: var(--accent-cyan); margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>⚙️ 步骤 2：分配 Robot ID</span>
+                    <span class="card-badge" style="font-size: 0.65rem; padding: 1px 4px;">唯一标识</span>
+                  </div>
+                  <div style="display: flex; gap: 6px; margin-bottom: 6px;">
+                    <input type="text" class="form-control" id="tp-robot-id-select" placeholder="如 A, B, R1..."
+                      style="font-size: 0.88rem; font-weight: 700; color: var(--accent-cyan); text-transform: uppercase; flex: 1; padding: 2px 6px;"
+                      maxlength="20" autocomplete="off" value="A" oninput="TabImage.updateWriteIdButtonText()">
+                    <button class="btn btn-success btn-xs" id="tp-btn-write-autostart"
+                      onclick="TabImage.writeAutostart()"
+                      style="font-weight: 700; padding: 2px 8px; white-space: nowrap;">
+                      💾 写入 ID
+                    </button>
+                  </div>
+                  <div class="robot-id-chips" style="display:flex; flex-wrap:wrap; gap:4px;">
+                    <button type="button" class="chip-btn" style="padding: 1px 6px; font-size: 0.72rem;"
+                      onclick="TabImage.setRobotId('A')">A</button>
+                    <button type="button" class="chip-btn" style="padding: 1px 6px; font-size: 0.72rem;"
+                      onclick="TabImage.setRobotId('B')">B</button>
+                    <button type="button" class="chip-btn" style="padding: 1px 6px; font-size: 0.72rem;"
+                      onclick="TabImage.setRobotId('C')">C</button>
+                    <button type="button" class="chip-btn" style="padding: 1px 6px; font-size: 0.72rem;"
+                      onclick="TabImage.setRobotId('D')">D</button>
+                    <button type="button" class="chip-btn" style="padding: 1px 6px; font-size: 0.72rem;"
+                      onclick="TabImage.setRobotId('R1')">R1</button>
+                    <button type="button" class="chip-btn" style="padding: 1px 6px; font-size: 0.72rem;"
+                      onclick="TabImage.setRobotId('G1_02')">G1_02</button>
+                  </div>
+                </div>
+
+                <!-- 右列: 固化启动 vsis_g1 容器 -->
+                <div
+                  style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; justify-content: space-between;">
+                  <div>
+                    <div
+                      style="font-weight: 700; font-size: 0.78rem; color: #ffffff; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+                      <span>🚀 步骤 3：固化启动容器</span>
+                      <span class="card-badge" style="font-size: 0.65rem; padding: 1px 4px;">vsis_g1</span>
+                    </div>
+                    <select class="form-control" id="tp-docker-image-select"
+                      style="font-size: 0.76rem; padding: 3px 6px; margin-bottom: 6px;">
+                      <option value="rl_cu118:2.0">rl_cu118:2.0</option>
+                    </select>
+                  </div>
+                  <button class="btn btn-primary btn-xs" id="tp-btn-start-container" onclick="TabImage.startContainer()"
+                    style="width: 100%; font-weight: 700; padding: 4px 8px;">
+                    ⚡ 固化启动 vsis_g1 容器
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 卡片 3: 🤖 机载运控与通信程序控制 (run_bg.sh) -->
+            <div class="card" style="padding: 12px 14px; margin-bottom: 0;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <div
+                  style="font-weight: 700; font-size: 0.82rem; color: #ffffff; display: flex; align-items: center; gap: 6px;">
+                  <span>🤖 步骤 4：机载程序运行状态 (run_bg.sh)</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <span class="status-badge" id="tp-robot-process-badge"
+                    style="font-size: 0.7rem; padding: 1px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
+                    <span class="pulse-dot" id="tp-process-dot"
+                      style="width: 6px; height: 6px; border-radius: 50%; background: #94a3b8;"></span>
+                    <span id="tp-process-status-text" style="color: var(--text-muted);">检测中...</span>
+                  </span>
+                  <button class="btn btn-secondary btn-xs" onclick="TabImage.checkProcessStatus()" title="刷新机载进程状态"
+                    style="padding: 1px 6px; font-size: 0.7rem;">
+                    🔄 刷新
+                  </button>
+                </div>
+              </div>
+
+              <!-- 细分进程状态看板 + 按钮在一行或两列内紧凑排列 -->
+              <div style="display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 6px; align-items: center;">
+                <div
+                  style="background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.06); border-radius: 4px; padding: 4px 8px; display: flex; align-items: center; justify-content: space-between;">
+                  <span style="font-size: 0.72rem; color: var(--text-secondary);">🦾 运控 (g1_ctrl)</span>
+                  <span id="tp-ctrl-sub-badge" class="container-status-badge stopped"
+                    style="font-size: 0.68rem; padding: 0 4px;">未运行</span>
+                </div>
+                <div
+                  style="background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.06); border-radius: 4px; padding: 4px 8px; display: flex; align-items: center; justify-content: space-between;">
+                  <span style="font-size: 0.72rem; color: var(--text-secondary);">📡 群控 (lora_recv)</span>
+                  <span id="tp-lora-sub-badge" class="container-status-badge stopped"
+                    style="font-size: 0.68rem; padding: 0 4px;">未运行</span>
+                </div>
+                <div style="display: flex; gap: 4px;">
+                  <button class="btn btn-primary btn-xs" id="tp-btn-start-process"
+                    onclick="TabImage.startRobotProcesses()"
+                    style="flex: 1; background: linear-gradient(135deg, #0ea5e9, #0284c7); border-color: #0284c7; font-weight: 700; padding: 4px 6px; font-size: 0.72rem; white-space: nowrap;"
+                    title="在机器人端执行 run_bg.sh 启动跳舞运控与 LoRa 接收程序">
+                    🚀 启动 run_bg
+                  </button>
+                  <button class="btn btn-danger btn-xs" id="tp-btn-stop-process" onclick="TabImage.stopRobotProcesses()"
+                    style="background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.3); color: #f87171; font-weight: 600; padding: 4px 6px; font-size: 0.72rem; white-space: nowrap;"
+                    title="停止机器人端运控与 LoRa 进程 (pkill)">
+                    ⏹️ 停止
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右侧：容器运行看板与统一运维执行日志控制台 -->
+          <div class="image-dashboard-right">
+            <!-- 运行中容器列表 -->
+            <div class="card"
+              style="padding: 10px 14px; margin-bottom: 0; background: rgba(16, 185, 129, 0.04); border: 1px solid rgba(16, 185, 129, 0.22);">
+              <div class="card-header" style="margin-bottom: 4px; padding-bottom: 2px;">
+                <div class="card-title"
+                  style="font-size: 0.84rem; color: var(--accent-green); display: flex; align-items: center; gap: 6px;">
+                  <span>🟢 宿主机运行中的容器 (Running Containers)</span>
+                </div>
+                <button class="btn btn-secondary btn-xs" onclick="TabImage.loadImages()"
+                  style="padding: 1px 6px; font-size: 0.7rem;">🔄 刷新</button>
+              </div>
+              <div id="tp-running-containers-list">
+                <div style="font-size: 0.76rem; color: var(--text-muted);">正在获取容器列表...</div>
+              </div>
+            </div>
+
+            <!-- 全局统一运维与程序执行日志窗口 -->
+            <div class="card console-card"
+              style="padding: 10px 14px; margin-bottom: 0; flex: 1; display: flex; flex-direction: column; min-height: 0;">
+              <div class="card-header"
+                style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; padding-bottom: 2px;">
+                <div class="card-title" style="font-size: 0.84rem; display: flex; align-items: center; gap: 6px;">
+                  <span>📋 统一运维与程序执行日志</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                  <button class="btn btn-secondary btn-xs" onclick="TabImage.checkAndFixEnvironment()"
+                    title="检查并自动修复环境权限与Robot ID" style="padding: 2px 6px; font-size: 0.72rem;">
+                    🔍 巡检修复
+                  </button>
+                  <button class="btn btn-secondary btn-xs" onclick="TabImage.clearConsole()" title="清空日志控制台"
+                    style="padding: 2px 6px; font-size: 0.72rem;">
+                    🗑️ 清空
+                  </button>
+                </div>
+              </div>
+              <div class="terminal-console" id="tp-unified-console"
+                style="flex: 1; min-height: 140px; overflow-y: auto; font-size: 0.75rem; line-height: 1.4; padding: 8px;">
+                <div class="log-info">就绪。镜像上传、Docker Load、容器启动及机载进程日志将在此统一实时显示...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>

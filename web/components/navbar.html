@@ -1,0 +1,72 @@
+  <!-- 顶部状态栏 -->
+  <header class="navbar">
+    <div class="nav-brand">
+      <img src="assets/app_icon.png" alt="Logo"
+        style="width: 36px; height: 36px; border-radius: 8px; box-shadow: 0 0 12px rgba(0, 210, 255, 0.4);">
+      <div>
+        <div class="brand-title">VSISLAB 机器人助手</div>
+      </div>
+    </div>
+
+    <div class="nav-connection-panel">
+      <!-- LoRa 串口通信状态指示器 -->
+      <div class="status-badge disconnected" id="ctrl-serial-status-badge" title="LoRa 串口通信状态">
+        <span class="status-dot"></span>
+        <span id="ctrl-serial-status-text">未连接</span>
+      </div>
+
+      <button class="btn-nav-action" id="btn-open-wizard"
+        style="background: linear-gradient(135deg, rgba(0, 210, 255, 0.2), rgba(139, 92, 246, 0.2)); border: 1px solid rgba(0, 210, 255, 0.4); color: var(--accent-cyan); font-weight: 600;">🚀
+        一键部署向导</button>
+
+      <!-- 右上角设置菜单中心 (包含连接状态、IP与全部功能菜单) -->
+      <div class="settings-dropdown" style="position: relative;">
+        <button class="btn-nav-action" id="btn-settings-menu"
+          style="background: var(--bg-hover); border: 1px solid var(--border-color); padding: 6px 14px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 6px;">⚙️
+          设置 ▼</button>
+        <div id="settings-menu-content" class="settings-menu-content" style="display: none;">
+          <!-- 1. 机器人连接与 IP 状态区块 (UI仅在此展示) -->
+          <div class="settings-status-card">
+            <div class="settings-status-row">
+              <span class="settings-status-label">🔌 机器人连接状态</span>
+              <div class="conn-status-indicator">
+                <span class="status-dot" id="status-dot"></span>
+                <span id="status-text">未连接</span>
+              </div>
+            </div>
+            <div class="settings-ip-row">
+              <div class="settings-ip-info">
+                <span style="font-size: 0.75rem; color: var(--text-muted);">地址:</span>
+                <span class="conn-info-text" id="conn-info-display">192.168.123.164:22</span>
+              </div>
+              <button id="btn-global-disconnect" style="display: none;"></button>
+            </div>
+          </div>
+
+          <!-- 2. License 授权状态区块 -->
+          <div class="settings-license-card">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+              <span style="font-size: 0.8rem; font-weight: 600;">🔑 License 授权状态</span>
+              <button class="btn btn-primary btn-sm" style="padding: 2px 8px; font-size: 0.72rem; height: auto;"
+                onclick="App.switchTab('tab-license'); document.getElementById('settings-menu-content').style.display = 'none';">导入 License</button>
+            </div>
+            <div id="settings-license-status" style="font-size: 0.78rem; color: var(--text-muted);">
+              未检测到授权信息</div>
+          </div>
+
+          <!-- 3. 功能与系统设置菜单导航 -->
+          <div class="settings-menu-tabs-group">
+            <div class="settings-group-header">⚙️ 核心功能与运维</div>
+            <!-- 核心：运维与调试大按钮 -->
+            <button class="btn btn-primary" id="btn-open-ops-modal" style="width: 100%; padding: 10px 14px; margin-bottom: 10px; font-weight: 700; font-size: 0.92rem; display: flex; align-items: center; justify-content: space-between; background: linear-gradient(135deg, rgba(0, 210, 255, 0.35), rgba(139, 92, 246, 0.35)); border: 1px solid rgba(0, 210, 255, 0.5); box-shadow: 0 4px 14px rgba(0, 210, 255, 0.2);">
+              <span style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 1.1rem;">🛠️</span>
+                <span>运维与调试中心</span>
+              </span>
+              <span style="font-size: 0.8rem; opacity: 0.85;">点击进入 ➔</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>

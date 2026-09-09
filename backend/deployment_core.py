@@ -5,8 +5,46 @@ import logging
 import threading
 from typing import Dict, Any, List, Optional, Tuple
 from backend.ssh_client import ssh_manager
+from backend.drivers import ch341_manager
+from backend.drivers.commands import (
+    CH341_MODPROBE_CMD,
+    START_LORA_DAEMON_CONTAINER_CMD,
+    CH341_ALL_SERIAL_DEVS_CMD,
+    CH341_LSMOD_CMD,
+    CH341_MODINFO_CMD
+)
 
 logger = logging.getLogger("DeploymentCore")
+
+ROBOT_ID_REGEX = re.compile(r'^[A-Za-z0-9_-]{1,20}$')
+
+
+def validate_robot_id(robot_id: str) -> Tuple[bool, str, str]:
+    """
+    全局公共校验：验证 Robot ID 格式、安全性与有效性
+    规范：
+    1. 不能为空，去除首尾空白后转大写
+    2. 长度 1~20 位
+    3. 仅允许字母 (A-Z)、数字 (0-9)、下划线 (_) 和短横线 (-)
+    4. 严禁包含逗号 ','（群控多机分隔符）或竖线 '|'（通信协议指令分隔符）
+    5. 严禁为保留广播关键字 'ALL'
+    6. 严禁包含空格、引号、分号、反引号等任何危险注入字符
+    返回: (is_valid: bool, clean_id: str, error_msg: str)
+    """
+    if robot_id is None:
+        return False, "", "Robot ID 不能为空，请输入唯一寻址标识 (如 A, B, R1, G1_02 等)"
+    clean_id = str(robot_id).strip().upper()
+    if not clean_id:
+        return False, "", "Robot ID 不能为空，请输入唯一寻址标识 (如 A, B, R1, G1_02 等)"
+    if clean_id == "ALL":
+        return False, "", "ALL 为群控广播保留关键字，不能作为单机 ID！"
+    if "," in clean_id:
+        return False, "", "Robot ID 不能包含逗号 ','，多机群控已使用逗号作为目标分隔符！"
+    if "|" in clean_id:
+        return False, "", "Robot ID 不能包含竖线 '|'，该字符为串口通信协议分隔符！"
+    if not ROBOT_ID_REGEX.match(clean_id):
+        return False, "", "Robot ID 格式不合法！仅支持 1~20 位英文字母、数字、下划线(_)或短横线(-)，严禁包含空格或特殊字符以防注入漏洞。"
+    return True, clean_id, ""
 
 
 class DeploymentCore:
@@ -71,14 +109,14 @@ class DeploymentCore:
         gpu_status = "ok" if gpu_ok else "warning"
 
         # 5. CH341 / USB 串口与 LoRa 群控通信环境检查
-        code_dev, ch341_ls, _ = ssh_manager.execute_command("ls -1 /dev/ttyCH34* /dev/ttyUSB* /dev/ttyACM* 2>/dev/null")
+        code_dev, ch341_ls, _ = ssh_manager.execute_command(CH341_ALL_SERIAL_DEVS_CMD)
         active_nodes = [n.strip() for n in ch341_ls.splitlines() if n.strip()]
         has_dev = len(active_nodes) > 0
 
-        code_mod, lsmod_out, _ = ssh_manager.execute_command("lsmod | grep -i ch341")
+        code_mod, lsmod_out, _ = ssh_manager.execute_command(CH341_LSMOD_CMD)
         has_mod = (code_mod == 0 and "ch341" in lsmod_out.lower())
 
-        code_info, modinfo_out, _ = ssh_manager.execute_command("modinfo ch341 2>/dev/null || find /lib/modules/$(uname -r) -name '*ch341*.ko*' 2>/dev/null")
+        code_info, modinfo_out, _ = ssh_manager.execute_command(CH341_MODINFO_CMD)
         has_ko = (code_info == 0 and bool(modinfo_out.strip()))
 
         # 检查 lora_recv_group 二进制与权限
@@ -212,277 +250,40 @@ class DeploymentCore:
         # 步骤 1: 检查与加载 CH341 内核驱动
         # ----------------------------------------------------
         _cb("[STEP 1/6] 正在检查 CH341 内核驱动模块状态...\n", False)
-        code_dev, ch341_ls, _ = ssh_manager.execute_command("ls /dev/ttyCH34* 2>/dev/null")
-        code_mod, lsmod_out, _ = ssh_manager.execute_command("lsmod | grep -i ch341")
-        code_info, modinfo_out, _ = ssh_manager.execute_command("modinfo ch341 2>/dev/null || find /lib/modules/$(uname -r) -name '*ch341*.ko*' 2>/dev/null")
-
-        has_driver = bool((code_dev == 0 and "ttyCH34" in ch341_ls) or (code_mod == 0 and "ch341" in lsmod_out.lower()) or (code_info == 0 and modinfo_out.strip()))
+        has_driver, desc = ch341_manager.check_linux_driver_status(ssh_manager)
         if not has_driver:
             _cb("[INFO] 未检测到 CH341 驱动，开始在线编译安装 CH341 驱动模块...\n", False)
-            driver_ok = self.fix_ch341_driver(_cb)
+            driver_ok = ch341_manager.compile_and_install_linux_driver(ssh_manager, _cb)
             if not driver_ok:
                 _cb("[WARN] ⚠️ CH341 驱动在线编译未完全成功，尝试加载系统内置驱动...\n", True)
         else:
-            _cb("[SUCCESS] ✅ CH341 内核驱动模块已就绪。\n", False)
+            _cb(f"[SUCCESS] ✅ CH341 内核驱动模块已就绪 ({desc})。\n", False)
 
-        ssh_manager.execute_command("modprobe ch341 2>/dev/null || true", sudo=True)
+        ssh_manager.execute_command(CH341_MODPROBE_CMD, sudo=True)
 
         # ----------------------------------------------------
         # 步骤 2: 写入 udev 规则并授予底层设备 0666 权限
         # ----------------------------------------------------
-        _cb("[STEP 2/6] 正在配置 udev 规则并放行 USB/串口 0666 读写权限...\n", False)
-        udev_rule_path = "/etc/udev/rules.d/99-ch341-permissions.rules"
-        udev_content = (
-            'KERNEL=="ttyCH341*", MODE="0666", GROUP="dialout"\n'
-            'KERNEL=="ttyUSB*", MODE="0666", GROUP="dialout"\n'
-            'KERNEL=="ttyACM*", MODE="0666", GROUP="dialout"\n'
-            'SUBSYSTEM=="tty", KERNEL=="ttyCH341USB*", MODE="0666", GROUP="dialout"\n'
-            'SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", MODE="0666", GROUP="dialout"\n'
-            'SUBSYSTEM=="usb", ATTR{idVendor}=="1a86", MODE="0666", GROUP="dialout"\n'
-            'SUBSYSTEM=="usb", MODE="0666"\n'
-        )
-        ssh_manager.write_remote_text_file(udev_content, udev_rule_path, sudo=True)
-        ssh_manager.execute_command("udevadm control --reload-rules && udevadm trigger", sudo=True)
-        ssh_manager.execute_command("usermod -a -G dialout,plugdev,tty unitree ; usermod -a -G dialout,plugdev,tty ubuntu 2>/dev/null || true", sudo=True)
-        ssh_manager.execute_command("chmod 666 /dev/ttyCH341* /dev/ttyUSB* /dev/ttyACM* /dev/bus/usb/*/* 2>/dev/null || true", sudo=True)
-        _cb("[SUCCESS] ✅ udev 规则与底层设备读写权限已放行！\n", False)
+        _cb("[STEP 2/6] ", False)
+        ch341_manager.setup_udev_and_permissions(ssh_manager, _cb)
 
         # ----------------------------------------------------
         # 步骤 3: 优化 lora_recv_group.yaml 参数 (关闭破坏性 USB 复位)
         # ----------------------------------------------------
-        _cb("[STEP 3/6] 正在检查并优化 lora_recv_group.yaml 串口通信配置...\n", False)
-        fix_yaml_cmd = (
-            "sed -i 's/usb_reset_timeout_ms:.*/usb_reset_timeout_ms: 0/' /home/ubuntu/vsis_mimic_deploy/group/lora_recv_group.yaml 2>/dev/null || true ; "
-            "docker exec vsis_g1 sed -i 's/usb_reset_timeout_ms:.*/usb_reset_timeout_ms: 0/' /home/ubuntu/vsis_mimic_deploy/group/lora_recv_group.yaml 2>/dev/null || true"
-        )
-        ssh_manager.execute_command(fix_yaml_cmd, sudo=True)
-        _cb("[SUCCESS] ✅ lora_recv_group.yaml 参数已加固 (usb_reset_timeout_ms: 0)。\n", False)
+        _cb("[STEP 3/6] ", False)
+        ch341_manager.disable_usb_reset(ssh_manager, _cb)
 
         # ----------------------------------------------------
         # 步骤 4: 检查 lora_serial.cpp 并自动应用多端口动态探测热补丁
         # ----------------------------------------------------
-        _cb("[STEP 4/6] 正在检查 lora_recv_group 源码与多端口自适应热补丁...\n", False)
-        code_src, src_content, _ = ssh_manager.execute_command("cat /home/ubuntu/vsis_mimic_deploy/group/lora_serial.cpp 2>/dev/null || (docker exec vsis_g1 cat /home/ubuntu/vsis_mimic_deploy/group/lora_serial.cpp 2>/dev/null)")
-        if code_src == 0 and src_content and "TryOpenDevice" not in src_content:
-            _cb("[INFO] 检测到 lora_serial.cpp 缺少动态多端口容灾逻辑，正在自动注入热补丁并重新编译...\n", False)
-            open_pos = src_content.find("int OpenSerial")
-            if open_pos != -1:
-                bulletproof_open = """int TryOpenDevice(const std::string &path)
-{
-    if (::chmod(path.c_str(), 0666) != 0)
-    {
-        // ignore chmod error
-    }
-    return ::open(path.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
-}
-
-int OpenSerial(
-    const std::string &device,
-    int baud,
-    int e22_settle_ms,
-    int usb_reset_timeout_ms)
-{
-    std::string actual_device = device;
-    int fd = TryOpenDevice(actual_device);
-
-    if (fd < 0)
-    {
-        for (int i = 0; i < 10 && fd < 0; ++i)
-        {
-            std::string candidate = "/dev/ttyCH341USB" + std::to_string(i);
-            int candidate_fd = TryOpenDevice(candidate);
-            if (candidate_fd >= 0)
-            {
-                actual_device = candidate;
-                fd = candidate_fd;
-                std::cout << "[USB] auto-detected active device: " << actual_device << std::endl;
-                break;
-            }
-        }
-        for (int i = 0; i < 10 && fd < 0; ++i)
-        {
-            std::string candidate = "/dev/ttyUSB" + std::to_string(i);
-            int candidate_fd = TryOpenDevice(candidate);
-            if (candidate_fd >= 0)
-            {
-                actual_device = candidate;
-                fd = candidate_fd;
-                std::cout << "[USB] auto-detected active device: " << actual_device << std::endl;
-                break;
-            }
-        }
-    }
-
-    if (fd < 0)
-    {
-        throw std::runtime_error(
-            "Cannot open serial device " + device + " (nor any active /dev/ttyCH341USB* or /dev/ttyUSB* device): " +
-            std::strerror(errno));
-    }
-
-    termios tty{};
-    if (tcgetattr(fd, &tty) != 0)
-    {
-        const std::string error = std::strerror(errno);
-        ::close(fd);
-        throw std::runtime_error("tcgetattr failed: " + error);
-    }
-
-    cfmakeraw(&tty);
-
-    const speed_t speed = GetBaudConstant(baud);
-    cfsetispeed(&tty, speed);
-    cfsetospeed(&tty, speed);
-
-    tty.c_cflag |= CLOCAL | CREAD;
-    tty.c_cflag &= ~HUPCL;
-    tty.c_cflag &= ~PARENB;
-    tty.c_cflag &= ~CSTOPB;
-    tty.c_cflag &= ~CSIZE;
-    tty.c_cflag |= CS8;
-#ifdef CRTSCTS
-    tty.c_cflag &= ~CRTSCTS;
-#endif
-    tty.c_cc[VMIN] = 0;
-    tty.c_cc[VTIME] = 0;
-
-    if (tcsetattr(fd, TCSANOW, &tty) != 0)
-    {
-        const std::string error = std::strerror(errno);
-        ::close(fd);
-        throw std::runtime_error("tcsetattr failed: " + error);
-    }
-
-    // E22 reset-drain sequence:
-    int status = 0;
-    if (::ioctl(fd, TIOCMGET, &status) == 0)
-    {
-        status &= ~(TIOCM_DTR | TIOCM_RTS);
-        if (::ioctl(fd, TIOCMSET, &status) != 0)
-        {
-            std::cerr << "[SERIAL] WARN: cannot clear DTR/RTS: "
-                      << std::strerror(errno) << std::endl;
-        }
-        else
-        {
-            std::cout << "[SERIAL] DTR=0 RTS=0 (force E22 transparent mode)"
-                      << std::endl;
-        }
-    }
-
-    if (e22_settle_ms > 0)
-    {
-        ::usleep(static_cast<useconds_t>(e22_settle_ms) * 1000);
-    }
-
-    if (::tcflush(fd, TCIOFLUSH) != 0)
-    {
-        std::cerr << "[WARN] tcflush failed: "
-                  << std::strerror(errno) << std::endl;
-    }
-
-    std::cout << "[SERIAL] " << actual_device
-              << " opened successfully at " << baud << " baud (fd="
-              << fd << ")" << std::endl;
-
-    return fd;
-}
-
-} // namespace lora
-"""
-                patched_src = src_content[:open_pos] + bulletproof_open
-                ssh_manager.write_remote_text_file(patched_src, "/home/ubuntu/vsis_mimic_deploy/group/lora_serial.cpp", sudo=True)
-                ssh_manager.execute_command("docker cp /home/ubuntu/vsis_mimic_deploy/group/lora_serial.cpp vsis_g1:/home/ubuntu/vsis_mimic_deploy/group/lora_serial.cpp 2>/dev/null || true", sudo=True)
-
-                _cb("[INFO] 正在调用 make.sh 重新编译生成 lora_recv_group 二进制...\n", False)
-                compile_cmd = (
-                    "docker exec vsis_g1 bash -c 'cd /home/ubuntu/vsis_mimic_deploy && ./make.sh --keep-src' 2>/dev/null "
-                    "|| (cd /home/ubuntu/vsis_mimic_deploy && ./make.sh --keep-src 2>/dev/null || true)"
-                )
-                ssh_manager.execute_command_stream(compile_cmd, _cb, sudo=True)
-                ssh_manager.execute_command("docker cp vsis_g1:/home/ubuntu/vsis_mimic_deploy/lora_recv_group /home/ubuntu/vsis_mimic_deploy/lora_recv_group 2>/dev/null || true", sudo=True)
-                _cb("[SUCCESS] ✅ lora_recv_group 编译加固完成！\n", False)
-        else:
-            _cb("[SUCCESS] ✅ lora_recv_group 二进制与多端口探测逻辑校验通过。\n", False)
+        _cb("[STEP 4/6] ", False)
+        ch341_manager.patch_and_recompile_lora_serial(ssh_manager, _cb)
 
         # ----------------------------------------------------
         # 步骤 5: 写入与更新开机守护脚本 run_bg.sh
         # ----------------------------------------------------
-        _cb("[STEP 5/6] 正在写入高可靠自适应 run_bg.sh 启动与守护脚本...\n", False)
-        run_bg_script = '''#!/bin/bash
-SCRIPT_DIR="/home/ubuntu/vsis_mimic_deploy"
-cd "$SCRIPT_DIR"
-
-mkdir -p "$SCRIPT_DIR/log"
-
-# 动态库路径配置
-export LD_LIBRARY_PATH="$SCRIPT_DIR/thirdparty/onnxruntime-linux-aarch64-1.22.0/lib:/home/ubuntu/unitree_sdk2/thirdparty/lib/aarch64:/usr/local/lib:$LD_LIBRARY_PATH"
-
-VSIS_PATH="$SCRIPT_DIR/secure/config_vsis/mimic_exp2"
-[ ! -d "$VSIS_PATH" ] && VSIS_PATH="$SCRIPT_DIR/secure/config_vsis/mimic"
-CONFIG_NAME="config.yaml"
-LICENSE_PATH="$SCRIPT_DIR/license.json"
-ROBOT_ID_FILE="$SCRIPT_DIR/group/lora_robot_id.txt"
-
-# 0. 严格停止并清理所有旧进程与旧守护循环，确保进程全局唯一
-pkill -9 -f g1_ctrl_vsis 2>/dev/null || true
-pkill -9 -f lora_recv_group 2>/dev/null || true
-pkill -9 -f launch_lora_daemon 2>/dev/null || true
-pkill -9 -f sec_run.sh 2>/dev/null || true
-sleep 1
-
-# 1. 赋予核心脚本执行权限与设备读写权限
-chmod +x "$SCRIPT_DIR/sec_run.sh" "$SCRIPT_DIR/g1_ctrl_vsis" "$SCRIPT_DIR/lora_recv_group" 2>/dev/null || true
-chmod 666 /dev/ttyCH341* /dev/ttyUSB* /dev/ttyACM* /dev/bus/usb/*/* 2>/dev/null || true
-
-# 2. 启动运控程序 (单一实例)
-echo "[INFO] 启动运控: $VSIS_PATH ..."
-nohup "$SCRIPT_DIR/sec_run.sh" "$VSIS_PATH" "$CONFIG_NAME" "$LICENSE_PATH" > "$SCRIPT_DIR/log/sec_run.log" 2>&1 &
-
-# 3. 读取 Robot ID
-ROBOT_ID="A"
-if [ -f "$ROBOT_ID_FILE" ]; then
-    ROBOT_ID=$(cat "$ROBOT_ID_FILE" | tr -d ' \\r\\n')
-fi
-[ -z "$ROBOT_ID" ] && ROBOT_ID="A"
-
-# 4. LoRa 守护启动函数 (动态扫描可用串口设备并确保单一进程保活)
-launch_lora_daemon() {
-    local target_id="$1"
-    local base_dir="/home/ubuntu/vsis_mimic_deploy"
-    while true; do
-        # 严格互斥：若已存在运行中的 lora_recv_group 实例则跳过，杜绝多开
-        if pidof lora_recv_group >/dev/null 2>&1; then
-            sleep 2
-            continue
-        fi
-
-        SERIAL_DEV=$(ls -1 /dev/ttyCH341USB* /dev/ttyUSB* /dev/ttyACM* 2>/dev/null | head -n 1)
-        [ -z "$SERIAL_DEV" ] && SERIAL_DEV="/dev/ttyCH341USB0"
-        
-        chmod 666 /dev/ttyCH341* /dev/ttyUSB* /dev/ttyACM* /dev/bus/usb/*/* 2>/dev/null || true
-        echo "[INFO] 正在拉起 LoRa 接收程序 (Robot ID: $target_id, 设备: $SERIAL_DEV)..." >> "$base_dir/log/lora_recv.log"
-        "$base_dir/lora_recv_group" eth0 "$SERIAL_DEV" "$target_id" 0 >> "$base_dir/log/lora_recv.log" 2>&1
-        EXIT_CODE=$?
-        echo "[WARN] lora_recv_group 退出 (code $EXIT_CODE)，2 秒后自动重试守护..." >> "$base_dir/log/lora_recv.log"
-        sleep 2
-    done
-}
-
-echo "[INFO] 启动 LoRa 接收守护进程 (Robot ID: $ROBOT_ID) ..."
-nohup bash -c "$(declare -f launch_lora_daemon); launch_lora_daemon '$ROBOT_ID'" >/dev/null 2>&1 &
-
-echo "[SUCCESS] 运控与 LoRa 接收程序已在后台启动完成。"
-'''
-        ssh_manager.write_remote_text_file(run_bg_script, "/home/ubuntu/vsis_mimic_deploy/run_bg.sh", sudo=True)
-        ssh_manager.execute_command(
-            "chmod +x /home/ubuntu/vsis_mimic_deploy/run_bg.sh /home/ubuntu/vsis_mimic_deploy/sec_run.sh /home/ubuntu/vsis_mimic_deploy/g1_ctrl_vsis /home/ubuntu/vsis_mimic_deploy/lora_recv_group 2>/dev/null || true ; "
-            "docker cp /home/ubuntu/vsis_mimic_deploy/. vsis_g1:/home/ubuntu/vsis_mimic_deploy/ 2>/dev/null || true ; "
-            "docker exec vsis_g1 chmod +x /home/ubuntu/vsis_mimic_deploy/run_bg.sh /home/ubuntu/vsis_mimic_deploy/sec_run.sh /home/ubuntu/vsis_mimic_deploy/g1_ctrl_vsis /home/ubuntu/vsis_mimic_deploy/lora_recv_group 2>/dev/null || true ; "
-            "docker exec vsis_g1 chmod 666 /dev/ttyCH341* /dev/ttyUSB* /dev/ttyACM* /dev/bus/usb/*/* 2>/dev/null || true",
-            sudo=True
-        )
-        _cb("[SUCCESS] ✅ run_bg.sh 脚本与容器内环境同步完成。\n", False)
+        _cb("[STEP 5/6] ", False)
+        ch341_manager.deploy_run_bg_script(ssh_manager, _cb)
 
         # ----------------------------------------------------
         # 步骤 6: 检查并守护拉起机载 LoRa 接收进程
@@ -490,17 +291,7 @@ echo "[SUCCESS] 运控与 LoRa 接收程序已在后台启动完成。"
         _cb("[STEP 6/6] 正在校验并拉起 LoRa 接收守护进程...\n", False)
         status = self.get_robot_process_status()
         if not status.get("lora_recv_running"):
-            start_lora_cmd = (
-                "docker exec -d vsis_g1 bash -c '"
-                "cd /home/ubuntu/vsis_mimic_deploy && "
-                "SERIAL_DEV=$(ls -1 /dev/ttyCH341USB* /dev/ttyUSB* /dev/ttyACM* 2>/dev/null | head -n 1) ; "
-                "[ -z \"$SERIAL_DEV\" ] && SERIAL_DEV=\"/dev/ttyCH341USB0\" ; "
-                "ROBOT_ID=$(cat ./group/lora_robot_id.txt 2>/dev/null | tr -d \" \\r\\n\") ; "
-                "[ -z \"$ROBOT_ID\" ] && ROBOT_ID=\"A\" ; "
-                "chmod 666 /dev/ttyCH341* /dev/ttyUSB* /dev/ttyACM* /dev/bus/usb/*/* 2>/dev/null || true ; "
-                "nohup ./lora_recv_group eth0 \"$SERIAL_DEV\" \"$ROBOT_ID\" 0 >> ./log/lora_recv.log 2>&1 &'"
-            )
-            ssh_manager.execute_command(start_lora_cmd, sudo=True)
+            ssh_manager.execute_command(START_LORA_DAEMON_CONTAINER_CMD, sudo=True)
             time.sleep(1.5)
             status = self.get_robot_process_status()
 
@@ -516,113 +307,18 @@ echo "[SUCCESS] 运控与 LoRa 接收程序已在后台启动完成。"
         """
         一键编译安装 CH341 串口驱动（前置幂等检查：若已存在则直接提示并返回）
         """
-        stream_callback("[INFO] 正在检测机器人端现有驱动状态...\n", False)
         if not ssh_manager.is_connected():
             stream_callback("[ERROR] 未连接至机器人，请先连接机器人！\n", True)
             return False
-
-        # 前置检查：是否已存在驱动
-        code_dev, ch341_ls, _ = ssh_manager.execute_command("ls /dev/ttyCH34* 2>/dev/null")
-        code_mod, lsmod_out, _ = ssh_manager.execute_command("lsmod | grep -i ch341")
-        code_info, modinfo_out, _ = ssh_manager.execute_command("modinfo ch341 2>/dev/null || find /lib/modules/$(uname -r) -name '*ch341*.ko*' 2>/dev/null")
-
-        if (code_dev == 0 and "ttyCH34" in ch341_ls) or (code_mod == 0 and "ch341" in lsmod_out.lower()) or (code_info == 0 and modinfo_out.strip()):
-            device_desc = ch341_ls.strip() if (code_dev == 0 and "ttyCH34" in ch341_ls) else "内核 ch341 驱动模块就绪"
-            stream_callback(f"[SUCCESS] 检测到机器人端已有 CH341 驱动 ({device_desc})，驱动已就绪，无需重复安装！\n", False)
-            return True
-
-        commands = [
-            ("更新软件包并安装编译工具与内核头文件", "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential bc git dkms && (DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-l4t-kernel-headers || DEBIAN_FRONTEND=noninteractive apt-get install -y linux-headers-$(uname -r) || true)"),
-            ("清理旧版驱动源码目录", "rm -rf /tmp/ch341ser_linux"),
-            ("获取 CH341 官方 Linux 驱动源码", "git clone --depth 1 https://github.com/WCHSoftGroup/ch341ser_linux /tmp/ch341ser_linux || git clone --depth 1 https://gitee.com/mirrors_WCHSoftGroup/ch341ser_linux.git /tmp/ch341ser_linux"),
-            ("编译驱动模块", "cd /tmp/ch341ser_linux/driver && make clean && make"),
-            ("安装驱动模块", "cd /tmp/ch341ser_linux/driver && make install"),
-            ("加载驱动模块", "modprobe ch341"),
-            ("移除冲突的盲文串口服务 (brltty)", "DEBIAN_FRONTEND=noninteractive apt-get purge -y 'brltty*' || true"),
-        ]
-
-        for desc, cmd in commands:
-            stream_callback(f"\n[STEP] 正在执行: {desc} ...\n", False)
-            code = ssh_manager.execute_command_stream(cmd, stream_callback, sudo=True)
-            if code != 0 and "apt purge" not in cmd:
-                stream_callback(f"[ERROR] 执行失败，退出码: {code}\n", True)
-                return False
-
-        # 验证驱动
-        stream_callback("\n[CHECK] 正在验证 /dev/ttyCH34* 设备...\n", False)
-        code, out, _ = ssh_manager.execute_command("ls /dev/ttyCH34*")
-        if code == 0:
-            stream_callback(f"[SUCCESS] CH341 驱动加载成功！设备节点: {out.strip()}\n", False)
-            return True
-        else:
-            stream_callback(f"[WARNING] 驱动已编译加载，未检测到插入的 USB 转串口设备，请确认硬件是否牢固插入机器 USB 口。\n", True)
-            return True
+        return ch341_manager.compile_and_install_linux_driver(ssh_manager, stream_callback)
 
     def check_windows_ch341(self) -> Dict[str, Any]:
         """检查 Windows 上位机 COM 端口与 CH340/CH341 驱动状态"""
-        ports = []
-        try:
-            import winreg
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'HARDWARE\DEVICEMAP\SERIALCOMM')
-            i = 0
-            while True:
-                try:
-                    name, val, _ = winreg.EnumValue(key, i)
-                    ports.append({"device": name, "port": val})
-                    i += 1
-                except WindowsError:
-                    break
-        except Exception:
-            pass
-
-        has_ch341 = any("ch34" in p["device"].lower() or "usbserial" in p["device"].lower() for p in ports)
-        return {
-            "has_driver": len(ports) > 0 or has_ch341,
-            "ports": ports,
-            "count": len(ports),
-            "msg": f"检测到 {len(ports)} 个活跃串口 ({', '.join(p['port'] for p in ports)})" if ports else "未检测到已插入的串口设备"
-        }
+        return ch341_manager.check_windows_driver()
 
     def install_windows_ch341(self) -> Dict[str, Any]:
         """在 Windows 上位机一键安装/运行内置的 CH341/CH340 串口驱动程序"""
-        import sys, ctypes, subprocess
-        roots = []
-        if getattr(sys, 'frozen', False):
-            if hasattr(sys, '_MEIPASS'):
-                roots.append(sys._MEIPASS)
-            roots.append(os.path.dirname(sys.executable))
-        roots.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        roots.append(os.path.abspath("."))
-
-        candidates = []
-        for r in roots:
-            candidates.extend([
-                os.path.join(r, "backend", "drivers", "CH341SER.EXE"),
-                os.path.join(r, "backend", "drivers", "CH340 CH341驱动.exe"),
-                os.path.join(r, "CH341SER.EXE"),
-                os.path.join(r, "CH340 CH341驱动.exe"),
-                os.path.join(r, "drivers", "CH341SER.EXE"),
-            ])
-
-        driver_path = None
-        for c in candidates:
-            if os.path.exists(c):
-                driver_path = c
-                break
-
-        if not driver_path:
-            return {"success": False, "msg": "未在软件内置目录中找到 Windows CH340/CH341 驱动安装程序 (CH341SER.EXE)"}
-
-        try:
-            # 优先以管理员权限弹出驱动安装器
-            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", driver_path, "", None, 1)
-            if ret > 32:
-                return {"success": True, "msg": "已弹出 Windows CH341 驱动安装程序，请点击【安装】按钮完成配置。"}
-            else:
-                subprocess.Popen([driver_path], shell=True)
-                return {"success": True, "msg": "已启动 Windows CH341 驱动程序。"}
-        except Exception as e:
-            return {"success": False, "msg": f"启动驱动安装程序异常: {str(e)}"}
+        return ch341_manager.install_windows_driver()
 
     def fix_docker(self, stream_callback) -> bool:
         """一键安装/启动 Docker 环境（前置检查：已存在则直接返回）"""
@@ -951,103 +647,10 @@ fi
         _cb("[STEP 1/2] 正在校验并自动修复 run_bg.sh 启动脚本与底层设备权限...\n", False)
 
         # 确保 udev 规则存在并覆盖 /dev/bus/usb/*/*
-        udev_rule_path = "/etc/udev/rules.d/99-ch341-permissions.rules"
-        udev_content = (
-            'KERNEL=="ttyCH341*", MODE="0666", GROUP="dialout"\n'
-            'KERNEL=="ttyUSB*", MODE="0666", GROUP="dialout"\n'
-            'SUBSYSTEM=="tty", KERNEL=="ttyCH341USB*", MODE="0666", GROUP="dialout"\n'
-            'SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", MODE="0666", GROUP="dialout"\n'
-            'SUBSYSTEM=="usb", ATTR{idVendor}=="1a86", MODE="0666", GROUP="dialout"\n'
-            'SUBSYSTEM=="usb", MODE="0666"\n'
-        )
-        ssh_manager.write_remote_text_file(udev_content, udev_rule_path, sudo=True)
-        ssh_manager.execute_command("udevadm control --reload-rules && udevadm trigger", sudo=True)
-        ssh_manager.execute_command("usermod -a -G dialout,plugdev,tty unitree ; usermod -a -G dialout,plugdev,tty ubuntu 2>/dev/null || true", sudo=True)
+        ch341_manager.setup_udev_and_permissions(ssh_manager, _cb)
 
-        # 确保 run_bg.sh 是最新的高可靠开机自启与守护版本
-        run_bg_script = '''#!/bin/bash
-SCRIPT_DIR="/home/ubuntu/vsis_mimic_deploy"
-cd "$SCRIPT_DIR"
-
-mkdir -p "$SCRIPT_DIR/log"
-
-# 动态库路径配置
-export LD_LIBRARY_PATH="$SCRIPT_DIR/thirdparty/onnxruntime-linux-aarch64-1.22.0/lib:/home/ubuntu/unitree_sdk2/thirdparty/lib/aarch64:/usr/local/lib:$LD_LIBRARY_PATH"
-
-VSIS_PATH="$SCRIPT_DIR/secure/config_vsis/mimic_exp2"
-[ ! -d "$VSIS_PATH" ] && VSIS_PATH="$SCRIPT_DIR/secure/config_vsis/mimic"
-CONFIG_NAME="config.yaml"
-LICENSE_PATH="$SCRIPT_DIR/license.json"
-ROBOT_ID_FILE="$SCRIPT_DIR/group/lora_robot_id.txt"
-
-# 0. 严格停止并清理所有旧进程与旧守护循环，确保进程全局唯一
-pkill -9 -f g1_ctrl_vsis 2>/dev/null || true
-pkill -9 -f lora_recv_group 2>/dev/null || true
-pkill -9 -f launch_lora_daemon 2>/dev/null || true
-pkill -9 -f sec_run.sh 2>/dev/null || true
-sleep 1
-
-# 1. 赋予核心脚本执行权限与设备读写权限
-chmod +x "$SCRIPT_DIR/sec_run.sh" "$SCRIPT_DIR/g1_ctrl_vsis" "$SCRIPT_DIR/lora_recv_group" 2>/dev/null || true
-chmod 666 /dev/ttyCH341* /dev/ttyUSB* /dev/ttyACM* /dev/bus/usb/*/* 2>/dev/null || true
-
-# 2. 启动运控程序 (单一实例)
-echo "[INFO] 启动运控: $VSIS_PATH ..."
-nohup "$SCRIPT_DIR/sec_run.sh" "$VSIS_PATH" "$CONFIG_NAME" "$LICENSE_PATH" > "$SCRIPT_DIR/log/sec_run.log" 2>&1 &
-
-# 3. 读取 Robot ID
-ROBOT_ID="A"
-if [ -f "$ROBOT_ID_FILE" ]; then
-    ROBOT_ID=$(cat "$ROBOT_ID_FILE" | tr -d ' \\r\\n')
-fi
-[ -z "$ROBOT_ID" ] && ROBOT_ID="A"
-
-# 4. LoRa 守护启动函数 (动态扫描可用串口设备并确保单一进程保活)
-launch_lora_daemon() {
-    local target_id="$1"
-    local base_dir="/home/ubuntu/vsis_mimic_deploy"
-    while true; do
-        # 严格互斥：若已存在运行中的 lora_recv_group 实例则跳过，杜绝多开
-        if pidof lora_recv_group >/dev/null 2>&1; then
-            sleep 2
-            continue
-        fi
-
-        SERIAL_DEV=$(ls -1 /dev/ttyCH341USB* /dev/ttyUSB* /dev/ttyACM* 2>/dev/null | head -n 1)
-        [ -z "$SERIAL_DEV" ] && SERIAL_DEV="/dev/ttyCH341USB0"
-        
-        chmod 666 /dev/ttyCH341* /dev/ttyUSB* /dev/ttyACM* /dev/bus/usb/*/* 2>/dev/null || true
-        echo "[INFO] 正在拉起 LoRa 接收程序 (Robot ID: $target_id, 设备: $SERIAL_DEV)..." >> "$base_dir/log/lora_recv.log"
-        "$base_dir/lora_recv_group" eth0 "$SERIAL_DEV" "$target_id" 0 >> "$base_dir/log/lora_recv.log" 2>&1
-        EXIT_CODE=$?
-        echo "[WARN] lora_recv_group 退出 (code $EXIT_CODE)，2 秒后自动重试守护..." >> "$base_dir/log/lora_recv.log"
-        sleep 2
-    done
-}
-
-echo "[INFO] 启动 LoRa 接收守护进程 (Robot ID: $ROBOT_ID) ..."
-nohup bash -c "$(declare -f launch_lora_daemon); launch_lora_daemon '$ROBOT_ID'" >/dev/null 2>&1 &
-
-echo "[SUCCESS] 运控与 LoRa 接收程序已在后台启动完成。"
-'''
-        ssh_manager.write_remote_text_file(run_bg_script, "/home/ubuntu/vsis_mimic_deploy/run_bg.sh", sudo=True)
-
-        # 自动修复 run_bg.sh, sec_run.sh, g1_ctrl_vsis, lora_recv_group 权限及串口权限
-        fix_perm_cmd = (
-            "chmod +x /home/ubuntu/vsis_mimic_deploy/run_bg.sh "
-            "/home/ubuntu/vsis_mimic_deploy/sec_run.sh "
-            "/home/ubuntu/vsis_mimic_deploy/g1_ctrl_vsis "
-            "/home/ubuntu/vsis_mimic_deploy/lora_recv_group "
-            "/docker_config/custom_startup.sh 2>/dev/null || true ; "
-            "chmod 666 /dev/ttyCH341* /dev/ttyUSB* /dev/bus/usb/*/* 2>/dev/null || true ; "
-            "docker exec vsis_g1 chmod +x /home/ubuntu/vsis_mimic_deploy/run_bg.sh "
-            "/home/ubuntu/vsis_mimic_deploy/sec_run.sh "
-            "/home/ubuntu/vsis_mimic_deploy/g1_ctrl_vsis "
-            "/home/ubuntu/vsis_mimic_deploy/lora_recv_group "
-            "/docker_config/custom_startup.sh 2>/dev/null || true ; "
-            "docker exec vsis_g1 chmod 666 /dev/ttyCH341* /dev/ttyUSB* /dev/bus/usb/*/* 2>/dev/null || true"
-        )
-        ssh_manager.execute_command(fix_perm_cmd, sudo=True)
+        # 确保 run_bg.sh 是最新的高可靠开机自启与守护版本并完成同步赋权
+        ch341_manager.deploy_run_bg_script(ssh_manager, _cb)
 
         # 确保 g1_ctrl_vsis 为有效的 ARM aarch64 原生可执行二进制
         chk_bin_cmd = "docker exec vsis_g1 file /home/ubuntu/vsis_mimic_deploy/g1_ctrl_vsis 2>/dev/null || true"
@@ -1063,13 +666,12 @@ echo "[SUCCESS] 运控与 LoRa 接收程序已在后台启动完成。"
         # 2. 检查 lora_robot_id.txt
         _cb("[STEP 2/2] 正在检查 lora_robot_id.txt 中的群控标识 (Robot ID)...\n", False)
         code_id, id_out, _ = ssh_manager.execute_command("cat /home/ubuntu/vsis_mimic_deploy/group/lora_robot_id.txt 2>/dev/null", sudo=True)
-        robot_id = id_out.strip().upper() if code_id == 0 else ""
-
-        has_valid_id = bool(robot_id and robot_id != "ALL" and len(robot_id) <= 20)
+        raw_robot_id = id_out.strip() if code_id == 0 else ""
+        has_valid_id, robot_id, _ = validate_robot_id(raw_robot_id)
         if has_valid_id:
             _cb(f"[SUCCESS] ✅ 检测到已配置合法 Robot ID: [{robot_id}]\n", False)
         else:
-            _cb(f"[WARN] ⚠️ 未检测到有效 Robot ID (当前值为 '{robot_id or '空'}')！\n", True)
+            _cb(f"[WARN] ⚠️ 未检测到有效 Robot ID (当前值为 '{raw_robot_id or '空'}')！\n", True)
             _cb("[PROMPT_ROBOT_ID] 💡 提示：请在右侧【开机自启与 Robot ID】卡片中输入分配的唯一 ID (如 A, B, R1 等) 并点击【写入自启动钩子与 Robot ID】。\n", True)
 
         _cb("=======================================================\n\n", False)
@@ -1309,11 +911,10 @@ echo "[SUCCESS] 运控与 LoRa 接收程序已在后台启动完成。"
         1. 写入自启动钩子 /docker_config/custom_startup.sh
         2. 写入 robot_id 到 /home/ubuntu/vsis_mimic_deploy/group/lora_robot_id.txt
         """
-        robot_id = robot_id.strip().upper()
-        if not robot_id:
-            return {"success": False, "msg": "Robot ID 不能为空，请输入唯一寻址标识 (如 A, B, R1, G1_02 等)"}
-        if robot_id == "ALL":
-            return {"success": False, "msg": "ALL 为群控广播保留关键字，不能作为单机 ID！"}
+        ok, clean_id, err_msg = validate_robot_id(robot_id)
+        if not ok:
+            return {"success": False, "msg": err_msg}
+        robot_id = clean_id
 
         # 1. 写入 custom_startup.sh (加 sleep 3 确保开机时 USB 串口驱动已完全加载)
         startup_script_content = "#!/bin/bash\nsleep 3\n/home/ubuntu/vsis_mimic_deploy/run_bg.sh\n"

@@ -435,3 +435,50 @@ function showToast(msg, type = 'info', duration = 3500, showCopyBtn = true) {
     setTimeout(() => toast.remove(), 300);
   }, duration);
 }
+
+/**
+ * 全局公共校验：验证 Robot ID 格式、安全性与有效性
+ * 规范要求：
+ * 1. 不能为空，去除首尾空白后转大写
+ * 2. 长度 1~20 位
+ * 3. 仅允许字母 (A-Z)、数字 (0-9)、下划线 (_) 和短横线 (-)
+ * 4. 严禁包含逗号 ','（群控多机分隔符）或竖线 '|'（通信协议指令分隔符）
+ * 5. 严禁为保留广播关键字 'ALL'
+ * 6. 严禁包含空格、引号、分号、反引号等任何危险注入字符
+ * @param {string} rawId
+ * @returns {{ valid: boolean, cleanId: string, error: string }}
+ */
+function validateRobotId(rawId) {
+  if (rawId === undefined || rawId === null) {
+    return { valid: false, cleanId: '', error: 'Robot ID 不能为空！请输入唯一寻址标识 (如 A, B, R1, G1_02 等)' };
+  }
+  const cleanId = String(rawId).trim().toUpperCase();
+  if (!cleanId) {
+    return { valid: false, cleanId: '', error: 'Robot ID 不能为空！请输入唯一寻址标识 (如 A, B, R1, G1_02 等)' };
+  }
+  if (cleanId === 'ALL') {
+    return { valid: false, cleanId: '', error: 'ALL 为群控广播保留关键字，不能作为单机 ID！' };
+  }
+  if (cleanId.includes(',')) {
+    return { valid: false, cleanId: '', error: 'Robot ID 不能包含逗号 \',\'，多机群控已使用逗号作为目标分隔符！' };
+  }
+  if (cleanId.includes('|')) {
+    return { valid: false, cleanId: '', error: 'Robot ID 不能包含竖线 \'|\'，该字符为通信协议指令分隔符！' };
+  }
+  // 严格字符集白名单校验：只允许字母、数字、下划线、短横线，长度 1~20 位
+  const validRegex = /^[A-Z0-9_-]{1,20}$/;
+  if (!validRegex.test(cleanId)) {
+    return {
+      valid: false,
+      cleanId: '',
+      error: 'Robot ID 格式不合法！仅支持 1~20 位英文字母、数字、下划线(_)或短横线(-)，严禁包含空格或特殊字符以防注入漏洞。'
+    };
+  }
+  return { valid: true, cleanId: cleanId, error: '' };
+}
+
+window.validateRobotId = validateRobotId;
+if (typeof API !== 'undefined') {
+  API.validateRobotId = validateRobotId;
+}
+

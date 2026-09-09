@@ -177,13 +177,13 @@ class LogDiagnostics:
                 "echo '=========================================' && "
                 "docker exec {c_name} tail -n {lines} /home/ubuntu/vsis_mimic_deploy/log/lora_recv.log 2>/dev/null "
                 "|| ( [ -f /home/ubuntu/vsis_mimic_deploy/log/lora_recv.log ] && tail -n {lines} /home/ubuntu/vsis_mimic_deploy/log/lora_recv.log ) "
-                "|| docker logs --tail {lines} {c_name} 2>&1 | grep -iE 'lora|recv|robot_id|radio|serial|rx' "
+                "|| docker logs --timestamps --tail {lines} {c_name} 2>&1 | grep -iE 'lora|recv|robot_id|radio|serial|rx' "
                 "|| echo '[INFO] 暂未生成独立 lora_recv.log 日志文件。'"
             ).format(lines=tail_lines, c_name=c_name)
 
         else:
-            # 默认直接输出 Docker 容器日志 (针对选定的容器)
-            cmd = f"docker logs --tail {tail_lines} {c_name} 2>&1"
+            # 默认直接输出 Docker 容器日志 (针对选定的容器，附带时间戳)
+            cmd = f"docker logs --timestamps --tail {tail_lines} {c_name} 2>&1"
 
         code, out, err = ssh_manager.execute_command(cmd, sudo=True)
         raw_text = out if (code == 0 or out.strip()) else (out or err or "【暂无日志输出】请确保机器人已连接且对应容器已启动。")

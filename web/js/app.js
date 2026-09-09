@@ -10,6 +10,7 @@ const App = {
     this.bindConnectionEvents();
     this.bindDanceUpdateEvents();
     this.bindSettingsMenuEvents();
+    this.bindOpsModalEvents();
     this.init3dPlayer();
     this.startStatusMonitor();
     this.initGlobalCopyEnhancers();
@@ -148,8 +149,74 @@ const App = {
     });
   },
 
+  bindOpsModalEvents() {
+    const btnOpen = document.getElementById('btn-open-ops-modal');
+    const btnClose = document.getElementById('btn-close-ops-modal');
+    const modal = document.getElementById('ops-modal');
+
+    if (btnOpen) {
+      btnOpen.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.openOpsModal('tab-3d-player');
+      });
+    }
+
+    if (btnClose) {
+      btnClose.addEventListener('click', () => {
+        this.closeOpsModal();
+      });
+    }
+
+    if (modal) {
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          this.closeOpsModal();
+        }
+      });
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && modal && modal.style.display !== 'none') {
+        this.closeOpsModal();
+      }
+    });
+  },
+
+  openOpsModal(tabId = 'tab-3d-player') {
+    const modal = document.getElementById('ops-modal');
+    const settingsContent = document.getElementById('settings-menu-content');
+    if (settingsContent) settingsContent.style.display = 'none';
+
+    if (modal) {
+      modal.style.display = 'flex';
+    }
+    this.switchTab(tabId);
+  },
+
+  closeOpsModal() {
+    const modal = document.getElementById('ops-modal');
+    if (modal) {
+      modal.style.display = 'none';
+    }
+    this.switchTab('tab-robot-control');
+  },
+
   switchTab(tabId) {
     this.activeTab = tabId;
+
+    // 自动收起设置菜单下拉框
+    const settingsContent = document.getElementById('settings-menu-content');
+    if (settingsContent) {
+      settingsContent.style.display = 'none';
+    }
+
+    // 若切入的是运维与调试子页面，确保 ops-modal 打开；若切回群控控制台，关闭 ops-modal
+    const opsModal = document.getElementById('ops-modal');
+    if (tabId !== 'tab-robot-control' && opsModal && opsModal.style.display === 'none') {
+      opsModal.style.display = 'flex';
+    } else if (tabId === 'tab-robot-control' && opsModal && opsModal.style.display !== 'none') {
+      opsModal.style.display = 'none';
+    }
 
     // 切换按钮高亮
     document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -163,7 +230,7 @@ const App = {
 
     // 如果切入 3D 播放器，触发 resize 保持视口正确
     if (tabId === 'tab-3d-player' && dancePlayer) {
-      setTimeout(() => dancePlayer.onResize(), 50);
+      setTimeout(() => dancePlayer.onResize(), 60);
     } else if (tabId === 'tab-logs' && window.LogViewer) {
       LogViewer.fetchCurrentLogs();
     } else if (tabId === 'tab-network' && window.TabNetwork) {
@@ -249,8 +316,7 @@ const App = {
       if (dot) dot.className = 'status-dot online';
       if (text) text.textContent = res.first_time ? '在线 (待部署)' : '在线 (已就绪)';
       if (info) {
-        const lat = res.latency_ms >= 0 ? `${res.latency_ms}ms` : '--';
-        info.textContent = `${res.host || '192.168.123.164'} [${lat}]`;
+        info.textContent = `${res.host || '192.168.123.164'}:${res.port || 22}`;
       }
       if (this.lastConnectedState === false) {
         showToast(`🎉 成功连接机器人 (${res.host || '192.168.123.164'})`, 'success', 3500);
@@ -264,20 +330,7 @@ const App = {
         text.textContent = isAuto ? '探测中...' : '未连接';
       }
       if (info) {
-        let msg = res?.auto_status_msg || '等待连接';
-        // 过滤并精简过长的异常信息
-        if (msg.includes('Error reading SSH') || msg.includes('Connection closed') || msg.includes('banner')) {
-          msg = '响应忙';
-        } else if (msg.includes('认证失败') || msg.includes('未通过')) {
-          msg = '认证失败';
-        } else if (msg.includes('未探测到') || msg.includes('等待上线')) {
-          msg = '等待上线';
-        } else if (msg.includes('探测到 IP') || msg.includes('探测到活跃目标')) {
-          msg = '正在连接';
-        } else if (msg.length > 15) {
-          msg = msg.slice(0, 14) + '...';
-        }
-        info.textContent = `${res?.host || '192.168.123.164'} (${msg})`;
+        info.textContent = `${res?.host || '192.168.123.164'}:${res?.port || 22}`;
       }
     }
 

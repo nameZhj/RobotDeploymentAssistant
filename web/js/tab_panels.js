@@ -796,7 +796,16 @@ const TabImage = {
       // 步骤 1 (优先): 优先配置开机自启并写入 Robot ID
       this.appendLog('【步骤 1/2 优先执行】正在配置开机自启并写入 Robot ID...', false, '⚙️');
       const inputEl = document.getElementById('tp-robot-id-select');
-      const robotId = (inputEl && inputEl.value.trim() ? inputEl.value.trim() : 'A').toUpperCase();
+      const rawVal = inputEl && inputEl.value.trim() ? inputEl.value : 'A';
+      const valResult = window.validateRobotId ? window.validateRobotId(rawVal) : { valid: true, cleanId: rawVal.trim().toUpperCase(), error: '' };
+      if (!valResult.valid) {
+        this.appendLog(`❌ 校验失败: ${valResult.error}`, true);
+        showToast(valResult.error, 'error');
+        if (inputEl) inputEl.focus();
+        if (btnStart) { btnStart.disabled = false; btnStart.classList.remove('loading'); btnStart.textContent = '⚡ 固化启动 vsis_g1 容器'; }
+        return;
+      }
+      const robotId = valResult.cleanId;
       if (inputEl) inputEl.value = robotId;
 
       const autostartRes = await API.configAutostart(robotId);
@@ -850,19 +859,15 @@ const TabImage = {
 
   async writeAutostart() {
     const inputEl = document.getElementById('tp-robot-id-select');
-    const rawValue = inputEl ? inputEl.value.trim() : '';
-    const robotId = rawValue.toUpperCase();
+    const rawValue = inputEl ? inputEl.value : '';
 
-    if (!robotId) {
-      showToast('Robot ID 不能为空！请输入如 A、B、R1 等唯一标识。', 'error');
+    const valResult = window.validateRobotId ? window.validateRobotId(rawValue) : { valid: true, cleanId: rawValue.trim().toUpperCase(), error: '' };
+    if (!valResult.valid) {
+      showToast(valResult.error, 'error');
       if (inputEl) inputEl.focus();
       return;
     }
-    if (robotId === 'ALL') {
-      showToast('ALL 为广播保留关键字，不能作为单机 ID！', 'error');
-      if (inputEl) inputEl.focus();
-      return;
-    }
+    const robotId = valResult.cleanId;
 
     if (inputEl) inputEl.value = robotId;
     this.updateWriteIdButtonText();

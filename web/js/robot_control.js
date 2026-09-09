@@ -9,11 +9,11 @@
  */
 
 const RobotControl = {
-  // 用户自定义配置的受控机器人 ID 列表（默认 1 台：Robot A）
-  activeRobots: ['A'],
-  
+  // 用户自定义配置的受控机器人 ID 列表（无添加时为空列表，不设默认机器人）
+  activeRobots: [],
+
   // 当前选中的目标集合：Set(['ALL']) 或 Set(['A']) 或 Set(['A', 'C'])
-  selectedTargets: new Set(['ALL']),
+  selectedTargets: new Set(),
 
   isConnected: false,
   activePort: '',
@@ -77,21 +77,31 @@ const RobotControl = {
   loadStoredFleet() {
     try {
       const stored = localStorage.getItem('g1_custom_robot_fleet');
-      if (stored) {
+      if (stored !== null) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        if (Array.isArray(parsed)) {
           this.activeRobots = parsed.map(r => String(r).trim().toUpperCase()).filter(r => r && r !== 'ALL');
-          if (this.activeRobots.length > 0) return;
+          // 选中状态：若存在机器人，默认全选现有机器人；若为空则为空集合
+          if (this.activeRobots.length === 1) {
+            this.selectedTargets = new Set([this.activeRobots[0]]);
+          } else if (this.activeRobots.length > 1) {
+            this.selectedTargets = new Set(['ALL']);
+          } else {
+            this.selectedTargets = new Set();
+          }
+          return;
         }
       }
-    } catch (_) {}
-    this.activeRobots = ['A']; // 默认 1 台
+    } catch (_) { }
+    // 用户未添加机器人时不要有默认的机器人
+    this.activeRobots = [];
+    this.selectedTargets = new Set();
   },
 
   saveStoredFleet() {
     try {
       localStorage.setItem('g1_custom_robot_fleet', JSON.stringify(this.activeRobots));
-    } catch (_) {}
+    } catch (_) { }
   },
 
   bindEvents() {
@@ -273,17 +283,13 @@ const RobotControl = {
     const inputField = document.getElementById('input-new-robot-id');
     if (!inputField) return;
 
-    const cleanId = inputField.value.trim().toUpperCase();
-    if (!cleanId) {
-      alert('机器人 ID 不能为空！');
+    const valResult = window.validateRobotId ? window.validateRobotId(inputField.value) : { valid: true, cleanId: inputField.value.trim().toUpperCase(), error: '' };
+    if (!valResult.valid) {
+      alert(valResult.error);
       inputField.focus();
       return;
     }
-    if (cleanId === 'ALL') {
-      alert('ALL 为广播保留关键字，不能作为单机 ID！');
-      inputField.focus();
-      return;
-    }
+    const cleanId = valResult.cleanId;
     if (this.activeRobots.includes(cleanId)) {
       alert(`机器人 ID [${cleanId}] 已存在于受控列表中！`);
       inputField.focus();
@@ -292,6 +298,8 @@ const RobotControl = {
 
     this.activeRobots.push(cleanId);
     this.saveStoredFleet();
+    // 默认选中新添加的机器
+    this.selectedTargets.add(cleanId);
     this.renderTargetCards();
     this.closeAddRobotModal();
     this.logTerminal('system', `[FLEET] 成功添加受控机器人: [${cleanId}] (当前共 ${this.activeRobots.length} 台)`);
@@ -308,44 +316,56 @@ const RobotControl = {
   },
 
   removeRobot(robotId) {
-    if (this.activeRobots.length <= 1) {
-      alert('受控列表中至少需保留 1 台机器人！');
-      return;
-    }
+    // 允许用户删除所有机器人，不再强制保留 1 台
     this.activeRobots = this.activeRobots.filter(r => r !== robotId);
     this.saveStoredFleet();
 
     // 更新选中状态
     this.selectedTargets.delete(robotId);
-    if (this.selectedTargets.size === 0) {
-      this.selectedTargets = new Set(['ALL']);
+    if (this.activeRobots.length === 0) {
+      this.selectedTargets.clear();
+    } else if (this.selectedTargets.size === 0) {
+      // 若还有剩余机器且未选中任何目标，默认选中第一台
+      this.selectedTargets = new Set([this.activeRobots[0]]);
     }
 
     this.renderTargetCards();
     this.logTerminal('system', `[FLEET] 已移除机器人: [${robotId}] (当前共 ${this.activeRobots.length} 台)`);
   },
 
+  // --- 核心：获取当前实际生效的选中机器人列表 ---
+  getEffectiveSelectedRobots() {
+    if (this.activeRobots.length === 0) {
+      return [];
+    }
+    // 如果选中了广播 ALL，或者勾选了 activeRobots 中的所有机器人
+    if (this.selectedTargets.has('ALL') || (this.activeRobots.length > 0 && this.activeRobots.every(r => this.selectedTargets.has(r)))) {
+      return [...this.activeRobots];
+    }
+    return this.activeRobots.filter(r => this.selectedTargets.has(r));
+  },
+
   // --- 自由单选、Ctrl+左键多选组合、全选控制 ---
   handleCardClick(robotId, isCtrlKey) {
+    if (this.activeRobots.length === 0) return;
+
     if (isCtrlKey) {
       // Ctrl + 鼠标左键：多选与排列组合切换
       if (this.selectedTargets.has('ALL')) {
         // 原本是全选 -> 降级为除点击机之外的所有机器（取消该机）
         this.selectedTargets = new Set(this.activeRobots);
         this.selectedTargets.delete(robotId);
-        // 若全部取消：保留仅点击机本身（单机状态，不自动跳到 ALL）
         if (this.selectedTargets.size === 0) {
           this.selectedTargets = new Set([robotId]);
         }
       } else {
         if (this.selectedTargets.has(robotId)) {
           this.selectedTargets.delete(robotId);
-          // 文档规则：取消后若变空，保留空选（不自动升为 ALL）
-          // 用户需要手动点击「全选」或另选一台
+          // 取消后若变空，保留空选
         } else {
           this.selectedTargets.add(robotId);
-          // 若包含所有机器，升级为全选广播（ALL），发一个包比逐台更高效
-          if (this.activeRobots.length > 0 && this.activeRobots.every(r => this.selectedTargets.has(r))) {
+          // 若包含所有机器且数量 > 1，升级为 ALL
+          if (this.activeRobots.length > 1 && this.activeRobots.every(r => this.selectedTargets.has(r))) {
             this.selectedTargets = new Set(['ALL']);
           }
         }
@@ -360,20 +380,36 @@ const RobotControl = {
   },
 
   toggleSelectAll() {
-    const isAllMode = this.selectedTargets.has('ALL') || (this.activeRobots.length > 0 && this.activeRobots.every(r => this.selectedTargets.has(r)));
+    if (this.activeRobots.length === 0) {
+      this.logTerminal('system', '[TARGET] 当前尚未添加机器人，请先点击「+ 添加机器人」');
+      return;
+    }
+
+    const effective = this.getEffectiveSelectedRobots();
+    const isAllMode = effective.length === this.activeRobots.length;
+
     if (isAllMode) {
       // 再次点击全选 -> 取消全选
       this.selectedTargets.clear();
     } else {
-      // 全选
-      this.selectedTargets = new Set(['ALL']);
+      // 全选：若仅有 1 台机器人，直接选中该机器单机；若有多台，使用 ALL 标识
+      if (this.activeRobots.length === 1) {
+        this.selectedTargets = new Set([this.activeRobots[0]]);
+      } else {
+        this.selectedTargets = new Set(['ALL']);
+      }
     }
     this.renderTargetCards();
     this.logSelectionChange();
   },
 
   selectAll() {
-    this.selectedTargets = new Set(['ALL']);
+    if (this.activeRobots.length === 0) return;
+    if (this.activeRobots.length === 1) {
+      this.selectedTargets = new Set([this.activeRobots[0]]);
+    } else {
+      this.selectedTargets = new Set(['ALL']);
+    }
     this.renderTargetCards();
     this.logSelectionChange();
   },
@@ -384,46 +420,76 @@ const RobotControl = {
   },
 
   getSelectionSummaryText() {
-    if (this.selectedTargets.size === 0) {
+    if (this.activeRobots.length === 0) {
+      return '暂无机器人 (请先添加)';
+    }
+    const effective = this.getEffectiveSelectedRobots();
+    if (effective.length === 0) {
       return '未选择机器 (请点击卡片或勾选目标)';
     }
-    if (this.selectedTargets.has('ALL') || (this.activeRobots.length > 0 && this.activeRobots.every(r => this.selectedTargets.has(r)))) {
-      return `ALL (群控全部 ${this.activeRobots.length} 台)`;
+    // 有且仅有一台机器人被选中
+    if (effective.length === 1) {
+      return `Robot ${effective[0]} (单机)`;
     }
-    const arr = Array.from(this.selectedTargets);
-    if (arr.length === 1) {
-      return `Robot ${arr[0]} (单机)`;
+    // 全部选中且机队大于 1 台
+    if (effective.length === this.activeRobots.length) {
+      return `全选 [${effective.join(',')}] (共 ${effective.length} 台)`;
     }
-    return `组合 [${arr.join(', ')}] (共 ${arr.length} 台)`;
+    return `多选 [${effective.join(',')}] (共 ${effective.length} 台)`;
   },
 
   getCommandPrefixText() {
-    if (this.selectedTargets.size === 0) {
+    if (this.activeRobots.length === 0) {
       return 'NONE|';
     }
-    if (this.selectedTargets.has('ALL') || (this.activeRobots.length > 0 && this.activeRobots.every(r => this.selectedTargets.has(r)))) {
-      return 'ALL|';
+    const effective = this.getEffectiveSelectedRobots();
+    if (effective.length === 0) {
+      return 'NONE|';
     }
-    const arr = Array.from(this.selectedTargets);
-    if (arr.length === 1) {
-      return `${arr[0]}|`;
-    }
-    return `[${arr.join(',')}]|`;
+    // 无论是单选、多选还是全选，目标均以逗号隔开 (如 A| 或 A,B|)，不再发送 ALL
+    return `${effective.join(',')}|`;
   },
 
-  // --- 动态渲染目标控制卡片流 (无重复添加卡片) ---
+  // --- 动态渲染目标控制卡片流 ---
   renderTargetCards() {
     const container = document.getElementById('ctrl-target-grid-container');
     if (!container) return;
 
     container.innerHTML = '';
 
-    const isAllMode = this.selectedTargets.has('ALL') || (this.activeRobots.length > 0 && this.activeRobots.every(r => this.selectedTargets.has(r)));
+    // 0. 若未添加任何机器人，展示友好引导空状态
+    if (this.activeRobots.length === 0) {
+      const emptyDiv = document.createElement('div');
+      emptyDiv.className = 'empty-fleet-hint';
+      emptyDiv.innerHTML = `
+        <div class="empty-fleet-title">暂无受控机器人</div>
+        <div class="empty-fleet-desc">请点击右上角「+ 添加机器人」输入唯一机身标识（如 A、B、R1）即可纳入实时群控</div>
+      `;
+      container.appendChild(emptyDiv);
 
-    // 1. 渲染用户自定义配置的每台机器人卡片
+      const btnSelectAll = document.getElementById('btn-select-all-action');
+      if (btnSelectAll) {
+        btnSelectAll.className = 'btn btn-secondary btn-sm';
+        btnSelectAll.disabled = true;
+        btnSelectAll.innerHTML = '<span>👑</span> 全选';
+        btnSelectAll.title = '暂无机器人可用';
+      }
+
+      const summaryEl = document.getElementById('ctrl-selected-summary');
+      if (summaryEl) summaryEl.textContent = '已选: 暂无机器人 (请先添加)';
+
+      const prefixEl = document.getElementById('ctrl-active-target-prefix');
+      if (prefixEl) prefixEl.textContent = 'NONE|';
+      return;
+    }
+
+    const effective = this.getEffectiveSelectedRobots();
+    const isAllMode = effective.length === this.activeRobots.length;
+
+    // 1. 渲染每台机器人卡片
     this.activeRobots.forEach((robotId, index) => {
       const card = document.createElement('div');
-      const isSelected = isAllMode || this.selectedTargets.has(robotId);
+      const isSelected = effective.includes(robotId);
       card.className = `target-card ${isSelected ? 'active' : ''}`;
       card.setAttribute('data-target', robotId);
 
@@ -450,20 +516,18 @@ const RobotControl = {
 
       badge.appendChild(checkbox);
       badge.appendChild(labelSpan);
-
       topBar.appendChild(badge);
 
-      if (this.activeRobots.length > 1) {
-        const removeBtn = document.createElement('button');
-        removeBtn.className = 'btn-card-remove';
-        removeBtn.innerHTML = '✕';
-        removeBtn.title = `移除 Robot ${robotId}`;
-        removeBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.removeRobot(robotId);
-        });
-        topBar.appendChild(removeBtn);
-      }
+      // 允许删除（包括只有 1 台时也能删除）
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'btn-card-remove';
+      removeBtn.innerHTML = '✕';
+      removeBtn.title = `移除 Robot ${robotId}`;
+      removeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.removeRobot(robotId);
+      });
+      topBar.appendChild(removeBtn);
 
       // Center: Big Target ID
       const idDiv = document.createElement('div');
@@ -490,13 +554,14 @@ const RobotControl = {
     // 2. 更新工具栏全选按钮状态
     const btnSelectAll = document.getElementById('btn-select-all-action');
     if (btnSelectAll) {
-      if (isAllMode) {
+      btnSelectAll.disabled = false;
+      if (isAllMode && this.activeRobots.length > 0) {
         btnSelectAll.className = 'btn btn-primary btn-sm';
-        btnSelectAll.innerHTML = '<span>👑</span> 取消全选 (ALL)';
+        btnSelectAll.innerHTML = '<span>👑</span> 取消全选';
         btnSelectAll.title = '当前已全选，再次点击取消全选';
       } else {
         btnSelectAll.className = 'btn btn-secondary btn-sm';
-        btnSelectAll.innerHTML = '<span>👑</span> 全选 (ALL)';
+        btnSelectAll.innerHTML = '<span>👑</span> 全选';
         btnSelectAll.title = '全选所有受控机器人 (Ctrl+A)';
       }
     }
@@ -512,40 +577,24 @@ const RobotControl = {
     if (prefixEl) {
       prefixEl.textContent = this.getCommandPrefixText();
     }
-
-    const hintTag = document.getElementById('ctrl-shortcut-hint-tag');
-    if (hintTag) {
-      hintTag.textContent = `左键单选 / Ctrl+左键多选 / 全选与取消全选 (共 ${this.activeRobots.length} 台)`;
-    }
   },
 
-  // --- 指令发送 (支持单机、多机序列组合下发与 ALL 广播) ---
+  // --- 指令发送 (支持单机与多机逗号隔开下发) ---
   async sendCommand(commandStr) {
     if (!commandStr) return;
     const command = commandStr.trim().toUpperCase();
 
+    const effective = this.getEffectiveSelectedRobots();
+
     // 安全检查：未选择任何目标时拦截提示
-    if (this.selectedTargets.size === 0) {
-      this.logTerminal('error', `[TX WARN] 未选中任何受控目标！请先勾选或点击机器人卡片（拟下发: ${command}）`);
+    if (effective.length === 0) {
+      this.logTerminal('error', `[TX WARN] 未选中任何受控目标！请先添加或勾选机器人卡片（拟下发: ${command}）`);
       return;
     }
 
-    // 1. 如果是全选模式 (ALL) 或选择了全部机器 -> 发送 1 个广播包 ALL|COMMAND\n
-    if (this.selectedTargets.has('ALL') || this.activeRobots.every(r => this.selectedTargets.has(r))) {
-      await this.sendSinglePacket('ALL', command);
-      return;
-    }
-
-    // 2. 如果是单机或多机组合 -> 依次向每个选中的机器人下发寻址包 TARGET|COMMAND\n
-    const targets = Array.from(this.selectedTargets);
-    for (let i = 0; i < targets.length; i++) {
-      const tgt = targets[i];
-      await this.sendSinglePacket(tgt, command);
-      if (i < targets.length - 1) {
-        // 微小时间间隔 (25ms) 确保串口 LoRa 缓冲区平滑发射
-        await new Promise(r => setTimeout(r, 25));
-      }
-    }
+    // 规范：单选、多选或全选，均采用逗号隔开的目标格式 (如 "A" 或 "A,B")，单次发送，不再发送 ALL，也不必发送多次
+    const target = effective.join(',');
+    await this.sendSinglePacket(target, command);
   },
 
   async sendSinglePacket(target, command) {
@@ -571,7 +620,7 @@ const RobotControl = {
     const connectBtn = document.getElementById('ctrl-serial-connect-btn');
 
     if (statusBadge) statusBadge.className = 'status-badge warning';
-    if (statusText) statusText.textContent = '正在自动检测串口...';
+    if (statusText) statusText.textContent = '连接中';
 
     try {
       await this.refreshPortList();
@@ -587,8 +636,11 @@ const RobotControl = {
         this.activeDesc = res.description || '';
 
         if (statusBadge) statusBadge.className = 'status-badge connected';
-        if (statusText) statusText.textContent = `已连接 (${this.activePort} - ${this.activeDesc.split(' ')[0] || 'CH340'})`;
-        if (connectBtn) connectBtn.querySelector('.btn-text').textContent = '断开串口';
+        if (statusText) statusText.textContent = '已连接';
+        if (connectBtn) {
+          const btnText = connectBtn.querySelector('.btn-text');
+          if (btnText) btnText.textContent = '断开串口';
+        }
 
         const portSelect = document.getElementById('ctrl-serial-port-select');
         if (portSelect && this.activePort) {
@@ -601,9 +653,12 @@ const RobotControl = {
       } else {
         this.isConnected = false;
         if (statusBadge) statusBadge.className = 'status-badge disconnected';
-        if (statusText) statusText.textContent = '未连接串口 (插入 LoRa 将自动重连)';
-        if (connectBtn) connectBtn.querySelector('.btn-text').textContent = '连接串口';
-        
+        if (statusText) statusText.textContent = '未连接';
+        if (connectBtn) {
+          const btnText = connectBtn.querySelector('.btn-text');
+          if (btnText) btnText.textContent = '连接串口';
+        }
+
         if (isUserTriggered) {
           this.logTerminal('error', `[SERIAL WARN] ${res?.msg || '未找到可连接的串口设备'}`);
         }
@@ -611,7 +666,7 @@ const RobotControl = {
     } catch (e) {
       this.isConnected = false;
       if (statusBadge) statusBadge.className = 'status-badge disconnected';
-      if (statusText) statusText.textContent = '串口服务离线';
+      if (statusText) statusText.textContent = '未连接';
       if (isUserTriggered) {
         this.logTerminal('error', `[SERIAL ERROR] 串口检测异常: ${e.message || e}`);
       }
@@ -630,15 +685,13 @@ const RobotControl = {
       if (ports.length === 0) {
         const opt = document.createElement('option');
         opt.value = '';
-        opt.textContent = '未检测到串口 (请插入 CH340)';
+        opt.textContent = '未检测到串口';
         portSelect.appendChild(opt);
       } else {
         ports.forEach(p => {
           const opt = document.createElement('option');
           opt.value = p.port;
-          const tag = p.is_ch341 ? ' [CH340/CH341 推荐]' : '';
-          const activeTag = p.is_active ? ' [🟢 当前连接]' : '';
-          opt.textContent = `${p.port} - ${p.description}${tag}${activeTag}`;
+          opt.textContent = `${p.port} - ${p.description}`;
           if (p.port === this.activePort || (p.is_ch341 && !this.activePort)) {
             opt.selected = true;
           }
@@ -654,6 +707,11 @@ const RobotControl = {
     const baudSelect = document.getElementById('ctrl-baud-rate-select');
     const baud = baudSelect ? parseInt(baudSelect.value, 10) : 9600;
 
+    const statusBadge = document.getElementById('ctrl-serial-status-badge');
+    const statusText = document.getElementById('ctrl-serial-status-text');
+    if (statusBadge) statusBadge.className = 'status-badge warning';
+    if (statusText) statusText.textContent = '连接中';
+
     this.logTerminal('system', `[SERIAL] 正在连接指定串口: ${portName}...`);
     try {
       const res = await API.connectSerial(portName, baud);
@@ -661,40 +719,46 @@ const RobotControl = {
         this.isConnected = true;
         this.activePort = portName;
         this.activeBaud = baud;
-        
-        const statusBadge = document.getElementById('ctrl-serial-status-badge');
-        const statusText = document.getElementById('ctrl-serial-status-text');
-        const connectBtn = document.getElementById('ctrl-serial-connect-btn');
+
         if (statusBadge) statusBadge.className = 'status-badge connected';
-        if (statusText) statusText.textContent = `已连接 (${this.activePort})`;
-        if (connectBtn) connectBtn.querySelector('.btn-text').textContent = '断开串口';
+        if (statusText) statusText.textContent = '已连接';
+        const connectBtn = document.getElementById('ctrl-serial-connect-btn');
+        if (connectBtn) {
+          const btnText = connectBtn.querySelector('.btn-text');
+          if (btnText) btnText.textContent = '断开串口';
+        }
 
         this.logTerminal('system', `[SERIAL SUCCESS] 成功连接串口: ${portName}`);
         await this.refreshPortList();
         this.fetchAndRenderDanceList(false);
       } else {
+        if (statusBadge) statusBadge.className = 'status-badge disconnected';
+        if (statusText) statusText.textContent = '未连接';
         this.logTerminal('error', `[SERIAL ERROR] 连接失败: ${res?.msg || '未知原因'}`);
       }
     } catch (e) {
+      if (statusBadge) statusBadge.className = 'status-badge disconnected';
+      if (statusText) statusText.textContent = '未连接';
       this.logTerminal('error', `[SERIAL ERROR] ${e.message || e}`);
     }
   },
 
 
   async disconnectSerial() {
-    this.logTerminal('system', '[SERIAL] 断开前主动下发安全复位 (ALL|GAIT)...');
+    const target = this.activeRobots.length > 0 ? this.activeRobots.join(',') : 'ALL';
+    this.logTerminal('system', `[SERIAL] 断开前主动下发安全复位 (${target}|GAIT)...`);
 
-    // 断开连接时自动发 ALL|GAIT
+    // 断开连接时自动发安全复位 (优先当前受控机器人，若无则 ALL)
     try {
-      await API.sendSerialCmd('ALL', 'GAIT');
-      this.logTerminal('tx', '[TX] ALL|GAIT  (断开保护)');
+      await API.sendSerialCmd(target, 'GAIT');
+      this.logTerminal('tx', `[TX] ${target}|GAIT  (断开保护)`);
     } catch (_) {
       this.logTerminal('error', '[TX WARN] 断开前指令下发失败（串口可能已离线）');
     }
 
     try {
       await API.disconnectSerial(true);
-    } catch (_) {}
+    } catch (_) { }
 
     this.isConnected = false;
     this.activePort = '';
@@ -703,8 +767,11 @@ const RobotControl = {
     const connectBtn = document.getElementById('ctrl-serial-connect-btn');
 
     if (statusBadge) statusBadge.className = 'status-badge disconnected';
-    if (statusText) statusText.textContent = '已断开串口';
-    if (connectBtn) connectBtn.querySelector('.btn-text').textContent = '连接串口';
+    if (statusText) statusText.textContent = '未连接';
+    if (connectBtn) {
+      const btnText = connectBtn.querySelector('.btn-text');
+      if (btnText) btnText.textContent = '连接串口';
+    }
 
     this.logTerminal('system', '[SERIAL] 串口连接已安全断开释放。');
     await this.refreshPortList();
@@ -719,7 +786,7 @@ const RobotControl = {
           if (res && res.ports && res.ports.some(p => p.is_ch341)) {
             await this.autoDetectAndConnectSerial(false);
           }
-        } catch (_) {}
+        } catch (_) { }
       } else {
         try {
           const statusRes = await API.getSerialStatus();
@@ -728,10 +795,10 @@ const RobotControl = {
             this.activePort = '';
             const statusBadge = document.getElementById('ctrl-serial-status-badge');
             const statusText = document.getElementById('ctrl-serial-status-text');
-            if (statusBadge) statusBadge.className = 'status-badge warning';
-            if (statusText) statusText.textContent = '串口硬件已断开/拔出';
+            if (statusBadge) statusBadge.className = 'status-badge disconnected';
+            if (statusText) statusText.textContent = '未连接';
           }
-        } catch (_) {}
+        } catch (_) { }
       }
     }, 4000);
   },
@@ -916,14 +983,14 @@ const RobotControl = {
   },
 
   highlightBtn(key) {
-    const btn = Array.from(document.querySelectorAll('.tab-robot-control .btn-cmd')).find(b => 
+    const btn = Array.from(document.querySelectorAll('.tab-robot-control .btn-cmd')).find(b =>
       b.getAttribute('data-key') && b.getAttribute('data-key').toLowerCase() === key.toLowerCase()
     );
     if (btn) btn.classList.add('key-active');
   },
 
   unhighlightBtn(key) {
-    const btn = Array.from(document.querySelectorAll('.tab-robot-control .btn-cmd')).find(b => 
+    const btn = Array.from(document.querySelectorAll('.tab-robot-control .btn-cmd')).find(b =>
       b.getAttribute('data-key') && b.getAttribute('data-key').toLowerCase() === key.toLowerCase()
     );
     if (btn) btn.classList.remove('key-active');
@@ -986,7 +1053,7 @@ const RobotControl = {
         if (hasDanceMsg || pollCount % 6 === 0) {
           this.syncDanceListFromCache();
         }
-      } catch (_) {}
+      } catch (_) { }
     }, 500);
   },
 
@@ -1002,7 +1069,7 @@ const RobotControl = {
           this.renderDanceGroups(res.groups);
         }
       }
-    } catch (_) {}
+    } catch (_) { }
   },
 
   // --- 动态串口舞蹈列表状态与渲染逻辑 (严格由串口 ALL|GETDANCELIST 驱动，绝不硬编码) ---
@@ -1088,10 +1155,10 @@ const RobotControl = {
     container.innerHTML = `
       <div class="dance-status-card">
         <div class="dance-status-icon">📡</div>
-        <div class="dance-status-title">已下发 ALL|GETDANCELIST，暂未收到机载响应</div>
+        <div class="dance-status-title">暂未收到机载响应</div>
         <div class="dance-status-desc">
-          串口已连接，但机载主控暂未返回有效的 <code>dance_map</code> 动作配置。<br>
-          请确认机器人机载程序 (<code>g1_ctrl_vsis</code> / <code>lora_recv_group</code>) 处于正常运行状态且 LoRa 频段一致。
+          串口已连接，但机载主控暂未返回有效的动作配置。<br>
+          请确认机器人机载程序处于正常运行状态且 LoRa 频段一致。
         </div>
         <button class="btn btn-primary btn-xs" style="margin-top: 10px; padding: 4px 14px; font-size: 0.8rem;" onclick="RobotControl.fetchAndRenderDanceList(true)">
           🔄 重新发送 ALL|GETDANCELIST

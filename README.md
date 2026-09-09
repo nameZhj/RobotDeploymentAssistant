@@ -359,14 +359,20 @@ RobotDeploymentAssistant/
 │   │   ├── app.js                # 全局生命周期与事件总线
 │   │   ├── three.min.js          # WebGL 3D 渲染核心库 (r128)
 │   │   └── OrbitControls.js      # 3D 场景轨道相机控制器
+│   ├── components/               # 模块化前端子组件目录
+│   │   ├── head.html / navbar.html / wizard_modal.html
+│   │   ├── tab_robot_control.html / ops_modal.html / modals.html / scripts.html
+│   │   └── ops_tabs/             # 运维中心 9 大功能子标签页组件
 │   ├── favicon.ico               # 网页/窗口图标
-│   └── index.html                # 主工作台与向导模态页面结构
+│   └── index.html                # 主工作台主模板入口 (Jinja2 模块化组装)
 ├── tests/                        # 自动化功能单元测试套件
+│   ├── test_frontend_structure.py# 前端组件解耦与 DOM 探针回归测试
 │   ├── test_all_features.py      # 全功能接口集成测试
 │   ├── test_dance_zip_update.py  # 动作包更新与解压测试
 │   ├── test_folder_upload.py     # 动作文件夹上传测试
 │   ├── test_serial_dance_sync.py # 串口舞蹈列表获取与解析测试
 │   └── test_serial_sync_policy.py# 串口单次同步策略测试
+├── AGENT_GUIDE.md                # 专供 AI Agent 阅读的架构与开发维护指南
 ├── app.py                        # Flask 服务路由与 SSE 流式事件推送入口
 ├── main.py                       # PyWebview 原生桌面客户端启动入口 (含 AppUserModelID)
 ├── build_package.py              # 正式版独立单文件 EXE 自动化构建工具

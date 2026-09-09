@@ -1,0 +1,50 @@
+      <!-- ======================================= -->
+      <!-- TAB 5: 机器码与 License -->
+      <!-- ======================================= -->
+      <section class="tab-content-panel" id="tab-license">
+        
+        <div class="machine-id-hero">
+          <div class="machine-id-title">🔑 64 位硬件机器码（Machine ID）</div>
+          <div class="machine-id-value" id="tp-machine-id-val">尚未读取，请点击下方按钮</div>
+          <div style="margin-top: 12px; display: flex; justify-content: center; gap: 12px;">
+            <button class="btn btn-primary" onclick="TabLicense.copyMachineId()">📋 一键复制机器码</button>
+            <button class="btn btn-secondary btn-sm" onclick="TabLicense.fetchMachineId()">🔄 重新读取</button>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">📄 License 授权导入</div>
+              <span class="card-badge">license.json</span>
+            </div>
+            <div class="dropzone" id="tp-license-dropzone"
+              ondragenter="event.preventDefault(); event.stopPropagation(); this.classList.add('dragover');"
+              ondragover="event.preventDefault(); event.stopPropagation(); this.classList.add('dragover'); if(event.dataTransfer) event.dataTransfer.dropEffect='copy';"
+              ondragleave="event.preventDefault(); event.stopPropagation(); this.classList.remove('dragover');"
+              ondrop="event.preventDefault(); event.stopPropagation(); this.classList.remove('dragover'); TabLicense.handleDrop(event);"
+              onclick="document.getElementById('tp-license-file-input').click()">
+              <div class="dropzone-icon">📥</div>
+              <div class="dropzone-text">点击选择或将 license.json 拖拽至此处</div>
+              <div id="tp-license-filename" class="dropzone-hint">上传后自动写入并重启机器人主控进行生效校验</div>
+              <input type="file" id="tp-license-file-input" style="display: none;" accept=".json"
+                onchange="TabLicense.handleFileInput(this)">
+            </div>
+            <button class="btn btn-success" id="tp-deploy-btn" style="width: 100%;" onclick="TabLicense.deploy()"
+              disabled>
+              🚀 部署 License 至机器人
+            </button>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">🔍 授权与校验结果</div>
+            </div>
+            <div id="tp-license-result">
+              <div style="color: var(--text-muted); font-size: 0.85rem; padding: 20px; text-align: center;">
+                请在左侧拖入或选择 license.json 文件
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>

@@ -103,6 +103,7 @@ def step_2_build_standalone_exe():
         "--hidden-import=psutil",
         "--hidden-import=flask",
         "--hidden-import=flask_cors",
+        "--hidden-import=jinja2",
         "--hidden-import=webview",
         "--hidden-import=serial",
         "--hidden-import=serial.tools",

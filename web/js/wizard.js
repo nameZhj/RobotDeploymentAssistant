@@ -1141,22 +1141,17 @@ const Wizard = {
     this.isStartingContainer = true;
 
     const inputEl = document.getElementById('select-robot-id');
-    const rawValue = inputEl ? inputEl.value.trim() : '';
-    const robotId = (rawValue || 'A').toUpperCase();
+    const rawValue = inputEl ? inputEl.value : 'A';
+    const valResult = window.validateRobotId ? window.validateRobotId(rawValue) : { valid: true, cleanId: rawValue.trim().toUpperCase(), error: '' };
 
-    // 校验规则
-    if (!robotId) {
-      showToast('Robot ID 不能为空！请输入如 A、B、R1 等唯一标识。', 'error');
+    // 校验规则 (统一公共验证逻辑)
+    if (!valResult.valid) {
+      showToast(valResult.error, 'error');
       if (inputEl) inputEl.focus();
       this.isStartingContainer = false;
       return;
     }
-    if (robotId === 'ALL') {
-      showToast('ALL 为广播保留关键字，不能作为单机 ID！', 'error');
-      if (inputEl) inputEl.focus();
-      this.isStartingContainer = false;
-      return;
-    }
+    const robotId = valResult.cleanId;
     if (inputEl) inputEl.value = robotId;
 
     const select = document.getElementById('select-docker-image');
@@ -1245,20 +1240,16 @@ const Wizard = {
 
   async writeAutostartAndId() {
     const inputEl = document.getElementById('select-robot-id');
-    const rawValue = inputEl ? inputEl.value.trim() : '';
-    const robotId = (rawValue || 'A').toUpperCase();
+    const rawValue = inputEl ? inputEl.value : 'A';
+    const valResult = window.validateRobotId ? window.validateRobotId(rawValue) : { valid: true, cleanId: rawValue.trim().toUpperCase(), error: '' };
 
     // 校验规则（与群控控制台"添加机器人"一致）
-    if (!robotId) {
-      showToast('Robot ID 不能为空！请输入如 A、B、R1 等唯一标识。', 'error');
+    if (!valResult.valid) {
+      showToast(valResult.error, 'error');
       if (inputEl) inputEl.focus();
       return;
     }
-    if (robotId === 'ALL') {
-      showToast('ALL 为广播保留关键字，不能作为单机 ID！', 'error');
-      if (inputEl) inputEl.focus();
-      return;
-    }
+    const robotId = valResult.cleanId;
 
     if (inputEl) inputEl.value = robotId; // 写回大写
     this.updateWriteIdButtonText();

@@ -1,0 +1,21 @@
+      <!-- ======================================= -->
+      <!-- TAB 3: 环境预检与修复 -->
+      <!-- ======================================= -->
+      <section class="tab-content-panel" id="tab-precheck">
+        
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🛠️ 机器人运行环境深度预检</div>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-secondary btn-sm" onclick="TabNetwork.installWindowsCh341()">🔌 安装上位机驱动</button>
+              <button class="btn btn-secondary btn-sm" onclick="TabPrecheck.run()">🔄 刷新预检</button>
+              <button class="btn btn-primary btn-sm" id="btn-tp-fix-ch341" style="display: none;"
+                onclick="TabPrecheck.fixCh341()">🛠️ 一键修复 LoRa 通信环境</button>
+            </div>
+          </div>
+          <div id="tp-precheck-items">
+            <div style="padding: 20px; color: var(--text-muted); text-align: center; font-size: 0.9rem;">点击【刷新预检】开始检测环境
+            </div>
+          </div>
+        </div>
+      </section>

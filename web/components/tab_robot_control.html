@@ -1,0 +1,194 @@
+      <!-- ======================================= -->
+      <!-- TAB 1 (首页): 机器人群控与实时控制控制台 -->
+      <!-- ======================================= -->
+      <section class="tab-content-panel active tab-robot-control" id="tab-robot-control">
+        <!-- 底层串口配置与连接组件 (按需隐藏，保持后台自动热插拔连接) -->
+        <div class="serial-config-group" style="display: none;">
+          <select id="ctrl-serial-port-select"><option value=""></option></select>
+          <button id="ctrl-serial-refresh-btn"></button>
+          <select id="ctrl-baud-rate-select"><option value="9600"></option></select>
+          <button id="ctrl-serial-connect-btn"><span class="btn-text"></span></button>
+        </div>
+
+        <!-- 2. 全宽横向展开的控制目标与自由多选编队区 -->
+        <div class="ctrl-target-banner">
+          <div class="target-banner-header">
+            <div class="banner-title-group">
+              <h3><span class="icon">🎯</span> 控制目标选择与多机编队</h3>
+              <div class="help-tooltip-wrapper">
+                <span class="help-icon-circle" tabindex="0" role="button" aria-label="快捷操作指南">?</span>
+                <div class="help-tooltip-bubble">
+                  <div class="help-bubble-header">💡 操作指南与快捷键</div>
+                  <div class="help-bubble-item">
+                    <span class="help-item-title">🎯 目标编队</span>
+                    <span class="help-item-desc">左键单选 / Ctrl+左键多选 / 全选与取消全选 (Ctrl+A)</span>
+                  </div>
+                  <div class="help-bubble-item">
+                    <span class="help-item-title">🦾 基础姿态</span>
+                    <span class="help-item-desc">按键 1 站立 (STAND) / 2 步态 (GAIT) / 0 趴下 (PASSIVE) / X 急停复位 (STOP)</span>
+                  </div>
+                  <div class="help-bubble-item">
+                    <span class="help-item-title">🕹️ 移动转向</span>
+                    <span class="help-item-desc">W/A/S/D 方向移动，Q/E 原地转向 (长按/按住持续移动 5Hz)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="target-management-toolbar">
+              <div class="selection-status-badge" id="ctrl-selection-status">
+                <span class="pulse-dot"></span>
+                <span id="ctrl-selected-summary">已选: 暂无机器人 (请先添加)</span>
+              </div>
+              <button class="btn btn-secondary btn-sm" id="btn-select-all-action" title="全选所有受控机器人 (Ctrl+A)">
+                <span>👑</span> 全选
+              </button>
+              <button class="btn btn-primary btn-sm" id="btn-add-robot-action" title="自定义添加机器人 ID（与 lora_robot_id 一致）">
+                <span>➕</span> 添加机器人
+              </button>
+            </div>
+          </div>
+
+          <!-- 横向宽敞卡片流 (支持 Ctrl+左键任意多选排列组合) -->
+          <div class="target-card-flow" id="ctrl-target-grid-container">
+            <!-- 由 robot_control.js 动态渲染 -->
+          </div>
+        </div>
+
+        <!-- 3. 下半区: 2 列大视口布局 (左侧姿态与运控，右侧舞蹈与监视器) -->
+        <div class="ctrl-main-workspace">
+          <!-- 左侧: 基础姿态 + 运动操纵 -->
+          <div class="workspace-left">
+            <!-- 基础姿态 -->
+            <div class="ctrl-card">
+              <div class="card-header-compact">
+                <h3><span class="icon">🦾</span> 基础姿态 (Posture)</h3>
+              </div>
+              <div class="posture-grid">
+                <button class="btn-cmd btn-posture" data-key="1" data-cmd="STAND">
+                  <span class="key-badge">1</span>
+                  <div class="cmd-info">
+                    <span class="cmd-title">STAND (解锁站立)</span>
+                    <span class="cmd-sub">FixStand 模式</span>
+                  </div>
+                </button>
+                <button class="btn-cmd btn-posture" data-key="2" data-cmd="GAIT">
+                  <span class="key-badge">2</span>
+                  <div class="cmd-info">
+                    <span class="cmd-title">GAIT (激活步态)</span>
+                    <span class="cmd-sub">RL_MJAMP 步态</span>
+                  </div>
+                </button>
+                <button class="btn-cmd btn-posture" data-key="0" data-cmd="PASSIVE">
+                  <span class="key-badge">0</span>
+                  <div class="cmd-info">
+                    <span class="cmd-title">PASSIVE (趴下卸力)</span>
+                    <span class="cmd-sub">阻尼保护</span>
+                  </div>
+                </button>
+                <button class="btn-cmd btn-posture btn-stop" data-key="X" data-cmd="GAIT">
+                  <span class="key-badge">X</span>
+                  <div class="cmd-info">
+                    <span class="cmd-title">STOP (急停复位)</span>
+                    <span class="cmd-sub">发送 GAIT 步态指令</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <!-- 移动与转向控制 -->
+            <div class="ctrl-card motion-card">
+              <div class="card-header-compact">
+                <h3><span class="icon">🕹️</span> 移动与转向控制</h3>
+              </div>
+
+              <!-- 十字方向键 -->
+              <div class="dpad-container">
+                <button class="btn-cmd btn-dpad dpad-up" data-key="W" data-cmd="FORWARD,2" title="前进 (W)">
+                  <span class="dpad-icon">▲</span>
+                  <span class="dpad-key">W</span>
+                </button>
+                <button class="btn-cmd btn-dpad dpad-left" data-key="A" data-cmd="MOVE_LEFT,2" title="向左平移 (A)">
+                  <span class="dpad-icon">◀</span>
+                  <span class="dpad-key">A</span>
+                </button>
+                <button class="btn-cmd btn-dpad dpad-center" data-key="X" data-cmd="GAIT" title="停止/复位 (X)">
+                  <span class="dpad-icon">■</span>
+                  <span class="dpad-key">X</span>
+                </button>
+                <button class="btn-cmd btn-dpad dpad-right" data-key="D" data-cmd="MOVE_RIGHT,2" title="向右平移 (D)">
+                  <span class="dpad-icon">▶</span>
+                  <span class="dpad-key">D</span>
+                </button>
+                <button class="btn-cmd btn-dpad dpad-down" data-key="S" data-cmd="BACKWARD,2" title="后退 (S)">
+                  <span class="dpad-icon">▼</span>
+                  <span class="dpad-key">S</span>
+                </button>
+              </div>
+
+              <!-- 转向旋转控制 -->
+              <div class="turn-controls">
+                <button class="btn-cmd btn-turn" data-key="Q" data-cmd="TURN_LEFT,1" title="原地左转 (Q)">
+                  <span class="turn-icon">↺</span>
+                  <span class="turn-text">左转 (Q)</span>
+                </button>
+                <button class="btn-cmd btn-turn" data-key="E" data-cmd="TURN_RIGHT,1" title="原地右转 (E)">
+                  <span class="turn-icon">↻</span>
+                  <span class="turn-text">右转 (E)</span>
+                </button>
+              </div>
+
+              <!-- 自定义指令输入 -->
+              <div class="custom-cmd-section">
+                <div class="custom-cmd-input-group">
+                  <span class="target-prefix" id="ctrl-active-target-prefix">ALL|</span>
+                  <input type="text" id="ctrl-custom-cmd-input" placeholder="输入自定义指令 (如 DANCE,G1_TIKTOK)..."
+                    autocomplete="off">
+                  <button class="btn btn-primary btn-sm" id="ctrl-send-custom-btn">发送</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右侧: 舞蹈与特技动作 + 发送日志监视器 -->
+          <div class="workspace-right">
+            <div class="ctrl-card dance-terminal-panel">
+              <div class="card-header-compact">
+                <h3><span class="icon">💃</span> 舞蹈与特技动作</h3>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span class="hint-tag" id="ctrl-dance-count-tag">串口动态同步</span>
+                  <button class="btn btn-secondary btn-xs" id="ctrl-refresh-dance-btn"
+                    title="向机器人发送 ALL|GETDANCELIST 重新同步舞蹈列表"
+                    style="padding: 2px 8px; font-size: 0.75rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px;">
+                    <span>🔄</span> 刷新
+                  </button>
+                </div>
+              </div>
+
+              <!-- 舞蹈动作滚动平铺区域 (由 robot_control.js 动态渲染) -->
+              <div class="dance-scroll-container" id="ctrl-dance-scroll-container">
+                <div class="dance-loading-state"
+                  style="padding: 24px; text-align: center; color: var(--text-secondary); font-size: 0.85rem;">
+                  <div style="font-size: 1.5rem; margin-bottom: 8px;">⏳</div>
+                  <span>连接串口后自动同步动作列表 (ALL|GETDANCELIST)</span>
+                </div>
+              </div>
+
+
+              <!-- 发送日志监视器 (充满剩余空间) -->
+              <div class="terminal-section">
+                <div class="terminal-header">
+                  <div class="terminal-title">
+                    <span class="terminal-icon">📟</span>
+                    <span>发送日志监视器 (TX Terminal)</span>
+                  </div>
+                  <button class="btn-terminal-clear" id="ctrl-clear-log-btn" title="清空日志">清空</button>
+                </div>
+                <div class="terminal-output" id="ctrl-terminal-output">
+                  <!-- 实时日志行 -->
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>

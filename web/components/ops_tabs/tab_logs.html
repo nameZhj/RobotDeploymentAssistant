@@ -1,0 +1,64 @@
+      <!-- ======================================= -->
+      <!-- TAB 8: 实时日志与智能诊断 -->
+      <!-- ======================================= -->
+      <section class="tab-content-panel" id="tab-logs">
+        
+        <!-- 智能诊断告警区 -->
+        <div id="log-diag-alerts" style="margin-bottom: 14px;"></div>
+
+        <div class="card" id="log-viewer-main-card">
+          <div class="card-header" style="flex-wrap: wrap; gap: 10px;">
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+              <button class="btn btn-secondary btn-sm log-type-btn active" data-type="container">🐳 运行中容器日志</button>
+              <div id="log-container-select-wrapper" style="display: inline-flex; align-items: center; gap: 6px;">
+                <select class="form-control" id="select-log-container"
+                  style="padding: 4px 8px; font-size: 0.78rem; width: auto; background: rgba(0,0,0,0.4); border-color: rgba(56, 189, 248, 0.4);">
+                  <option value="vsis_g1">📦 vsis_g1</option>
+                </select>
+              </div>
+              <button class="btn btn-secondary btn-sm log-type-btn" data-type="lora_recv">📡 LoRa 群控通信日志</button>
+              <button class="btn btn-secondary btn-sm log-type-btn" data-type="g1_ctrl">🤖 运控主程序日志</button>
+              <button class="btn btn-secondary btn-sm log-type-btn" data-type="dmesg">🔌 内核硬件与CH341</button>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <select class="form-control" id="select-log-lines"
+                style="width: auto; padding: 4px 8px; font-size: 0.78rem; background: rgba(0,0,0,0.4); border-color: rgba(255,255,255,0.15);"
+                title="读取行数">
+                <option value="100">100 行</option>
+                <option value="300">300 行</option>
+                <option value="500" selected>500 行</option>
+                <option value="1000">1000 行</option>
+                <option value="2000">2000 行</option>
+              </select>
+              <button class="btn btn-primary btn-sm" onclick="LogViewer.fetchCurrentLogs()">🔄 刷新</button>
+              <input type="text" id="input-log-filter" class="form-control" placeholder="过滤关键字..."
+                style="width: 130px; padding: 4px 8px; font-size: 0.78rem;">
+              <label style="font-size: 0.78rem; display: flex; align-items: center; gap: 4px; cursor: pointer;"
+                title="自动换行显示完整长日志">
+                <input type="checkbox" id="chk-log-wordwrap" checked> 自动换行
+              </label>
+              <label style="font-size: 0.78rem; display: flex; align-items: center; gap: 4px; cursor: pointer;"
+                title="显示/隐藏每行时间戳">
+                <input type="checkbox" id="chk-log-timestamp" checked> 时间戳
+              </label>
+              <label style="font-size: 0.78rem; display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" id="chk-log-autoscroll" checked> 滚到底部
+              </label>
+              <label style="font-size: 0.78rem; display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" id="chk-log-autorefresh" checked> 自动刷新
+              </label>
+              <button class="btn btn-secondary btn-sm" onclick="LogViewer.copyAllLogs()" title="一键复制当前全部日志">📋
+                复制全部</button>
+              <button class="btn btn-secondary btn-sm" onclick="LogViewer.downloadLogs()" title="导出并下载当前日志文件">💾
+                导出</button>
+              <button class="btn btn-secondary btn-sm" onclick="LogViewer.toggleFullscreen()" id="btn-log-fullscreen"
+                title="全屏/窗口切换">⛶ 全屏</button>
+              <button class="btn btn-secondary btn-sm" onclick="LogViewer.clearLogs()">清空</button>
+            </div>
+          </div>
+          <div class="terminal-console log-wordwrap" id="log-console-content">
+            <div class="log-info">正在监听日志输出...</div>
+          </div>
+        </div>
+      </section>

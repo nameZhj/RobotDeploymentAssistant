@@ -66,6 +66,21 @@ const LogViewer = {
       });
     }
 
+    // 时间戳开关
+    const chkTimestamp = document.getElementById('chk-log-timestamp');
+    if (chkTimestamp) {
+      chkTimestamp.addEventListener('change', (e) => {
+        const consoleEl = document.getElementById('log-console-content');
+        if (consoleEl) {
+          if (e.target.checked) {
+            consoleEl.classList.remove('hide-timestamps');
+          } else {
+            consoleEl.classList.add('hide-timestamps');
+          }
+        }
+      });
+    }
+
     // 自动刷新开关
     const chkAuto = document.getElementById('chk-log-autorefresh');
     if (chkAuto) {
@@ -147,6 +162,64 @@ const LogViewer = {
     }
   },
 
+  parseTimestamp(line, fallbackTimeStr, fallbackFullDate) {
+    // 1. Docker ISO-8601 (如 2026-09-09T01:32:15.123456789Z)
+    const isoMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+(.*)$/);
+    if (isoMatch) {
+      try {
+        const d = new Date(isoMatch[1]);
+        if (!isNaN(d.getTime())) {
+          const pad = n => String(n).padStart(2, '0');
+          const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+          const fullDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+          return {
+            timeStr,
+            fullDate,
+            cleanLine: isoMatch[2]
+          };
+        }
+      } catch (_) {}
+    }
+
+    // 2. 标准日期时间 (如 2026-09-09 09:32:15,123 或 [2026-09-09 09:32:15])
+    const dtMatch = line.match(/^\[?(\d{4}-\d{2}-\d{2}[ T](\d{2}:\d{2}:\d{2})(?:[,\.]\d{1,6})?)\]?\s*(.*)$/);
+    if (dtMatch) {
+      return {
+        timeStr: dtMatch[2],
+        fullDate: dtMatch[1],
+        cleanLine: dtMatch[3]
+      };
+    }
+
+    // 3. dmesg -T (如 [Wed Sep  9 09:32:15 2026])
+    const dmesgMatch = line.match(/^\[([A-Za-z]{3}\s+[A-Za-z]{3}\s+\d+\s+(\d{2}:\d{2}:\d{2})\s+\d{4})\]\s*(.*)$/);
+    if (dmesgMatch) {
+      return {
+        timeStr: dmesgMatch[2],
+        fullDate: dmesgMatch[1],
+        cleanLine: dmesgMatch[3]
+      };
+    }
+
+    // 4. 仅时间格式 (如 [09:32:15] 或 09:32:15)
+    const timeMatch = line.match(/^\[?(\d{2}:\d{2}:\d{2}(?:[,\.]\d{1,3})?)\]?\s+(.*)$/);
+    if (timeMatch) {
+      const timeStr = timeMatch[1].split(/[,\.]/)[0];
+      return {
+        timeStr,
+        fullDate: fallbackFullDate ? `${fallbackFullDate.split(' ')[0]} ${timeStr}` : timeStr,
+        cleanLine: timeMatch[2]
+      };
+    }
+
+    // 5. 无嵌入时间戳普通行 -> 使用批次拉取/接收时间戳
+    return {
+      timeStr: fallbackTimeStr,
+      fullDate: fallbackFullDate,
+      cleanLine: line
+    };
+  },
+
   renderLogs(rawText) {
     const consoleEl = document.getElementById('log-console-content');
     if (!consoleEl) return;
@@ -157,6 +230,11 @@ const LogViewer = {
     const lines = cleanText.split('\n');
     let formattedHtml = '';
 
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const fallbackTimeStr = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    const fallbackFullDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${fallbackTimeStr}`;
+
     for (const line of lines) {
       if (!line.trim()) {
         formattedHtml += '<div>&nbsp;</div>';
@@ -164,15 +242,18 @@ const LogViewer = {
       }
       if (filterVal && !line.toLowerCase().includes(filterVal)) continue;
 
-      let cls = '';
-      const l = line.toLowerCase();
-
-      // 进程状态 section 标题行
-      if (line.startsWith('===') && line.endsWith('===')) {
-        cls = 'log-section-header';
+      // 进程状态 section 标题行或长分隔线单独作为横条展示，不加时间戳
+      if ((line.startsWith('===') && line.endsWith('===')) || line.startsWith('=========================================') || /^[🤖📋📡⚡🆔🔌]\s*\[/.test(line)) {
+        formattedHtml += `<div class="log-section-header">${this.escapeHtml(line)}</div>`;
+        continue;
       }
+
+      const parsed = this.parseTimestamp(line, fallbackTimeStr, fallbackFullDate);
+      const l = parsed.cleanLine.toLowerCase();
+      let cls = '';
+
       // 进程离线
-      else if (l.includes('[offline]') || l.includes('未运行') || l.includes('not running')) {
+      if (l.includes('[offline]') || l.includes('未运行') || l.includes('not running')) {
         cls = 'log-error';
       }
       // 关键成功/就绪状态
@@ -196,10 +277,23 @@ const LogViewer = {
         cls = 'log-warn';
       }
 
-      formattedHtml += `<div class="${cls}">${this.escapeHtml(line)}</div>`;
+      formattedHtml += `
+        <div class="log-row ${cls}">
+          <span class="log-timestamp" title="${this.escapeHtml(parsed.fullDate)}">[${parsed.timeStr}]</span>
+          <span class="log-content">${this.escapeHtml(parsed.cleanLine)}</span>
+        </div>
+      `;
     }
 
     consoleEl.innerHTML = formattedHtml || '<div class="text-muted">（无匹配日志内容）</div>';
+
+    // 确保与时间戳开关状态同步
+    const chkTimestamp = document.getElementById('chk-log-timestamp');
+    if (chkTimestamp && !chkTimestamp.checked) {
+      consoleEl.classList.add('hide-timestamps');
+    } else {
+      consoleEl.classList.remove('hide-timestamps');
+    }
 
     const chkAutoScroll = document.getElementById('chk-log-autoscroll');
     if (!chkAutoScroll || chkAutoScroll.checked) {

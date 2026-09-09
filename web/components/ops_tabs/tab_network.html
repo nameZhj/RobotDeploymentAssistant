@@ -1,0 +1,75 @@
+          <!-- ======================================= -->
+      <!-- TAB 2: 设备发现与网卡配置 -->
+      <!-- ======================================= -->
+      <section class="tab-content-panel" id="tab-network">
+        
+        <div class="card"
+          style="margin-bottom: 16px; background: linear-gradient(135deg, rgba(14, 165, 233, 0.08) 0%, rgba(16, 185, 129, 0.05) 100%); border: 1px solid rgba(56, 189, 248, 0.3);">
+          <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <div
+                style="font-size: 0.95rem; font-weight: 700; color: var(--accent-cyan); display: flex; align-items: center; gap: 8px;">
+                <span>⚡ 断网直连自愈与自动连接机器人</span>
+                <span class="card-badge"
+                  style="background: rgba(16, 185, 129, 0.2); color: var(--accent-green);">已常驻后台监听</span>
+              </div>
+              <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;">
+                无论是网线热插拔、机器人开机、还是断网环境，系统均会自动检测网卡并自动完成握手连接。
+              </div>
+            </div>
+            <button class="btn btn-primary" onclick="TabNetwork.autoConnect()">⚡ 立即执行断网自愈与自动连接</button>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">📡 局域网设备并发扫描</div>
+              <button id="tp-btn-scan" class="btn btn-primary btn-sm" onclick="TabNetwork.scan()">🔍 开始扫描</button>
+            </div>
+            <div style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 10px;">支持全网段快速发现宇树 G1 / Go2 及
+              SSH 端口活跃主机（192.168.123.1~254）</div>
+            <div id="tp-scan-results">
+              <div style="color: var(--text-muted); font-size: 0.85rem;">点击【开始扫描】发现局域网设备</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">🌐 Windows 本机网卡直连配置</div>
+              <button class="btn btn-secondary btn-sm" onclick="TabNetwork.loadNics()">🔄 刷新</button>
+            </div>
+            <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 12px;">
+              通过一键调用 Windows netsh 接口，将选中的以太网适配器配置为与机器人相同的 192.168.123.x 网段。
+            </p>
+            <div class="form-group">
+              <label class="form-label">本机以太网适配器</label>
+              <select class="form-control" id="tp-nic-select">
+                <option value="">加载中...</option>
+              </select>
+            </div>
+            <div style="display: flex; gap: 10px;">
+              <button class="btn btn-primary btn-sm" onclick="TabNetwork.setStatic()">⚡ 设为 192.168.123.200</button>
+              <button class="btn btn-secondary btn-sm" onclick="TabNetwork.setDhcp()">恢复自动获取 (DHCP)</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">🔌 Windows 本机 LoRa 串口驱动 (CH340/CH341)</div>
+              <div style="display: flex; gap: 8px;">
+                <button class="btn btn-secondary btn-sm" onclick="TabNetwork.loadWindowsCh341()">🔄 刷新串口</button>
+                <button class="btn btn-primary btn-sm" onclick="TabNetwork.installWindowsCh341()">⚡ 安装本机 CH341
+                  驱动</button>
+              </div>
+            </div>
+            <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 8px;">
+              上位机若插有 USB LoRa 广播发射器（用于向机器人发送群控动作与控制指令），本机需安装 Windows CH341 串口驱动。
+            </p>
+            <div id="tp-win-ch341-status"
+              style="font-size: 0.85rem; padding: 8px 12px; background: rgba(0,0,0,0.3); border-radius: 6px; border: 1px solid var(--border-color);">
+              <span style="color: var(--text-muted);">正在检测 Windows 本机串口状态...</span>
+            </div>
+          </div>
+        </div>
+      </section>

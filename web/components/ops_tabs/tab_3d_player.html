@@ -1,0 +1,45 @@
+      <!-- ======================================= -->
+      <!-- TAB 7: 3D 舞蹈预览播放器 -->
+      <!-- ======================================= -->
+      <section class="tab-content-panel" id="tab-3d-player">
+        
+        <div class="player3d-container">
+          <!-- 3D 视口 -->
+          <div class="player3d-viewport" id="dance3d-viewport">
+            <div class="player3d-controls-overlay">
+              <button class="btn btn-primary btn-sm" id="btn-dance-play">▶️ 播放</button>
+              <input type="range" id="dance-scrubber" min="0" max="300" value="0" style="flex: 1; cursor: pointer;">
+              <span id="dance-time-text"
+                style="font-family: monospace; font-size: 0.78rem; color: #ffffff; min-width: 160px;">0.0s / 6.0s</span>
+              <select class="btn btn-secondary btn-sm" id="select-dance-speed" style="padding: 4px 8px;">
+                <option value="0.5">0.5x</option>
+                <option value="1.0" selected>1.0x (50fps)</option>
+                <option value="1.5">1.5x</option>
+                <option value="2.0">2.0x</option>
+              </select>
+              <label style="display: flex; align-items: center; gap: 4px; font-size: 0.78rem; cursor: pointer;">
+                <input type="checkbox" id="chk-dance-loop" checked> 循环
+              </label>
+              <button class="btn btn-secondary btn-sm" id="btn-reset-cam">🔄 视角复位</button>
+            </div>
+          </div>
+
+          <!-- 舞蹈库列表侧边栏 -->
+          <div class="player3d-sidebar">
+            <div
+              style="font-size: 0.95rem; font-weight: 700; display: flex; align-items: center; justify-content: space-between;">
+              <span>💃 舞蹈动作库 (50fps)</span>
+              <label class="btn btn-secondary btn-sm" style="cursor: pointer;">
+                + 导入 NPZ
+                <input type="file" id="input-custom-npz" style="display: none;" accept=".npz,.NPZ" multiple>
+              </label>
+            </div>
+            <div id="dance-3d-list" style="display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1;">
+              <!-- 动态填充 -->
+            </div>
+            <div style="font-size: 0.72rem; color: var(--text-muted); text-align: center;">
+              鼠标左键拖动旋转 / 滚轮缩放 / 50fps 平滑物理骨骼仿真
+            </div>
+          </div>
+        </div>
+      </section>

@@ -34,7 +34,7 @@ def get_base_dir():
 BASE_DIR = get_base_dir()
 WEB_DIR = os.path.join(BASE_DIR, "web")
 
-app = Flask(__name__, static_folder=WEB_DIR, static_url_path="")
+app = Flask(__name__, static_folder=WEB_DIR, static_url_path="", template_folder=WEB_DIR)
 CORS(app)
 
 # 动态任务事件输出队列
@@ -51,7 +51,7 @@ def push_stream_msg(task_id: str, text: str, is_err: bool = False):
 # ==========================================
 @app.route("/")
 def index():
-    return send_from_directory(WEB_DIR, "index.html")
+    return render_template("index.html")
 
 
 @app.route("/<path:path>")
