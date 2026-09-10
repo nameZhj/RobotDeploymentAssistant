@@ -118,23 +118,23 @@ class DancePlayer3D {
     const hemiLight = new THREE.HemisphereLight(0xe0f2fe, 0x1e293b, 1.15);
     this.scene.add(hemiLight);
 
-    // 正前方主光源 (Key Light) - 照射机器人前胸、面罩与双臂
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1.4);
-    keyLight.position.set(2.0, -3.5, 3.0);
+    // 正前方主光源 (Key Light) - 照射机器人前胸、面罩与双臂正面
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    keyLight.position.set(3.0, -1.2, 2.6);
     this.scene.add(keyLight);
 
     // 侧前辅助光 (Fill Light) - 柔化阴影与机械缝隙
-    const fillLight = new THREE.DirectionalLight(0x7dd3fc, 0.85);
-    fillLight.position.set(-2.5, -2.5, 2.0);
+    const fillLight = new THREE.DirectionalLight(0x7dd3fc, 0.80);
+    fillLight.position.set(1.5, 2.5, 1.8);
     this.scene.add(fillLight);
 
     // 顶部背面轮廓光 (Rim Light) - 勾勒机械外壳与肩甲高光线条
-    const rimLight = new THREE.DirectionalLight(0x38bdf8, 1.2);
-    rimLight.position.set(0, 3.0, 2.8);
+    const rimLight = new THREE.DirectionalLight(0x38bdf8, 1.20);
+    rimLight.position.set(-2.0, 0.0, 2.8);
     this.scene.add(rimLight);
 
     // 相机跟随补光 (Headlight) - 无论用户如何旋转视角，正面细节始终清晰明亮
-    const headlight = new THREE.PointLight(0xffffff, 0.45, 15);
+    const headlight = new THREE.PointLight(0xffffff, 0.50, 15);
     this.camera.add(headlight);
 
     // 6. 赛博网格地面
@@ -355,25 +355,32 @@ class DancePlayer3D {
     });
 
     const armorMat = new THREE.MeshStandardMaterial({
-      color: 0x334155,       // Slate-700 哑光碳素装甲，立体沉稳不黑成剪影
-      metalness: 0.60,
-      roughness: 0.35,
+      color: 0x222730,       // Unitree G1 经典深空碳素装甲外壳
+      metalness: 0.70,
+      roughness: 0.32,
       side: THREE.DoubleSide
     });
 
     const rubberHandMat = new THREE.MeshStandardMaterial({
-      color: 0x1e293b,       // 橡胶夹爪碳黑磨砂质感
-      metalness: 0.20,
+      color: 0x181c24,       // 橡胶夹爪碳黑磨砂质感
+      metalness: 0.15,
       roughness: 0.85,
       side: THREE.DoubleSide
     });
 
-    const visorMat = new THREE.MeshStandardMaterial({
-      color: 0x0284c7,       // 头部透光发光面罩
-      emissive: 0x00d2ff,
-      emissiveIntensity: 0.70,
-      metalness: 0.90,
-      roughness: 0.10,
+    const headMat = new THREE.MeshStandardMaterial({
+      color: 0x181e28,       // Unitree G1 头部深空黑碳素金属 (杜绝刺眼外星蓝色大灯泡)
+      metalness: 0.78,
+      roughness: 0.25,
+      side: THREE.DoubleSide
+    });
+
+    const logoMat = new THREE.MeshStandardMaterial({
+      color: 0x00f0ff,       // 胸口 Unitree Logo 科技荧光青蓝
+      emissive: 0x0088cc,
+      emissiveIntensity: 0.55,
+      metalness: 0.5,
+      roughness: 0.2,
       side: THREE.DoubleSide
     });
 
@@ -471,8 +478,10 @@ class DancePlayer3D {
         let mat = titaniumMat;
         if (lName.includes('rubber_hand') || lName.includes('palm') || lName.includes('hand')) {
           mat = rubberHandMat;
-        } else if (lName.includes('head') || lName.includes('visor') || lName.includes('d455') || lName.includes('face')) {
-          mat = visorMat;
+        } else if (lName.includes('head')) {
+          mat = headMat;
+        } else if (lName.includes('logo')) {
+          mat = logoMat;
         } else if (lName.includes('torso') || lName.includes('pelvis') || lName.includes('waist')) {
           mat = armorMat;
         }
@@ -556,16 +565,16 @@ class DancePlayer3D {
     this.fps = danceData.fps || 50.0;
     this.isPlaying = true;
 
-    // 视角对齐 (居中对焦于机器人躯干核心)
+    // 视角对齐 (正前微斜 20° 黄金视角对焦于机器人躯干核心)
     if (this.controls) {
       if (modelInfo && modelInfo.has_robot_model) {
-        this.controls.target.set(0, 0, 0.65);
-        this.camera.position.set(1.4, -2.0, 1.35);
+        this.controls.target.set(0, 0, 0.70);
+        this.camera.position.set(2.2, -0.8, 1.25);
         this.controls.update();
       } else if (danceData.frames && danceData.frames[0] && danceData.frames[0][0]) {
         const p0 = danceData.frames[0][0];
         this.controls.target.set(p0[0], p0[1], p0[2] || 0.7);
-        this.camera.position.set(p0[0], p0[1] - 2.5, (p0[2] || 0.7) + 0.3);
+        this.camera.position.set(p0[0] + 2.0, p0[1] - 0.8, (p0[2] || 0.7) + 0.35);
         this.controls.update();
       }
     }
@@ -796,9 +805,9 @@ class DancePlayer3D {
   }
 
   resetCamera() {
-    this.camera.position.set(1.4, -2.0, 1.35);
+    this.camera.position.set(2.2, -0.8, 1.25);
     if (this.controls) {
-      this.controls.target.set(0, 0, 0.65);
+      this.controls.target.set(0, 0, 0.70);
       this.controls.update();
     }
   }

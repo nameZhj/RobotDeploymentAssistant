@@ -31,6 +31,12 @@ scratch/
 # Large binary / archive packages
 *.tar.gz
 *.tar
+*.zip
+*.npz
+
+# 3D dance and robot preview assets
+preview/*
+!preview/.initialized
 
 # System files
 Thumbs.db

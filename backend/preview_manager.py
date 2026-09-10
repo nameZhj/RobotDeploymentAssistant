@@ -296,73 +296,101 @@ class PreviewManager:
             joint_trajectories = []
 
             for t in range(total_frames):
-                phase = (t / fps) * 2.0 * np.pi * 1.25  # 1.25 Hz 动感节拍
+                time = t / fps  # 0.0 ~ 6.0s
+                phase = time * 2.0 * np.pi * 1.0  # 1.0 Hz 主节拍 (6 秒 6 循环)
+                beat = time * 2.0 * np.pi * 2.0   # 2.0 Hz 律动拍 (120 BPM)
 
-                # 骨盆空间位移 (Hip Groove)
-                pelvis_x = 0.02 * np.sin(phase * 0.5)
-                pelvis_y = 0.04 * np.sin(phase)
-                pelvis_z = 0.76 - 0.025 * abs(np.sin(phase * 2))
+                # 3 段式乐句动态权重平滑混合 (0-2s 摇摆律动, 2-4s 手臂波浪, 4-6s 欢呼跳动)
+                w1 = np.exp(-((time - 1.0) / 1.1) ** 2)
+                w2 = np.exp(-((time - 3.0) / 1.1) ** 2)
+                w3 = np.exp(-((time - 5.0) / 1.1) ** 2)
+                tot_w = w1 + w2 + w3 + 1e-6
+                w1, w2, w3 = w1 / tot_w, w2 / tot_w, w3 / tot_w
+
+                # 骨盆空间动态位移 (Hip Groove)：轻盈起伏，绝不穿透地面
+                bounce = 0.016 * np.sin(beat) ** 2
+                pelvis_x = 0.015 * np.sin(phase) * w1 + 0.025 * np.sin(phase) * w2 + 0.010 * np.cos(beat) * w3
+                pelvis_y = 0.035 * np.sin(phase) * w1 + 0.020 * np.sin(phase * 2) * w2 + 0.025 * np.sin(phase) * w3
+                pelvis_z = 0.770 - bounce  # 基准高度 0.770m，确保双足永不穿透地板
                 pelvis_trajectories.append([
                     round(pelvis_x, 4),
                     round(pelvis_y, 4),
                     round(pelvis_z, 4)
                 ])
 
-                # 29 个关节精准角度（弧度制）
                 q = {}
 
-                # 腰部律动：偏航摆动与前后俯仰
-                q["waist_yaw_joint"] = round(0.22 * np.sin(phase), 4)
-                q["waist_roll_joint"] = round(0.06 * np.sin(phase + np.pi / 2), 4)
-                q["waist_pitch_joint"] = round(0.06 + 0.04 * np.cos(phase * 2), 4)
+                # 1. 腰部与躯干律动：随音乐偏航摆动与前后微俯仰
+                q["waist_yaw_joint"] = round(0.18 * np.sin(phase), 4)
+                q["waist_roll_joint"] = round(-0.06 * np.sin(phase), 4)
+                waist_pitch = 0.04 + 0.03 * np.cos(beat)
+                q["waist_pitch_joint"] = round(waist_pitch, 4)
 
-                # 双腿协调屈伸以保持步态动态平衡
-                knee_bend_l = 0.14 + 0.10 * np.sin(phase)
-                knee_bend_r = 0.14 - 0.10 * np.sin(phase)
-                q["left_hip_pitch_joint"] = round(-0.08 - 0.05 * np.sin(phase), 4)
-                q["left_knee_joint"] = round(knee_bend_l, 4)
-                q["left_ankle_pitch_joint"] = round(-0.06 - 0.05 * np.sin(phase), 4)
-                q["left_hip_roll_joint"] = round(0.03 * np.sin(phase), 4)
+                # 2. 头部姿态：抵消躯干前倾，使头部始终正视前方，并随节拍自然点头节奏律动
+                q["head_joint"] = round(-waist_pitch + 0.04 * np.cos(beat) + 0.03 * np.sin(phase), 4)
 
-                q["right_hip_pitch_joint"] = round(-0.08 + 0.05 * np.sin(phase), 4)
-                q["right_knee_joint"] = round(knee_bend_r, 4)
-                q["right_ankle_pitch_joint"] = round(-0.06 + 0.05 * np.sin(phase), 4)
-                q["right_hip_roll_joint"] = round(-0.03 * np.sin(phase), 4)
+                # 3. 双腿屈伸与足底贴地补偿 (逆向运动学几何平抑，双脚完全贴平地面)
+                knee_base = 0.18 + 0.12 * (bounce / 0.016)
+                knee_l = knee_base + 0.05 * np.sin(phase)
+                knee_r = knee_base - 0.05 * np.sin(phase)
+                q["left_hip_pitch_joint"] = round(-0.5 * knee_l, 4)
+                q["left_knee_joint"] = round(knee_l, 4)
+                q["left_ankle_pitch_joint"] = round(-0.5 * knee_l, 4)
+                q["left_hip_roll_joint"] = round(0.04 * np.sin(phase), 4)
+                q["left_ankle_roll_joint"] = round(-0.04 * np.sin(phase), 4)
+                q["left_hip_yaw_joint"] = round(0.02 * np.sin(phase), 4)
 
-                # 双臂与手腕协同律动
-                arm_swing = 0.35 * np.sin(phase)
-                q["left_shoulder_pitch_joint"] = round(0.15 + arm_swing, 4)
-                q["left_shoulder_roll_joint"] = round(0.25 + 0.10 * np.cos(phase), 4)
-                q["left_shoulder_yaw_joint"] = round(0.10 * np.sin(phase * 0.5), 4)
-                q["left_elbow_joint"] = round(-0.65 - 0.25 * np.sin(phase), 4)
-                q["left_wrist_roll_joint"] = round(0.20 * np.sin(phase * 2), 4)
-                q["left_wrist_pitch_joint"] = round(0.12 * np.cos(phase), 4)
-                q["left_wrist_yaw_joint"] = round(0.15 * np.sin(phase), 4)
+                q["right_hip_pitch_joint"] = round(-0.5 * knee_r, 4)
+                q["right_knee_joint"] = round(knee_r, 4)
+                q["right_ankle_pitch_joint"] = round(-0.5 * knee_r, 4)
+                q["right_hip_roll_joint"] = round(-0.04 * np.sin(phase), 4)
+                q["right_ankle_roll_joint"] = round(0.04 * np.sin(phase), 4)
+                q["right_hip_yaw_joint"] = round(0.02 * np.sin(phase), 4)
 
-                q["right_shoulder_pitch_joint"] = round(0.15 - arm_swing, 4)
-                q["right_shoulder_roll_joint"] = round(-0.25 - 0.10 * np.cos(phase), 4)
-                q["right_shoulder_yaw_joint"] = round(-0.10 * np.sin(phase * 0.5), 4)
-                q["right_elbow_joint"] = round(-0.65 + 0.25 * np.sin(phase), 4)
-                q["right_wrist_roll_joint"] = round(-0.20 * np.sin(phase * 2), 4)
-                q["right_wrist_pitch_joint"] = round(0.12 * np.cos(phase), 4)
-                q["right_wrist_yaw_joint"] = round(-0.15 * np.sin(phase), 4)
+                # 4. 双臂与手腕：完全符合宇树 G1 真实人体工学，肘关节向前自然弯曲，动作舒展自信
+                # 乐句 1：随性嘻哈微摇 (Relaxed Groove)
+                sp_l1 = -0.25 - 0.15 * np.sin(phase)
+                sp_r1 = -0.25 + 0.15 * np.sin(phase)
+                sr_l1 = 0.50 + 0.10 * np.cos(beat)
+                sr_r1 = -0.50 - 0.10 * np.cos(beat)
+                el_l1 = 0.65 + 0.20 * np.sin(beat)
+                el_r1 = 0.65 - 0.20 * np.sin(beat)
 
-                # 橡胶手掌手指轻微开合律动
-                q["left_hand_thumb_0_joint"] = round(0.15 + 0.10 * np.sin(phase * 2), 4)
-                q["left_hand_thumb_1_joint"] = round(0.20 + 0.12 * np.sin(phase * 2), 4)
-                q["left_hand_thumb_2_joint"] = round(0.20 + 0.12 * np.sin(phase * 2), 4)
-                q["left_hand_middle_0_joint"] = round(0.25 + 0.15 * np.sin(phase * 2), 4)
-                q["left_hand_middle_1_joint"] = round(0.25 + 0.15 * np.sin(phase * 2), 4)
-                q["left_hand_index_0_joint"] = round(0.25 + 0.15 * np.sin(phase * 2), 4)
-                q["left_hand_index_1_joint"] = round(0.25 + 0.15 * np.sin(phase * 2), 4)
+                # 乐句 2：交替波浪舞动 (Alternating Arm Wave)
+                sp_l2 = -0.45 + 0.25 * np.sin(beat)
+                sp_r2 = -0.20 - 0.20 * np.sin(beat)
+                sr_l2 = 0.65 + 0.15 * np.sin(beat)
+                sr_r2 = -0.40 - 0.15 * np.sin(beat)
+                el_l2 = 0.85 + 0.25 * np.cos(beat)
+                el_r2 = 0.55 + 0.20 * np.cos(beat)
 
-                q["right_hand_thumb_0_joint"] = round(0.15 + 0.10 * np.sin(phase * 2), 4)
-                q["right_hand_thumb_1_joint"] = round(0.20 + 0.12 * np.sin(phase * 2), 4)
-                q["right_hand_thumb_2_joint"] = round(0.20 + 0.12 * np.sin(phase * 2), 4)
-                q["right_hand_middle_0_joint"] = round(0.25 + 0.15 * np.sin(phase * 2), 4)
-                q["right_hand_middle_1_joint"] = round(0.25 + 0.15 * np.sin(phase * 2), 4)
-                q["right_hand_index_0_joint"] = round(0.25 + 0.15 * np.sin(phase * 2), 4)
-                q["right_hand_index_1_joint"] = round(0.25 + 0.15 * np.sin(phase * 2), 4)
+                # 乐句 3：动感拍点与帅气收尾 (Double Pump Celebration)
+                sp_l3 = -0.35 + 0.20 * np.cos(beat * 2)
+                sp_r3 = -0.35 + 0.20 * np.cos(beat * 2)
+                sr_l3 = 0.55 + 0.15 * np.sin(beat)
+                sr_r3 = -0.55 - 0.15 * np.sin(beat)
+                el_l3 = 0.75 + 0.25 * np.sin(beat * 2)
+                el_r3 = 0.75 + 0.25 * np.sin(beat * 2)
+
+                q["left_shoulder_pitch_joint"] = round(sp_l1 * w1 + sp_l2 * w2 + sp_l3 * w3, 4)
+                q["right_shoulder_pitch_joint"] = round(sp_r1 * w1 + sp_r2 * w2 + sp_r3 * w3, 4)
+                q["left_shoulder_roll_joint"] = round(sr_l1 * w1 + sr_l2 * w2 + sr_l3 * w3, 4)
+                q["right_shoulder_roll_joint"] = round(sr_r1 * w1 + sr_r2 * w2 + sr_r3 * w3, 4)
+                q["left_shoulder_yaw_joint"] = round(0.12 * np.sin(beat), 4)
+                q["right_shoulder_yaw_joint"] = round(-0.12 * np.sin(beat), 4)
+
+                # 肘关节：严格保持正角自然屈肘 (0.45 ~ 1.05 rad)，绝无折断后仰现象
+                q["left_elbow_joint"] = round(el_l1 * w1 + el_l2 * w2 + el_l3 * w3, 4)
+                q["right_elbow_joint"] = round(el_r1 * w1 + el_r2 * w2 + el_r3 * w3, 4)
+
+                # 手腕 3 轴律动跟随
+                q["left_wrist_roll_joint"] = round(0.25 * np.sin(beat), 4)
+                q["left_wrist_pitch_joint"] = round(0.15 * np.cos(beat), 4)
+                q["left_wrist_yaw_joint"] = round(0.10 * np.sin(phase), 4)
+
+                q["right_wrist_roll_joint"] = round(-0.25 * np.sin(beat), 4)
+                q["right_wrist_pitch_joint"] = round(0.15 * np.cos(beat), 4)
+                q["right_wrist_yaw_joint"] = round(-0.10 * np.sin(phase), 4)
 
                 joint_trajectories.append(q)
 
