@@ -32,6 +32,8 @@ class PreviewManager:
                 base_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         self.base_root = base_root
         self.preview_dir = os.path.join(self.base_root, "preview")
+        # 默认 G1 机器人模型 info 缓存（首次解析后缓存，避免重复 IO）
+        self._cached_model_info: Optional[Dict[str, Any]] = None
         self._ensure_preview_dir()
 
     def _ensure_preview_dir(self):
@@ -520,15 +522,131 @@ class PreviewManager:
                 })
         return res
 
+    def _get_default_model_info(self) -> Optional[Dict[str, Any]]:
+        """
+        解析内置 G1 29-DoF URDF 模型（preview/g1_29dof_rubber_hand），构建并返回 model_info
+        仅含 links/joints/parts（骨骼结构与网格URL），不含 motion.joint_trajectory
+        首次解析后缓存结果，后续调用直接返回缓存
+        """
+        if self._cached_model_info is not None:
+            return self._cached_model_info
+
+        # 搜索默认 G1 模型目录
+        default_dirs = []
+        for entry in os.listdir(self.preview_dir):
+            entry_path = os.path.join(self.preview_dir, entry)
+            if os.path.isdir(entry_path) and ("g1" in entry.lower() or "rubber" in entry.lower()):
+                default_dirs.append(entry_path)
+        if not default_dirs:
+            return None
+
+        dest_folder = default_dirs[0]
+        # 优先选 mode_15 URDF
+        urdf_candidates = []
+        for root_dir, _, fnames in os.walk(dest_folder):
+            for fname in fnames:
+                if fname.lower().endswith(".urdf"):
+                    urdf_candidates.append(os.path.join(root_dir, fname))
+        if not urdf_candidates:
+            return None
+
+        selected_urdf = urdf_candidates[0]
+        for u in urdf_candidates:
+            if "mode_15" in u:
+                selected_urdf = u
+                break
+
+        try:
+            tree = ET.parse(selected_urdf)
+            urdf_root = tree.getroot()
+
+            joints_list = []
+            for j in urdf_root.findall("joint"):
+                j_name = j.attrib.get("name", "")
+                j_type = j.attrib.get("type", "fixed")
+                p_el = j.find("parent")
+                c_el = j.find("child")
+                if p_el is None or c_el is None:
+                    continue
+                p = p_el.attrib["link"]
+                c = c_el.attrib["link"]
+                orig = j.find("origin")
+                xyz = [0.0, 0.0, 0.0]
+                rpy = [0.0, 0.0, 0.0]
+                if orig is not None:
+                    if "xyz" in orig.attrib:
+                        xyz = [float(v) for v in orig.attrib["xyz"].split()]
+                    if "rpy" in orig.attrib:
+                        rpy = [float(v) for v in orig.attrib["rpy"].split()]
+                axis = [0.0, 1.0, 0.0]
+                axis_el = j.find("axis")
+                if axis_el is not None and "xyz" in axis_el.attrib:
+                    axis = [float(v) for v in axis_el.attrib["xyz"].split()]
+                joints_list.append({
+                    "name": j_name,
+                    "type": j_type,
+                    "parent": p,
+                    "child": c,
+                    "origin_xyz": xyz,
+                    "origin_rpy": rpy,
+                    "axis": axis
+                })
+
+            # 解析 link 视觉网格 — 构建 mesh_url 供前端 fetch
+            rel_folder = os.path.relpath(dest_folder, self.preview_dir).replace("\\", "/")
+            links_list = []
+            for l_el in urdf_root.findall("link"):
+                l_name = l_el.attrib.get("name", "")
+                vis = l_el.find("visual")
+                if vis is not None:
+                    geom = vis.find("geometry")
+                    if geom is not None and geom.find("mesh") is not None:
+                        fn = geom.find("mesh").attrib.get("filename", "")
+                        if fn:
+                            clean_fn = fn.replace("\\", "/").lstrip("/")
+                            mesh_url = f"/preview/{rel_folder}/{clean_fn}"
+                            links_list.append({
+                                "name": l_name,
+                                "link_name": l_name,
+                                "mesh_url": mesh_url
+                            })
+
+            model_info = {
+                "has_robot_model": len(links_list) > 0,
+                "model_name": os.path.basename(dest_folder),
+                "root_link": "pelvis",
+                "parts_count": len(links_list),
+                "parts": links_list,
+                "links": links_list,
+                "joints": joints_list,
+                # 无 motion：前端将以位置平移方式驱动各部件（降级兜底，优于骨架）
+            }
+            if model_info["has_robot_model"]:
+                self._cached_model_info = model_info
+                logger.info(f"已缓存默认 G1 机器人模型 ({len(links_list)} 个网格部件) 供 NPZ 播放注入")
+            return model_info
+
+        except Exception as e:
+            logger.warning(f"解析默认 G1 URDF 失败，将降级为骨架渲染: {e}")
+            return None
+
     def get_dance_data(self, dance_id: str) -> Dict[str, Any]:
-        """获取指定舞蹈动作的完整 3D 帧数据与机器人模型资产"""
+        """获取指定舞蹈动作的完整 3D 帧数据与机器人模型资产。
+        若 NPZ 内未内嵌 model_info，自动注入本地 G1 机器人模型结构（优于骨架渲染）。
+        """
         self._ensure_preview_dir()
         filename = f"{dance_id}.npz" if not dance_id.endswith(".npz") else dance_id
         path = os.path.join(self.preview_dir, filename)
         if not os.path.exists(path):
             return {"success": False, "msg": f"舞蹈文件不存在: preview/{filename}"}
         from backend.npz_service import npz_service
-        return npz_service.parse_npz_file(path)
+        result = npz_service.parse_npz_file(path)
+        # 若 NPZ 自身无内嵌机器人模型，尝试自动注入默认 G1 模型结构
+        if result.get("success") and not (result.get("model_info") or {}).get("has_robot_model"):
+            default_model = self._get_default_model_info()
+            if default_model and default_model.get("has_robot_model"):
+                result["model_info"] = default_model
+        return result
 
     def delete_dance(self, dance_id: str) -> Dict[str, Any]:
         """彻底删除 preview 目录下的指定舞蹈动作文件与关联解压模型"""

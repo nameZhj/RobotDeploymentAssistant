@@ -4,6 +4,56 @@
 class DancePlayer3D {
   static geometryCache = {};
 
+  /**
+   * 基于 link_name 关键词将 G1 URDF 各部件语义映射至骨骼关键点索引。
+   * 当 NPZ 没有内嵌 joint_trajectory 时，用此映射在降级渲染路径中让各部件正确跟随骨骼点位移。
+   * 支持标准 21 关节（通用动捕格式）和 30 关节（G1 29-DoF 格式）。
+   */
+  static resolveJointIdx(lName) {
+    // 21 关节语义映射: 0=pelvis,1=spine,2=torso,3=neck,4=head,
+    //   5=L_shoulder,6=L_elbow,7=L_wrist,8=L_hand,
+    //   9=R_shoulder,10=R_elbow,11=R_wrist,12=R_hand,
+    //   13=L_hip,14=L_knee,15=L_ankle,16=L_foot,
+    //   17=R_hip,18=R_knee,19=R_ankle,20=R_foot
+    if (lName.includes('pelvis') || lName.includes('base_link')) return 0;
+    if (lName.includes('waist_yaw') || lName.includes('spine')) return 1;
+    if (lName.includes('waist_roll') || lName.includes('waist_pitch') || lName.includes('torso_link')) return 2;
+    if (lName.includes('head_servo')) return 3;
+    if (lName.includes('head_link') || lName === 'head') return 4;
+
+    // 左上肢
+    if (lName.includes('left_shoulder_pitch') || lName.includes('left_shoulder')) return 5;
+    if (lName.includes('left_shoulder_roll') || lName.includes('left_shoulder_yaw')) return 5;
+    if (lName.includes('left_elbow')) return 6;
+    if (lName.includes('left_wrist')) return 7;
+    if (lName.includes('left_hand') || lName.includes('left_rubber') || (lName.includes('left') && lName.includes('palm'))) return 8;
+
+    // 右上肢
+    if (lName.includes('right_shoulder_pitch') || lName.includes('right_shoulder')) return 9;
+    if (lName.includes('right_shoulder_roll') || lName.includes('right_shoulder_yaw')) return 9;
+    if (lName.includes('right_elbow')) return 10;
+    if (lName.includes('right_wrist')) return 11;
+    if (lName.includes('right_hand') || lName.includes('right_rubber') || (lName.includes('right') && lName.includes('palm'))) return 12;
+
+    // 左下肢
+    if (lName.includes('left_hip')) return 13;
+    if (lName.includes('left_knee')) return 14;
+    if (lName.includes('left_ankle')) return 15;
+    if ((lName.includes('left') && lName.includes('foot')) || (lName.includes('left') && lName.includes('base_link'))) return 16;
+
+    // 右下肢
+    if (lName.includes('right_hip')) return 17;
+    if (lName.includes('right_knee')) return 18;
+    if (lName.includes('right_ankle')) return 19;
+    if ((lName.includes('right') && lName.includes('foot')) || (lName.includes('right') && lName.includes('base_link'))) return 20;
+
+    // logo/胸口装饰 → 跟随 torso
+    if (lName.includes('logo') || lName.includes('torso_constraint') || lName.includes('waist_support')) return 2;
+
+    return 0; // 兜底：跟随骨盆
+  }
+
+
   constructor(viewportId) {
     this.viewport = document.getElementById(viewportId);
     this.currentDanceData = null;
@@ -462,6 +512,7 @@ class DancePlayer3D {
       this.robotPartsGroup.add(this.robotRootLink);
     }
 
+
     // 4. 并行加载 STL 3D 网格并挂载至对应 Link 节点
     const loadPromises = modelInfo.parts.map(async (part) => {
       try {
@@ -497,10 +548,16 @@ class DancePlayer3D {
           this.robotPartsGroup.add(mesh);
         }
 
+        // 计算 link → joint_idx：优先使用 part 内嵌值，否则按语义关键词映射
+        let joint_idx = (typeof part.joint_idx === 'number') ? part.joint_idx : -1;
+        if (joint_idx < 0) {
+          joint_idx = DancePlayer3D.resolveJointIdx(lName);
+        }
+
         return {
           mesh,
           part,
-          joint_idx: (typeof part.joint_idx === 'number') ? part.joint_idx : 0,
+          joint_idx,
           link_name: part.link_name,
           base_pos: part.base_pos || null,
           origin_xyz: part.origin_xyz || [0, 0, 0],
@@ -511,6 +568,7 @@ class DancePlayer3D {
         return null;
       }
     });
+
 
     const loaded = await Promise.all(loadPromises);
     this.robotMeshParts = loaded.filter(Boolean);
@@ -625,28 +683,27 @@ class DancePlayer3D {
             jInfo.pivot.quaternion.copy(jInfo.defaultQuat).multiply(rotDelta);
           }
         }
-      } else if (this.robotMeshParts && this.robotMeshParts.length > 0) {
-        // 降级兜底：若无关节角度，采用点阵平移
-        for (let i = 0; i < this.robotMeshParts.length; i++) {
-          const item = this.robotMeshParts[i];
-          const { mesh, joint_idx, base_pos } = item;
-          if (frame[joint_idx]) {
-            const [fx, fy, fz] = frame[joint_idx];
-            const baseJoint = (this.basePose && this.basePose[joint_idx]) ? this.basePose[joint_idx] : null;
-            if (base_pos && baseJoint) {
-              const dx = fx - baseJoint[0];
-              const dy = fy - baseJoint[1];
-              const dz = fz - baseJoint[2];
-              mesh.position.set(base_pos[0] + dx, base_pos[1] + dy, base_pos[2] + dz);
-            } else {
-              mesh.position.set(fx, fy, fz);
-            }
-            mesh.visible = true;
-          } else {
-            mesh.visible = false;
+      } else if (this.robotRootLink) {
+        // 降级兜底：无关节角度轨迹时，将 URDF 树整体平移至 NPZ 骨盆关节点位置。
+        // 机器人各部件保持 URDF 定义的静态相对位置，作为整体刚体跟随运动，不会散落。
+        const pelvisJoint = frame[0]; // 骨盆 (标准21关节中索引0)
+        if (pelvisJoint) {
+          this.robotRootLink.position.set(pelvisJoint[0], pelvisJoint[1], pelvisJoint[2]);
+        }
+
+        // 简单躯干旋转估计：从骨盆(0) → 躯干(2)向量推算机器人朝向（Z轴为上）
+        const pelvis = frame[0];
+        const torso = frame[2] || frame[1];
+        if (pelvis && torso) {
+          const dx = torso[0] - pelvis[0];
+          const dy = torso[1] - pelvis[1];
+          // 仅做 XY 平面的偏航近似，防止机器人莫名倾倒
+          if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) {
+            this.robotRootLink.rotation.z = Math.atan2(dy, dx) - Math.PI / 2;
           }
         }
       }
+
     } else {
       // 场景 B: 渲染动捕骨骼球体与连线圆柱
       this.setSkeletonVisibility(true);
