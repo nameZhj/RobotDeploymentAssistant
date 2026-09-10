@@ -21,7 +21,6 @@ const App = {
     }
     Wizard.init();
     LogViewer.init();
-    ManualMode.init();
 
     // 运行开机自检与主动 License 校验逻辑
     await this.runStartupCheck();
@@ -202,6 +201,12 @@ const App = {
   },
 
   switchTab(tabId) {
+    if (tabId === 'tab-dance-update') {
+      tabId = 'tab-image';
+    }
+    if (tabId === 'tab-license') {
+      tabId = 'tab-network';
+    }
     this.activeTab = tabId;
 
     // 自动收起设置菜单下拉框
@@ -233,14 +238,13 @@ const App = {
       setTimeout(() => dancePlayer.onResize(), 60);
     } else if (tabId === 'tab-logs' && window.LogViewer) {
       LogViewer.fetchCurrentLogs();
-    } else if (tabId === 'tab-network' && window.TabNetwork) {
-      TabNetwork.init();
+    } else if (tabId === 'tab-network') {
+      if (window.TabNetwork) TabNetwork.init();
+      if (window.TabLicense) TabLicense.init();
     } else if (tabId === 'tab-precheck' && window.TabPrecheck) {
       TabPrecheck.run();
     } else if (tabId === 'tab-image' && window.TabImage) {
       TabImage.init();
-    } else if (tabId === 'tab-license' && window.TabLicense) {
-      TabLicense.init();
     }
   },
 
@@ -616,7 +620,28 @@ const App = {
     if (btnSubmitUpdate) {
       btnSubmitUpdate.addEventListener('click', async () => {
         const destPath = document.getElementById('input-update-dest-path')?.value.trim() || '/secure/config_vsis';
-        const resultConsole = document.getElementById('dance-update-result');
+        const legacyConsole = document.getElementById('dance-update-result');
+
+        const logLine = (msg, isErr = false) => {
+          if (window.TabImage && typeof TabImage.appendLog === 'function') {
+            TabImage.appendLog(msg, isErr, '💃');
+          } else {
+            const consoleEl = document.getElementById('tp-unified-console');
+            if (consoleEl) {
+              const div = document.createElement('div');
+              div.className = isErr ? 'log-error' : (String(msg).includes('SUCCESS') || String(msg).includes('🎉') || String(msg).includes('完成') ? 'log-success' : 'log-info');
+              div.textContent = `[${new Date().toTimeString().split(' ')[0]}] [💃] ${msg}`;
+              consoleEl.appendChild(div);
+              consoleEl.scrollTop = consoleEl.scrollHeight;
+            }
+          }
+          if (legacyConsole) {
+            const div = document.createElement('div');
+            div.className = isErr ? 'log-error' : 'log-info';
+            div.textContent = msg;
+            legacyConsole.appendChild(div);
+          }
+        };
 
         if (!currentSelectedTarget) {
           showToast('请先选择动作文件夹或拖拽动作包 (.zip / 文件夹)', 'warning');
@@ -641,9 +666,7 @@ const App = {
           });
         }
 
-        if (resultConsole) {
-          resultConsole.innerHTML = `<div class="log-info">⏳ 正在准备上传动作包 [${displayTargetName}] ...</div>`;
-        }
+        logLine(`⏳ 正在准备上传动作包 [${displayTargetName}] ...`);
 
         btnSubmitUpdate.disabled = true;
         btnSubmitUpdate.textContent = '⏳ 正在上传并解压覆盖中...';
@@ -653,19 +676,18 @@ const App = {
           const res = await API.updateDance(formData);
           if (res.success && res.task_id) {
             API.listenStream(res.task_id, (line, isErr) => {
-              if (resultConsole) {
-                const div = document.createElement('div');
-                div.className = isErr ? 'log-error' : (line.includes('[SUCCESS]') || line.includes('[READY]') || line.includes('[DONE]') ? 'log-success' : 'log-info');
-                div.textContent = line;
-                resultConsole.appendChild(div);
-                resultConsole.scrollTop = resultConsole.scrollHeight;
-              }
+              logLine(line, isErr);
             }, (ok) => {
               btnSubmitUpdate.disabled = false;
               btnSubmitUpdate.textContent = '🚀 一键上传并导入舞蹈动作包';
               if (ok) {
+                logLine(`🎉 动作包 [${displayTargetName}] 导入、解压覆盖至 ${destPath} 与跳舞程序自动热重启已完成！`, false);
                 showToast(`🎉 动作包 [${displayTargetName}] 导入、解压覆盖与跳舞程序自动热重启已完成！`, 'success', 5000);
+                if (window.TabImage && typeof TabImage.checkProcessStatus === 'function') {
+                  TabImage.checkProcessStatus();
+                }
               } else {
+                logLine('舞蹈动作包导入遇到异常，请查看统一执行日志', true);
                 showToast('舞蹈动作包导入遇到异常，请查看右侧执行日志', 'error');
               }
             });
@@ -673,17 +695,13 @@ const App = {
             btnSubmitUpdate.disabled = false;
             btnSubmitUpdate.textContent = '🚀 一键上传并导入舞蹈动作包';
             showToast(`更新失败: ${res.msg || '未知错误'}`, 'error');
-            if (resultConsole) {
-              resultConsole.innerHTML += `<div class="log-error">❌ 更新失败: ${res.msg || '未知错误'}</div>`;
-            }
+            logLine(`❌ 更新失败: ${res.msg || '未知错误'}`, true);
           }
         } catch (err) {
           btnSubmitUpdate.disabled = false;
           btnSubmitUpdate.textContent = '🚀 一键上传并导入舞蹈动作包';
           showToast(`更新异常: ${err.message}`, 'error');
-          if (resultConsole) {
-            resultConsole.innerHTML += `<div class="log-error">❌ 异常: ${err.message}</div>`;
-          }
+          logLine(`❌ 异常: ${err.message}`, true);
         }
       });
     }
@@ -693,7 +711,15 @@ const App = {
 
 
   async init3dPlayer() {
-    dancePlayer = new DancePlayer3D('dance3d-viewport');
+    try {
+      if (typeof DancePlayer3D !== 'undefined') {
+        dancePlayer = new DancePlayer3D('dance3d-viewport');
+      } else {
+        console.warn('DancePlayer3D 类尚未就绪');
+      }
+    } catch (err) {
+      console.error('初始化 3D 舞蹈播放器失败:', err);
+    }
 
     // 绑定播放控制条
     const btnPlay = document.getElementById('btn-dance-play');
@@ -703,40 +729,69 @@ const App = {
     const btnResetCam = document.getElementById('btn-reset-cam');
 
     if (btnPlay) {
-      btnPlay.addEventListener('click', () => dancePlayer.togglePlay());
+      btnPlay.addEventListener('click', () => { if (dancePlayer) dancePlayer.togglePlay(); });
     }
 
     if (scrubber) {
-      scrubber.addEventListener('input', (e) => dancePlayer.seek(e.target.value));
+      scrubber.addEventListener('input', (e) => { if (dancePlayer) dancePlayer.seek(e.target.value); });
     }
 
     if (selectSpeed) {
       selectSpeed.addEventListener('change', (e) => {
-        dancePlayer.playbackSpeed = parseFloat(e.target.value);
+        if (dancePlayer) dancePlayer.playbackSpeed = parseFloat(e.target.value);
       });
     }
 
     if (chkLoop) {
       chkLoop.addEventListener('change', (e) => {
-        dancePlayer.isLoop = e.target.checked;
+        if (dancePlayer) dancePlayer.isLoop = e.target.checked;
       });
     }
 
     if (btnResetCam) {
-      btnResetCam.addEventListener('click', () => dancePlayer.resetCamera());
+      btnResetCam.addEventListener('click', () => { if (dancePlayer) dancePlayer.resetCamera(); });
     }
 
-    // 自定义 NPZ 动作导入与拖拽上传
-    const inputCustomNpz = document.getElementById('input-custom-npz');
+    // 自定义动作/模型导入与拖拽上传 (合并 NPZ 与 ZIP，自动识别)
+    const inputCustomDanceFile = document.getElementById('input-custom-dance-file');
+    const btnBrowseZip = document.getElementById('btn-browse-dance-zip');
+    const btnSubmitZip = document.getElementById('btn-submit-zip-path');
+    const inputZipPath = document.getElementById('input-dance-zip-path');
 
+    // ZIP 模型与动作包上传处理
+    const handleZipFile = async (file) => {
+      if (!file || !file.name || !file.name.toLowerCase().endsWith('.zip')) {
+        showToast('请选择有效的 .zip 格式机器人模型或动作压缩包', 'warning');
+        return;
+      }
+      showToast(`正在上传并解压解析 [${file.name}] 至 preview 目录...`, 'info', 3500);
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        const res = await API.importDanceZip(formData);
+        if (res && res.success) {
+          showToast(res.msg || `✓ 成功导入并解析: ${res.dance_name || file.name}`, 'success');
+          await this.refresh3dDanceList(res.dance_name);
+          if (res.frames && res.frames.length > 0) {
+            dancePlayer.loadDance(res);
+          }
+        } else {
+          showToast(`导入失败: ${res?.msg || '未知错误'}`, 'error');
+        }
+      } catch (err) {
+        showToast(`导入异常: ${err.message}`, 'error');
+      }
+    };
+
+    // NPZ 动捕动作批量上传处理
     const handleNpzFiles = async (fileList) => {
       const files = Array.from(fileList || []).filter(f => f && f.name && f.name.toLowerCase().endsWith('.npz'));
       if (files.length === 0) {
-        showToast('未检测到有效的 .npz 格式动作文件', 'warning');
+        showToast('未检测到有效的 .npz 格式动捕文件', 'warning');
         return;
       }
 
-      showToast(`正在批量导入 ${files.length} 个动作文件，请稍候...`, 'warning');
+      showToast(`正在批量导入 ${files.length} 个动作文件，请稍候...`, 'info', 2500);
 
       const uploadTasks = files.map(async (file) => {
         const formData = new FormData();
@@ -760,34 +815,135 @@ const App = {
       }
 
       if (succeeded.length > 0) {
-        showToast(`✓ 成功导入 ${succeeded.length} 个动作文件！`, 'warning');
+        showToast(`✓ 成功导入 ${succeeded.length} 个动捕动作文件！`, 'success');
         const lastSuccess = succeeded[succeeded.length - 1];
         if (lastSuccess && lastSuccess.data) {
           dancePlayer.loadDance(lastSuccess.data);
         }
-        await this.refresh3dDanceList(lastSuccess ? lastSuccess.data.dance_name : null);
+        await this.refresh3dDanceList(lastSuccess ? (lastSuccess.data.dance_name || lastSuccess.file.name.replace('.npz', '')) : null);
       }
     };
 
-    if (inputCustomNpz) {
-      inputCustomNpz.addEventListener('change', async (e) => {
-        const selectedFiles = Array.from(e.target.files || []);
-        e.target.value = ''; // 安全清空 input value，不影响已克隆的数组
-        await handleNpzFiles(selectedFiles);
+    // 统一处理任意文件列表 (自动识别 .zip 和 .npz)
+    const handleUnifiedFiles = async (fileList) => {
+      const files = Array.from(fileList || []);
+      const zipFiles = files.filter(f => f && f.name && f.name.toLowerCase().endsWith('.zip'));
+      const npzFiles = files.filter(f => f && f.name && f.name.toLowerCase().endsWith('.npz'));
+
+      if (zipFiles.length === 0 && npzFiles.length === 0) {
+        showToast('请选择或拖入有效的 .zip (机器人模型) 或 .npz (动捕动作) 文件', 'warning');
+        return;
+      }
+
+      for (const zf of zipFiles) {
+        await handleZipFile(zf);
+      }
+      if (npzFiles.length > 0) {
+        await handleNpzFiles(npzFiles);
+      }
+    };
+
+    // 本地文件绝对路径导入处理 (自动识别 .zip 和 .npz)
+    const handleFilePath = async (pathStr) => {
+      const p = String(pathStr || '').trim().replace(/^["']|["']$/g, '');
+      if (!p) {
+        showToast('请输入有效的本地文件绝对路径 (.zip 或 .npz)', 'warning');
+        return;
+      }
+      if (btnSubmitZip) {
+        btnSubmitZip.disabled = true;
+        btnSubmitZip.textContent = '⏳ 解析中...';
+      }
+      showToast(`正在从本地路径读取并解析文件至 preview 目录...`, 'info', 3000);
+      try {
+        const res = await API.importDanceZip({ path: p });
+        if (res && res.success) {
+          showToast(res.msg || `✓ 成功导入并解析: ${res.dance_name || '模型动作'}`, 'success');
+          await this.refresh3dDanceList(res.dance_name);
+          if (res.frames && res.frames.length > 0) {
+            dancePlayer.loadDance(res);
+          }
+        } else {
+          showToast(`解析导入失败: ${res?.msg || '未知错误'}`, 'error');
+        }
+      } catch (err) {
+        showToast(`请求异常: ${err.message}`, 'error');
+      } finally {
+        if (btnSubmitZip) {
+          btnSubmitZip.disabled = false;
+          btnSubmitZip.textContent = '🚀 解析播放';
+        }
+      }
+    };
+
+    // 绑定统一导入动作/模型按钮事件 (.zip / .npz)
+    if (inputCustomDanceFile) {
+      inputCustomDanceFile.addEventListener('change', async (e) => {
+        const selected = Array.from(e.target.files || []);
+        e.target.value = '';
+        await handleUnifiedFiles(selected);
       });
     }
 
-    // 全局防默认打开文件（确保任何未捕获的拖拽都不会导致浏览器跳转离开当前页面）
+    if (btnBrowseZip) {
+      btnBrowseZip.addEventListener('click', async () => {
+        try {
+          const res = await API.browseDanceZip();
+          if (res && res.success && res.file_path) {
+            if (inputZipPath) inputZipPath.value = res.file_path;
+            showToast(`已选择文件: ${res.filename}，点击【🚀 解析播放】立即加载运行`, 'info', 3000);
+          } else if (res && res.msg && !res.msg.includes('取消')) {
+            showToast(res.msg, 'warning');
+          }
+        } catch (e) {
+          showToast(`浏览异常: ${e.message}`, 'error');
+        }
+      });
+    }
+
+    if (btnSubmitZip) {
+      btnSubmitZip.addEventListener('click', async () => {
+        const p = inputZipPath ? inputZipPath.value : '';
+        await handleFilePath(p);
+      });
+    }
+
+    if (inputZipPath) {
+      inputZipPath.addEventListener('keydown', async (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const p = inputZipPath.value;
+          await handleFilePath(p);
+        }
+      });
+    }
+
+    // 全局防默认打开文件，并在用户拖入任意窗口区域时智能分发至 3D 动作导入
     window.addEventListener('dragover', (e) => {
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
     });
-    window.addEventListener('drop', (e) => {
+
+    window.addEventListener('drop', async (e) => {
       e.preventDefault();
+      const files = e.dataTransfer ? Array.from(e.dataTransfer.files) : [];
+      if (files && files.length > 0) {
+        const hasDance = files.some(f => {
+          const n = (f && f.name) ? f.name.toLowerCase() : '';
+          return n.endsWith('.zip') || n.endsWith('.npz');
+        });
+        if (hasDance) {
+          if (typeof App !== 'undefined' && typeof App.openOpsModal === 'function') {
+            App.openOpsModal('tab-3d-player');
+          }
+          await handleUnifiedFiles(files);
+        }
+      }
     });
 
-    // 拖拽多区域监听（支持拖入侧边栏列表或 3D 视口）
+    // 拖拽多区域高亮与监听（支持拖入 3D 面板、侧边栏列表或 3D 视口，同时支持 .zip 与 .npz）
     const dropZones = [
+      document.getElementById('tab-3d-player'),
       document.querySelector('.player3d-sidebar'),
       document.getElementById('dance-3d-list'),
       document.querySelector('.player3d-container'),
@@ -832,14 +988,14 @@ const App = {
         }
       });
 
-      zone.addEventListener('drop', (e) => {
+      zone.addEventListener('drop', async (e) => {
         e.preventDefault();
         e.stopPropagation();
         dragCounter = 0;
         setDragState(false);
-        const files = e.dataTransfer ? e.dataTransfer.files : [];
+        const files = e.dataTransfer ? Array.from(e.dataTransfer.files) : [];
         if (files && files.length > 0) {
-          handleNpzFiles(files);
+          await handleUnifiedFiles(files);
         }
       });
     });
@@ -854,22 +1010,43 @@ const App = {
 
     try {
       const res = await API.list3dDances();
-      if (!res.success || !res.dances) return;
+      if (!res.success) return;
 
       listContainer.innerHTML = '';
+
+      if (!res.dances || res.dances.length === 0) {
+        listContainer.innerHTML = `
+          <div style="text-align: center; color: var(--text-muted); font-size: 0.8rem; padding: 25px 10px; line-height: 1.6;">
+            📭 暂无舞蹈动作或模型<br>
+          </div>
+        `;
+        if (dancePlayer) {
+          dancePlayer.clear();
+        }
+        return;
+      }
+
       let matchedBtn = null;
 
       for (const d of res.dances) {
         const item = document.createElement('div');
         item.className = 'dance-item-btn';
         item.dataset.id = d.id;
+
+        const modelBadge = d.has_robot_model
+          ? `<span style="font-size: 0.65rem; background: rgba(14, 165, 233, 0.22); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.45); border-radius: 4px; padding: 1px 5px; font-weight: 700; white-space: nowrap;">🤖 3D实体</span>`
+          : `<span style="font-size: 0.65rem; background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); border-radius: 4px; padding: 1px 5px; font-weight: 600; white-space: nowrap;">💃 动捕</span>`;
+
         item.innerHTML = `
           <div style="flex: 1; min-width: 0; padding-right: 6px;">
-            <div style="font-weight: 600; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${d.name}">🎵 ${d.name}</div>
-            <div style="font-size: 0.72rem; color: var(--text-muted);">${d.duration}s | ${d.frames} 帧 (50fps)</div>
+            <div style="font-weight: 600; font-size: 0.84rem; display: flex; align-items: center; gap: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${d.name}">
+              <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">🎵 ${d.name}</span>
+              ${modelBadge}
+            </div>
+            <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">${d.duration}s | ${d.frames} 帧 (50fps)</div>
           </div>
           <div style="display: flex; align-items: center; gap: 6px;">
-            <button class="btn-delete-dance" title="删除此动作" style="background: none; border: none; cursor: pointer; color: #ef4444; padding: 2px 4px; font-size: 0.85rem; border-radius: 4px; opacity: 0.6; transition: all 0.2s;">🗑️</button>
+            <button class="btn-delete-dance" title="彻底删除此动作" style="background: none; border: none; cursor: pointer; color: #ef4444; padding: 2px 4px; font-size: 0.85rem; border-radius: 4px; opacity: 0.6; transition: all 0.2s;">🗑️</button>
             <span style="color: var(--accent-cyan); font-size: 0.8rem;">▶</span>
           </div>
         `;
@@ -881,12 +1058,17 @@ const App = {
           delBtn.addEventListener('mouseleave', () => { delBtn.style.opacity = '0.6'; });
           delBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
-            if (confirm(`确定要删除动作【${d.name}】吗？`)) {
+            if (confirm(`确定要彻底删除动作【${d.name}】吗？`)) {
               try {
                 const delRes = await API.delete3dDance(d.id);
                 if (delRes.success) {
                   showToast(`✓ 已删除动作: ${d.name}`, 'warning');
-                  this.refresh3dDanceList();
+                  // 若删除的是当前正在播放的动作，立即清空舞台
+                  if (dancePlayer && dancePlayer.currentDanceData &&
+                    (dancePlayer.currentDanceData.dance_name === d.name || dancePlayer.currentDanceData.dance_id === d.id)) {
+                    dancePlayer.clear();
+                  }
+                  await this.refresh3dDanceList();
                 } else {
                   showToast(`删除失败: ${delRes.msg}`, 'error');
                 }
@@ -909,7 +1091,7 @@ const App = {
 
         listContainer.appendChild(item);
 
-        if (preferredActiveName && d.name === preferredActiveName) {
+        if (preferredActiveName && (d.name === preferredActiveName || d.id === preferredActiveName)) {
           matchedBtn = item;
         }
       }

@@ -15,6 +15,7 @@ from backend.deployment_core import deployment_core
 from backend.license_service import license_service
 from backend.dance_updater import dance_updater
 from backend.npz_service import npz_service
+from backend.preview_manager import preview_manager
 from backend.log_diagnostics import log_diagnostics
 from backend.serial_manager import serial_manager
 
@@ -35,7 +36,16 @@ BASE_DIR = get_base_dir()
 WEB_DIR = os.path.join(BASE_DIR, "web")
 
 app = Flask(__name__, static_folder=WEB_DIR, static_url_path="", template_folder=WEB_DIR)
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 CORS(app)
+
+
+@app.after_request
+def add_no_cache_headers(response):
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 # 动态任务事件输出队列
 stream_queues = {}
@@ -52,6 +62,11 @@ def push_stream_msg(task_id: str, text: str, is_err: bool = False):
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/preview/<path:filename>")
+def serve_preview_asset(filename):
+    return send_from_directory(preview_manager.preview_dir, filename)
 
 
 @app.route("/<path:path>")
@@ -732,19 +747,17 @@ def update_dance():
 
 
 # ==========================================
-# 7. 3D 舞蹈回放与 NPZ 解析 API
+# 7. 3D 舞蹈回放、模型解析与 preview 管理 API
 # ==========================================
 @app.route("/api/dance/list_3d", methods=["GET"])
 def list_3d_dances():
-    dances = npz_service.list_demo_dances()
+    dances = preview_manager.list_all_dances()
     return jsonify({"success": True, "dances": dances})
 
 
 @app.route("/api/dance/get_3d/<dance_id>", methods=["GET"])
 def get_3d_dance(dance_id):
-    filename = f"{dance_id}.npz" if not dance_id.endswith(".npz") else dance_id
-    npz_path = os.path.join(npz_service.demo_dir, filename)
-    data = npz_service.parse_npz_file(npz_path)
+    data = preview_manager.get_dance_data(dance_id)
     return jsonify(data)
 
 
@@ -753,23 +766,70 @@ def upload_npz():
     if "file" not in request.files:
         return jsonify({"success": False, "msg": "未检测到上传文件"})
     f = request.files["file"]
-    save_path = os.path.join(npz_service.demo_dir, f.filename)
+    save_path = os.path.join(preview_manager.preview_dir, f.filename)
     f.save(save_path)
     data = npz_service.parse_npz_file(save_path)
     return jsonify(data)
 
 
+@app.route("/api/dance/import_zip", methods=["POST"])
+@app.route("/api/dance/import_file", methods=["POST"])
+def import_dance_zip():
+    """
+    统一导入 3D 舞蹈动捕文件与机器人模型包 (支持 .zip 与 .npz)
+    保存/解压至程序运行根目录 preview 文件夹，深度解析模型或动作轨迹并就绪 50fps 仿真播放
+    """
+    # 场景 1: 上传的文件对象
+    if "file" in request.files:
+        f = request.files["file"]
+        if not f.filename:
+            return jsonify({"success": False, "msg": "上传的文件名为空"})
+        res = preview_manager.import_zip(f, filename=f.filename)
+        return jsonify(res)
+
+    # 场景 2: 本地绝对路径 (如 "E:\\myfile\\...\\g1_29dof_rubber_hand.zip" 或 ".npz")
+    data = request.json if request.is_json else request.form.to_dict()
+    data = data or {}
+    path = data.get("path", "").strip().strip('"').strip("'")
+    if not path:
+        return jsonify({"success": False, "msg": "未提供文件或本地绝对路径"})
+
+    res = preview_manager.import_zip(path)
+    return jsonify(res)
+
+
+@app.route("/api/dance/browse_zip", methods=["POST"])
+@app.route("/api/dance/browse_file", methods=["POST"])
+def browse_dance_zip():
+    """打开本地文件选择器选取 .zip 或 .npz 舞蹈模型/动捕文件"""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        file_path = filedialog.askopenfilename(
+            title="选择 3D 机器人模型包 (.zip) 或动作文件 (.npz)",
+            filetypes=[
+                ("动作或模型文件 (*.zip;*.npz)", "*.zip;*.npz;*.ZIP;*.NPZ"),
+                ("ZIP 压缩包 (*.zip)", "*.zip;*.ZIP"),
+                ("NPZ 动捕文件 (*.npz)", "*.npz;*.NPZ"),
+                ("所有文件", "*.*")
+            ]
+        )
+        root.destroy()
+        if file_path:
+            norm_path = os.path.normpath(file_path)
+            return jsonify({"success": True, "file_path": norm_path, "filename": os.path.basename(norm_path)})
+        return jsonify({"success": False, "msg": "用户取消了选择"})
+    except Exception as e:
+        return jsonify({"success": False, "msg": f"打开文件选择器异常: {str(e)}"})
+
+
 @app.route("/api/dance/delete_3d/<dance_id>", methods=["DELETE", "POST"])
 def delete_3d_dance(dance_id):
-    filename = f"{dance_id}.npz" if not dance_id.endswith(".npz") else dance_id
-    npz_path = os.path.join(npz_service.demo_dir, filename)
-    if os.path.exists(npz_path):
-        try:
-            os.remove(npz_path)
-            return jsonify({"success": True, "msg": f"已删除舞蹈动作: {filename}"})
-        except Exception as e:
-            return jsonify({"success": False, "msg": f"删除失败: {str(e)}"})
-    return jsonify({"success": False, "msg": "文件不存在"})
+    res = preview_manager.delete_dance(dance_id)
+    return jsonify(res)
 
 
 # ==========================================
@@ -782,26 +842,6 @@ def get_logs():
     lines = int(request.args.get("lines", 200))
     res = log_diagnostics.fetch_logs(log_type, container_name, lines)
     return jsonify(res)
-
-
-# ==========================================
-# 9. 手动模式与命令执行 API
-# ==========================================
-@app.route("/api/manual/execute", methods=["POST"])
-def execute_manual_command():
-    data = request.json or {}
-    cmd = data.get("command", "")
-    sudo = bool(data.get("sudo", False))
-    if not cmd.strip():
-        return jsonify({"success": False, "msg": "命令为空"})
-
-    code, out, err = ssh_manager.execute_command(cmd, sudo=sudo, timeout=60.0)
-    return jsonify({
-        "success": (code == 0),
-        "exit_code": code,
-        "stdout": out,
-        "stderr": err
-    })
 
 
 # ==========================================

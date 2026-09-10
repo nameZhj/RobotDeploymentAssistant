@@ -136,6 +136,20 @@ class TestRobotIdAndTargetControl(unittest.TestCase):
             self.assertEqual(res_all.status_code, 200)
             mock_send.assert_called_with("A,B,C", "GAIT")
 
+    def test_robot_id_error_hint_elements_exist_in_html(self):
+        """测试所有涉及写入/添加 ID 的输入框下方均存在对应的校验错误提示节点"""
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        html = resp.get_data(as_text=True)
+
+        expected_error_elements = [
+            'id="tp-robot-id-error"',      # 舞蹈与镜像管理标签页输入框下方
+            'id="select-robot-id-error"',  # 部署向导步骤 3 输入框下方
+            'id="add-robot-id-error"',     # 添加受控机器人弹窗输入框下方
+        ]
+        for el in expected_error_elements:
+            self.assertIn(el, html, f"页面中缺少 ID 校验错误提示容器节点: {el}")
+
 
 if __name__ == '__main__':
     unittest.main()

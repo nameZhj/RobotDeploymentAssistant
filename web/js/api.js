@@ -245,6 +245,33 @@ const API = {
     }).then(res => res.json());
   },
 
+  importDanceZip(data) {
+    if (data instanceof FormData) {
+      return fetch('/api/dance/import_zip', {
+        method: 'POST',
+        body: data
+      }).then(res => res.json());
+    }
+    return this.request('/api/dance/import_zip', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  },
+
+  importDanceFile(data) {
+    return this.importDanceZip(data);
+  },
+
+  browseDanceZip() {
+    return this.request('/api/dance/browse_zip', {
+      method: 'POST'
+    });
+  },
+
+  browseDanceFile() {
+    return this.browseDanceZip();
+  },
+
   delete3dDance(danceId) {
     return this.request(`/api/dance/delete_3d/${danceId}`, {
       method: 'POST'
@@ -258,13 +285,6 @@ const API = {
     return this.request(`/api/logs?${params.toString()}`);
   },
 
-  // 9. 手动模式执行
-  executeManual(command, sudo = false) {
-    return this.request('/api/manual/execute', {
-      method: 'POST',
-      body: JSON.stringify({ command, sudo })
-    });
-  },
 
   // 9.1 Windows 本机 CH341 驱动
   checkWindowsCh341() {
@@ -370,7 +390,7 @@ const API = {
 function copyToClipboard(text, notifyText = '已复制到剪贴板！') {
   if (!text && text !== 0) return;
   const str = String(text);
-  
+
   if (navigator.clipboard && window.isSecureContext) {
     navigator.clipboard.writeText(str).then(() => {
       showToast(`✓ ${notifyText}`, 'success', 2000, false);
@@ -450,20 +470,20 @@ function showToast(msg, type = 'info', duration = 3500, showCopyBtn = true) {
  */
 function validateRobotId(rawId) {
   if (rawId === undefined || rawId === null) {
-    return { valid: false, cleanId: '', error: 'Robot ID 不能为空！请输入唯一寻址标识 (如 A, B, R1, G1_02 等)' };
+    return { valid: false, cleanId: '', error: 'Robot ID 不能为空！请输入唯一寻址标识' };
   }
   const cleanId = String(rawId).trim().toUpperCase();
   if (!cleanId) {
-    return { valid: false, cleanId: '', error: 'Robot ID 不能为空！请输入唯一寻址标识 (如 A, B, R1, G1_02 等)' };
+    return { valid: false, cleanId: '', error: 'Robot ID 不能为空！请输入唯一寻址标识' };
   }
   if (cleanId === 'ALL') {
-    return { valid: false, cleanId: '', error: 'ALL 为群控广播保留关键字，不能作为单机 ID！' };
+    return { valid: false, cleanId: '', error: 'ALL 不能作为单机 ID' };
   }
   if (cleanId.includes(',')) {
-    return { valid: false, cleanId: '', error: 'Robot ID 不能包含逗号 \',\'，多机群控已使用逗号作为目标分隔符！' };
+    return { valid: false, cleanId: '', error: 'Robot ID 不能包含逗号 \',\'' };
   }
   if (cleanId.includes('|')) {
-    return { valid: false, cleanId: '', error: 'Robot ID 不能包含竖线 \'|\'，该字符为通信协议指令分隔符！' };
+    return { valid: false, cleanId: '', error: 'Robot ID 不能包含竖线 \'|\'' };
   }
   // 严格字符集白名单校验：只允许字母、数字、下划线、短横线，长度 1~20 位
   const validRegex = /^[A-Z0-9_-]{1,20}$/;
@@ -471,7 +491,7 @@ function validateRobotId(rawId) {
     return {
       valid: false,
       cleanId: '',
-      error: 'Robot ID 格式不合法！仅支持 1~20 位英文字母、数字、下划线(_)或短横线(-)，严禁包含空格或特殊字符以防注入漏洞。'
+      error: 'Robot ID 格式不合法！仅支持 1~20 位英文字母、数字、下划线(_)或短横线(-)，严禁包含空格或特殊字符。'
     };
   }
   return { valid: true, cleanId: cleanId, error: '' };

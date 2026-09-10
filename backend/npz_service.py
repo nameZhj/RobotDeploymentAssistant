@@ -99,8 +99,12 @@ class NPZService:
             base_root = sys._MEIPASS
         else:
             base_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.demo_dir = demo_dir or os.path.join(base_root, "web", "assets", "demo_dances")
-        os.makedirs(self.demo_dir, exist_ok=True)
+        # 统一使用程序运行根目录下的 preview 文件夹作为所有舞蹈预览与解压文件的存储中心
+        self.demo_dir = demo_dir or os.path.join(base_root, "preview")
+        # 仅在系统首次运行时生成默认演示动作，用户删除后绝不擅自重新生成
+        init_marker = os.path.join(self.demo_dir, ".initialized")
+        if not os.path.exists(init_marker):
+            self._ensure_demo_npz_files()
 
     def parse_npz_file(self, npz_path: str) -> Dict[str, Any]:
         """
@@ -189,6 +193,20 @@ class NPZService:
                 joint_names = G1_JOINT_NAMES[:n_joints] if n_joints <= len(G1_JOINT_NAMES) else [f"joint_{i}" for i in range(n_joints)]
                 bone_pairs = G1_BONE_PAIRS
 
+            # 读取机器人模型元数据 (若存在)
+            model_info = None
+            if "model_info" in files:
+                try:
+                    m_val = data["model_info"]
+                    if hasattr(m_val, "item"):
+                        m_str = str(m_val.item())
+                    else:
+                        m_str = str(m_val)
+                    import json
+                    model_info = json.loads(m_str)
+                except Exception as ex:
+                    logger.warning(f"解析 model_info 失败: {ex}")
+
             return {
                 "success": True,
                 "dance_name": dance_name,
@@ -198,7 +216,8 @@ class NPZService:
                 "joint_count": n_joints,
                 "joint_names": joint_names,
                 "bone_pairs": bone_pairs,
-                "frames": frames_data
+                "frames": frames_data,
+                "model_info": model_info
             }
 
         except Exception as e:
@@ -206,7 +225,11 @@ class NPZService:
             return {"success": False, "msg": f"NPZ 解析异常: {str(e)}"}
 
     def _ensure_demo_npz_files(self):
-        """生成内置的标准演示舞蹈动作 NPZ 文件 (50fps)"""
+        """生成内置的标准演示舞蹈动作 NPZ 文件 (50fps)，仅系统首次运行时生成"""
+        init_marker = os.path.join(self.demo_dir, ".initialized")
+        if os.path.exists(init_marker):
+            return
+
         dances = [
             ("G1_TIKTOK", "抖音热曲魔性摇摆舞", self._generate_tiktok_motion),
             ("G1_TURN_JUMP", "旋转跳跃与空中变向", self._generate_turn_jump_motion),
@@ -216,12 +239,19 @@ class NPZService:
             ("G1_KUNG_FU", "国风太极抱拳开合式", self._generate_kungfu_motion),
         ]
 
+        os.makedirs(self.demo_dir, exist_ok=True)
         for name, desc, gen_func in dances:
             npz_file = os.path.join(self.demo_dir, f"{name}.npz")
             if not os.path.exists(npz_file):
                 logger.info(f"生成演示舞蹈 NPZ: {name} ({desc})")
                 frames = gen_func()
                 np.savez_compressed(npz_file, positions=frames, fps=50.0, dance_name=name, description=desc)
+
+        try:
+            with open(init_marker, "w", encoding="utf-8") as f:
+                f.write("initialized\n")
+        except Exception:
+            pass
 
     def list_demo_dances(self) -> List[Dict[str, Any]]:
         """获取所有内置及已存的演示舞蹈列表"""

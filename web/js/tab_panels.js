@@ -162,6 +162,13 @@ const TabNetwork = {
     } catch (err) {
       showToast(`恢复异常: ${err.message}`, 'error');
     }
+  },
+
+  clearConsole() {
+    const el = document.getElementById('tp-license-result');
+    if (el) {
+      el.innerHTML = '<div class="log-info">控制台已清空。就绪。</div>';
+    }
   }
 };
 
@@ -191,19 +198,21 @@ const TabPrecheck = {
 
         const copyText = `【${item.name}】状态: ${item.status}\n指标/版本: ${item.version}\n说明: ${item.msg}`;
         html += `
-          <div class="card" style="margin-bottom: 12px;">
-            <div class="card-header">
-              <div class="card-title">
-                <span>${statusIcon}</span>
-                <span>${item.name}</span>
+          <div class="precheck-item-card" style="background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px; padding: 7px 10px; display: flex; flex-direction: column; justify-content: space-between; min-height: 52px; transition: border-color 0.2s;">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+              <div style="display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden;">
+                <span style="font-size: 0.95rem; line-height: 1;">${statusIcon}</span>
+                <span style="font-weight: 700; font-size: 0.82rem; color: #ffffff; white-space: nowrap;">${item.name}</span>
+                <span style="font-family: monospace; font-size: 0.72rem; color: var(--accent-cyan); background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.2); padding: 1px 6px; border-radius: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${item.version || ''}">${item.version || '已就绪'}</span>
               </div>
-              <div style="display: flex; gap: 8px; align-items: center;">
-                <button class="btn-copy-mini" onclick="copyToClipboard(${JSON.stringify(copyText)}, '指标信息已复制')">📋 复制</button>
-                ${item.can_fix ? `<button class="btn btn-primary btn-sm" onclick="TabPrecheck.fixItem('${key}')">🛠️ 一键修复</button>` : ''}
+              <div style="display: flex; gap: 4px; align-items: center; flex-shrink: 0;">
+                <button class="btn-copy-mini" onclick="copyToClipboard(${JSON.stringify(copyText)}, '指标信息已复制')" style="font-size: 0.68rem; padding: 1px 5px;" title="复制指标信息">📋 复制</button>
+                ${item.can_fix ? `<button class="btn btn-primary btn-xs" onclick="TabPrecheck.fixItem('${key}')" style="font-size: 0.7rem; font-weight: 700; padding: 2px 6px; white-space: nowrap;">🛠️ 修复</button>` : ''}
               </div>
             </div>
-            <div style="font-size: 0.85rem; color: #ffffff; font-family: monospace; margin-bottom: 4px; user-select: text;">${item.version}</div>
-            <div style="font-size: 0.8rem; color: var(--text-secondary); user-select: text;">${item.msg}</div>
+            <div style="font-size: 0.72rem; color: var(--text-secondary); line-height: 1.3; user-select: text; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px;" title="${item.msg || ''}">
+              ${item.msg}
+            </div>
           </div>
         `;
       }
@@ -427,13 +436,49 @@ const TabImage = {
     if (inputEl) {
       inputEl.value = id;
     }
+    this.validateInputId(false);
     this.updateWriteIdButtonText();
+  },
+
+  validateInputId(showIfInvalid = false) {
+    const inputEl = document.getElementById('tp-robot-id-select');
+    const errEl = document.getElementById('tp-robot-id-error');
+    const rawValue = inputEl ? inputEl.value : '';
+    const valResult = window.validateRobotId ? window.validateRobotId(rawValue) : { valid: true, cleanId: rawValue.trim().toUpperCase(), error: '' };
+
+    if (!valResult.valid) {
+      if (showIfInvalid) {
+        if (errEl) {
+          errEl.innerHTML = `⚠️ ${valResult.error}`;
+          errEl.style.display = 'block';
+        }
+        if (inputEl) {
+          inputEl.classList.add('input-invalid');
+        }
+      }
+      return valResult;
+    }
+
+    if (errEl) {
+      errEl.innerHTML = '';
+      errEl.style.display = 'none';
+    }
+    if (inputEl) {
+      inputEl.classList.remove('input-invalid');
+    }
+    return valResult;
   },
 
   updateWriteIdButtonText() {
     const inputEl = document.getElementById('tp-robot-id-select');
     const val = inputEl ? inputEl.value.trim().toUpperCase() : '';
     const btn = document.getElementById('tp-btn-write-autostart');
+    const errEl = document.getElementById('tp-robot-id-error');
+
+    if (errEl && errEl.style.display !== 'none') {
+      this.validateInputId(true);
+    }
+
     if (!btn) return;
     const idLabel = val ? ` [${val}]` : '';
     btn.disabled = false;
@@ -783,7 +828,7 @@ const TabImage = {
 
   async startContainer() {
     const select = document.getElementById('tp-docker-image-select');
-    const imgName = select && select.value ? select.value : 'rl_cu118:2.0';
+    const imageName = select && select.value ? select.value : 'rl_cu118:2.0';
 
     const btnStart = document.getElementById('tp-btn-start-container');
     if (btnStart) {
@@ -796,8 +841,7 @@ const TabImage = {
       // 步骤 1 (优先): 优先配置开机自启并写入 Robot ID
       this.appendLog('【步骤 1/2 优先执行】正在配置开机自启并写入 Robot ID...', false, '⚙️');
       const inputEl = document.getElementById('tp-robot-id-select');
-      const rawVal = inputEl && inputEl.value.trim() ? inputEl.value : 'A';
-      const valResult = window.validateRobotId ? window.validateRobotId(rawVal) : { valid: true, cleanId: rawVal.trim().toUpperCase(), error: '' };
+      const valResult = this.validateInputId(true);
       if (!valResult.valid) {
         this.appendLog(`❌ 校验失败: ${valResult.error}`, true);
         showToast(valResult.error, 'error');
@@ -859,9 +903,7 @@ const TabImage = {
 
   async writeAutostart() {
     const inputEl = document.getElementById('tp-robot-id-select');
-    const rawValue = inputEl ? inputEl.value : '';
-
-    const valResult = window.validateRobotId ? window.validateRobotId(rawValue) : { valid: true, cleanId: rawValue.trim().toUpperCase(), error: '' };
+    const valResult = this.validateInputId(true);
     if (!valResult.valid) {
       showToast(valResult.error, 'error');
       if (inputEl) inputEl.focus();
@@ -1115,8 +1157,8 @@ const TabImage = {
   },
 
   async checkAndFixEnvironment() {
-    this.appendLog('正在对机器人环境进行完整巡检与权限修复...', false, '🔍');
-    showToast('正在巡检与修复机器人运行环境...', 'info');
+    this.appendLog('正在对机器人环境与底层权限进行检测并自动修复...', false, '🛠️');
+    showToast('正在检测并修复机器人运行环境...', 'info');
 
     try {
       const res = await API.checkRobotEnv();
@@ -1125,18 +1167,18 @@ const TabImage = {
           this.appendLog(line, isErr);
         }, async (ok) => {
           if (ok) {
-            showToast('✅ 机器人环境巡检与权限修复已完成', 'success');
+            showToast('✅ 机器人环境与权限修复已完成', 'success');
             await this.checkStatus();
             await this.checkProcessStatus();
           } else {
-            showToast('环境巡检发现警告或需要手动设置，请查看日志', 'warning');
+            showToast('环境修复检测发现警告，请查看日志', 'warning');
           }
         });
       } else {
-        this.appendLog(`环境巡检请求失败: ${res?.msg || '未知错误'}`, true);
+        this.appendLog(`环境修复请求失败: ${res?.msg || '未知错误'}`, true);
       }
     } catch (e) {
-      this.appendLog(`环境巡检异常: ${e.message || e}`, true);
+      this.appendLog(`环境修复异常: ${e.message || e}`, true);
     }
   }
 };

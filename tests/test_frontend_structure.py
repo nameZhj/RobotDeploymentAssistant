@@ -43,7 +43,6 @@ class FrontendStructureTest(unittest.TestCase):
             "components/ops_tabs/tab_dance_update.html",
             "components/ops_tabs/tab_3d_player.html",
             "components/ops_tabs/tab_logs.html",
-            "components/ops_tabs/tab_manual.html",
             "components/ops_tabs/tab_tutorial.html",
         ]
         for comp in components:
@@ -91,7 +90,6 @@ class FrontendStructureTest(unittest.TestCase):
             "btn-start-upload",
             "btn-docker-load",
             "select-robot-id",
-            "select-docker-image",
             "machine-id-display",
             "license-dropzone",
             "btn-deploy-license",
@@ -122,6 +120,7 @@ class FrontendStructureTest(unittest.TestCase):
         self.assertIn('data-cmd="STAND"', self.html)
         self.assertIn('data-cmd="GAIT"', self.html)
         self.assertIn('data-cmd="PASSIVE"', self.html)
+        self.assertIn('data-cmd="STOP"', self.html)
         self.assertIn('data-cmd="FORWARD,2"', self.html)
         self.assertIn('data-cmd="BACKWARD,2"', self.html)
 
@@ -153,12 +152,16 @@ class FrontendStructureTest(unittest.TestCase):
             "tab-logs",
             "log-console-content",
             "chk-log-timestamp",
-            "tab-manual",
-            "manual-console-output",
             "tab-tutorial",
         ]
         for eid in expected_ids:
             self.assertIn(f'id="{eid}"', self.html, f"运维中心或子标签页元素缺失: {eid}")
+
+        # 验证合并后的“舞蹈与镜像管理”侧边栏与卡片标题
+        self.assertIn("舞蹈与镜像管理", self.html, "未在页面中找到合并后的‘舞蹈与镜像管理’标签文本")
+
+        # 验证合并后的“网络与 License 管理”侧边栏与卡片标题
+        self.assertIn("网络与 License 管理", self.html, "未在页面中找到合并后的‘网络与 License 管理’标签文本")
 
     def test_07_modals_and_containers(self):
         """测试流式修复弹窗、添加机器人弹窗和全局 Toast 容器"""
@@ -181,7 +184,6 @@ class FrontendStructureTest(unittest.TestCase):
             "js/dance_player3d.js",
             "js/wizard.js",
             "js/log_viewer.js",
-            "js/manual_mode.js",
             "js/tab_panels.js",
             "js/app.js",
         ]

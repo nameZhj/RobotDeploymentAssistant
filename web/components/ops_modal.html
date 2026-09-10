@@ -1,73 +1,59 @@
-  <!-- ========================================================= -->
-  <!-- 运维与调试中心 独立模态浮窗 (左侧菜单 + 右侧内容) -->
-  <!-- ========================================================= -->
-  <div class="ops-modal-overlay" id="ops-modal" style="display: none;">
-    <div class="ops-modal-container">
-      <!-- 弹窗顶部栏 -->
-      <div class="ops-modal-header">
-        <div class="ops-modal-title">
-          <span style="font-size: 1.35rem;">🛠️</span>
-          <span style="font-weight: 700; font-size: 1.05rem; letter-spacing: 0.5px;">VSISLAB 机器人运维与调试中心</span>
-          <span class="card-badge" style="background: rgba(0, 210, 255, 0.15); color: var(--accent-cyan); font-size: 0.72rem; padding: 2px 8px; border-radius: 4px;">高级维护</span>
-        </div>
-        <button class="ops-modal-close" id="btn-close-ops-modal" title="关闭运维与调试中心 (Esc)">✕</button>
+<!-- ========================================================= -->
+<!-- 运维与调试中心 独立模态浮窗 (左侧菜单 + 右侧内容) -->
+<!-- ========================================================= -->
+<div class="ops-modal-overlay" id="ops-modal" style="display: none;">
+  <div class="ops-modal-container">
+    <!-- 弹窗顶部栏 -->
+    <div class="ops-modal-header">
+      <div class="ops-modal-title">
+        <span style="font-size: 1.35rem;">🛠️</span>
+        <span style="font-weight: 700; font-size: 1.05rem; letter-spacing: 0.5px;">VSISLAB 机器人运维与调试中心</span>
+        <span class="card-badge"
+          style="background: rgba(0, 210, 255, 0.15); color: var(--accent-cyan); font-size: 0.72rem; padding: 2px 8px; border-radius: 4px;">高级维护</span>
       </div>
+      <button class="ops-modal-close" id="btn-close-ops-modal" title="关闭运维与调试中心 (Esc)">✕</button>
+    </div>
 
-      <!-- 弹窗主体：左侧菜单栏 + 右侧内容区 (保持原样式) -->
-      <div class="ops-modal-body">
-        <!-- 左侧菜单栏 -->
-        <nav class="ops-sidebar-tabs">
-          <button class="ops-tab-btn tab-btn active" data-tab="tab-3d-player">
-            <span class="tab-icon">🕺</span>
-            <span>3D 舞蹈预览与动作</span>
-          </button>
-          <button class="ops-tab-btn tab-btn" data-tab="tab-dance-update">
-            <span class="tab-icon">💃</span>
-            <span>舞蹈动作更新</span>
-          </button>
-          <button class="ops-tab-btn tab-btn" data-tab="tab-precheck">
-            <span class="tab-icon">🛠️</span>
-            <span>环境预检与修复</span>
-          </button>
-          <button class="ops-tab-btn tab-btn" data-tab="tab-image">
-            <span class="tab-icon">📦</span>
-            <span>镜像与容器管理</span>
-          </button>
-          <button class="ops-tab-btn tab-btn" data-tab="tab-network">
-            <span class="tab-icon">🌐</span>
-            <span>设备发现与网卡</span>
-          </button>
-          <button class="ops-tab-btn tab-btn" data-tab="tab-license">
-            <span class="tab-icon">🔑</span>
-            <span>机器码与 License</span>
-          </button>
-          <button class="ops-tab-btn tab-btn" data-tab="tab-logs">
-            <span class="tab-icon">📋</span>
-            <span>实时日志与诊断</span>
-          </button>
-          <button class="ops-tab-btn tab-btn" data-tab="tab-manual">
-            <span class="tab-icon">⌨️</span>
-            <span>手动模式</span>
-          </button>
-          <button class="ops-tab-btn tab-btn" data-tab="tab-tutorial">
-            <span class="tab-icon">📖</span>
-            <span>使用教程与图解</span>
-          </button>
-        </nav>
+    <!-- 弹窗主体：左侧菜单栏 + 右侧内容区 (保持原样式) -->
+    <div class="ops-modal-body">
+      <!-- 左侧菜单栏 -->
+      <nav class="ops-sidebar-tabs">
+        <button class="ops-tab-btn tab-btn active" data-tab="tab-3d-player">
+          <span class="tab-icon">🕺</span>
+          <span>舞蹈与动作预览</span>
+        </button>
+        <button class="ops-tab-btn tab-btn" data-tab="tab-image">
+          <span class="tab-icon">💃</span>
+          <span>舞蹈与镜像管理</span>
+        </button>
+        <button class="ops-tab-btn tab-btn" data-tab="tab-precheck">
+          <span class="tab-icon">🛠️</span>
+          <span>环境预检与修复</span>
+        </button>
+        <button class="ops-tab-btn tab-btn" data-tab="tab-network">
+          <span class="tab-icon">🌐</span>
+          <span>网络与 License 管理</span>
+        </button>
+        <button class="ops-tab-btn tab-btn" data-tab="tab-logs">
+          <span class="tab-icon">📋</span>
+          <span>实时日志与诊断</span>
+        </button>
+        <button class="ops-tab-btn tab-btn" data-tab="tab-tutorial">
+          <span class="tab-icon">📖</span>
+          <span>使用教程与图解</span>
+        </button>
+      </nav>
 
-        <!-- 右侧主体内容容器 -->
-        <div class="ops-content-container">
+      <!-- 右侧主体内容容器 -->
+      <div class="ops-content-container">
 
-          {% include 'components/ops_tabs/tab_network.html' %}
-          {% include 'components/ops_tabs/tab_precheck.html' %}
-          {% include 'components/ops_tabs/tab_image.html' %}
-          {% include 'components/ops_tabs/tab_license.html' %}
-          {% include 'components/ops_tabs/tab_dance_update.html' %}
-          {% include 'components/ops_tabs/tab_3d_player.html' %}
-          {% include 'components/ops_tabs/tab_logs.html' %}
-          {% include 'components/ops_tabs/tab_manual.html' %}
-          {% include 'components/ops_tabs/tab_tutorial.html' %}
-        </div>
+        {% include 'components/ops_tabs/tab_network.html' %}
+        {% include 'components/ops_tabs/tab_precheck.html' %}
+        {% include 'components/ops_tabs/tab_image.html' %}
+        {% include 'components/ops_tabs/tab_3d_player.html' %}
+        {% include 'components/ops_tabs/tab_logs.html' %}
+        {% include 'components/ops_tabs/tab_tutorial.html' %}
       </div>
     </div>
   </div>
+</div>

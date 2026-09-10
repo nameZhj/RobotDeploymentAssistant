@@ -1,7 +1,9 @@
 /**
- * 3D 舞蹈骨骼播放器 (基于 WebGL & Three.js 仿真渲染，50fps)
+ * 3D 舞蹈仿真播放器 (基于 WebGL & Three.js，支持 50fps 真实机器人 3D 网格模型与运动骨骼)
  */
 class DancePlayer3D {
+  static geometryCache = {};
+
   constructor(viewportId) {
     this.viewport = document.getElementById(viewportId);
     this.currentDanceData = null;
@@ -19,13 +21,60 @@ class DancePlayer3D {
     this.renderer = null;
     this.jointMeshes = [];
     this.boneMeshes = [];
-    this.trailLine = null;
-    this.trailPoints = [];
+    this.headMesh = null;
+    this.neckMesh = null;
+
+    // 真实机器人 3D 网格模型与层级运动学组件
+    this.robotPartsGroup = null;
+    this.robotMeshParts = [];
+    this.robotLinkNodes = {};
+    this.robotJointPivots = {};
+    this.robotRootLink = null;
+    this.hasRobotModel = false;
+    this.isLoadingRobotModel = false;
 
     // 控制器对象
     this.controls = null;
 
     this.initThree();
+  }
+
+  /**
+   * 原生高效解析二进制 STL 资产为 THREE.BufferGeometry
+   */
+  static parseBinarySTL(buffer) {
+    const reader = new DataView(buffer);
+    const faces = reader.getUint32(80, true);
+    const dataOffset = 84;
+    const faceLength = 50;
+    const positions = new Float32Array(faces * 9);
+    const normals = new Float32Array(faces * 9);
+
+    for (let face = 0; face < faces; face++) {
+      const start = dataOffset + face * faceLength;
+      const nx = reader.getFloat32(start, true);
+      const ny = reader.getFloat32(start + 4, true);
+      const nz = reader.getFloat32(start + 8, true);
+
+      for (let i = 1; i <= 3; i++) {
+        const vertexstart = start + i * 12;
+        const idx = face * 9 + (i - 1) * 3;
+        positions[idx] = reader.getFloat32(vertexstart, true);
+        positions[idx + 1] = reader.getFloat32(vertexstart + 4, true);
+        positions[idx + 2] = reader.getFloat32(vertexstart + 8, true);
+        normals[idx] = nx;
+        normals[idx + 1] = ny;
+        normals[idx + 2] = nz;
+      }
+    }
+
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geom.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    try {
+      geom.computeVertexNormals();
+    } catch (e) {}
+    return geom;
   }
 
   initThree() {
@@ -35,69 +84,87 @@ class DancePlayer3D {
 
     // 1. 场景
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x070a12);
-    this.scene.fog = new THREE.FogExp2(0x070a12, 0.15);
+    this.scene.background = new THREE.Color(0x0a0f1d);
+    // 移除阻隔光照的浓厚死黑雾气，确保高对比度科技通透视野
+    this.scene.fog = null;
 
     // 2. 相机
     this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 50);
     this.camera.up.set(0, 0, 1); // 设置 Z 轴向上
+    this.scene.add(this.camera);
 
-    // 3. 渲染器（必须先于 OrbitControls 创建）
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    // 3. 渲染器
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(window.devicePixelRatio);
-    this.renderer.shadowMap.enabled = true;
+    if (this.renderer.shadowMap) {
+      this.renderer.shadowMap.enabled = true;
+    }
     this.viewport.appendChild(this.renderer.domElement);
 
-    // 4. 轨道控制器（依赖 renderer.domElement，须在渲染器之后初始化）
+    // 4. 轨道控制器
     if (THREE.OrbitControls) {
       this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
       this.controls.enableDamping = true;
       this.controls.dampingFactor = 0.05;
-      this.controls.maxPolarAngle = Math.PI / 2 + 0.1;
-      this.controls.minDistance = 1.0;
+      this.controls.maxPolarAngle = Math.PI / 2 + 0.05;
+      this.controls.minDistance = 0.5;
       this.controls.maxDistance = 10.0;
     }
 
     this.resetCamera();
 
-    // 5. 灯光
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-    this.scene.add(ambientLight);
+    // 5. 摄影棚级三点布光系统 + 相机跟随探照灯 (彻底解决机器人黑成剪影、无法看清细节的异常)
+    // 基础环境半球光 (天际浅蓝冰白，地面深沉微光)
+    const hemiLight = new THREE.HemisphereLight(0xe0f2fe, 0x1e293b, 1.15);
+    this.scene.add(hemiLight);
 
-    const dirLight1 = new THREE.DirectionalLight(0x00f0ff, 1.2);
-    dirLight1.position.set(3, 5, 4);
-    this.scene.add(dirLight1);
+    // 正前方主光源 (Key Light) - 照射机器人前胸、面罩与双臂
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.4);
+    keyLight.position.set(2.0, -3.5, 3.0);
+    this.scene.add(keyLight);
 
-    const dirLight2 = new THREE.DirectionalLight(0x8b5cf6, 0.8);
-    dirLight2.position.set(-3, -3, 2);
-    this.scene.add(dirLight2);
+    // 侧前辅助光 (Fill Light) - 柔化阴影与机械缝隙
+    const fillLight = new THREE.DirectionalLight(0x7dd3fc, 0.85);
+    fillLight.position.set(-2.5, -2.5, 2.0);
+    this.scene.add(fillLight);
 
-    // 5. 赛博网格地面
+    // 顶部背面轮廓光 (Rim Light) - 勾勒机械外壳与肩甲高光线条
+    const rimLight = new THREE.DirectionalLight(0x38bdf8, 1.2);
+    rimLight.position.set(0, 3.0, 2.8);
+    this.scene.add(rimLight);
+
+    // 相机跟随补光 (Headlight) - 无论用户如何旋转视角，正面细节始终清晰明亮
+    const headlight = new THREE.PointLight(0xffffff, 0.45, 15);
+    this.camera.add(headlight);
+
+    // 6. 赛博网格地面
     const gridHelper = new THREE.GridHelper(8, 24, 0x00d2ff, 0x1f2937);
     gridHelper.rotation.x = Math.PI / 2; // Z 为高轴
     gridHelper.position.z = 0;
     this.scene.add(gridHelper);
 
-    // 6. 初始化关节点与骨骼连接线
+    // 7. 机器人 3D 实体部件容器
+    this.robotPartsGroup = new THREE.Group();
+    this.scene.add(this.robotPartsGroup);
+
+    // 8. 默认线框骨骼网格
     this.buildSkeletonMeshes();
 
-    // 渲染循环
+    // 渲染主循环
     const renderLoop = (time) => {
       this.animFrameId = requestAnimationFrame(renderLoop);
       this.update(time);
-      if (this.controls) this.controls.update(); // 必须调用以更新阻尼
+      if (this.controls) this.controls.update();
       this.renderer.render(this.scene, this.camera);
     };
     requestAnimationFrame(renderLoop);
 
-    // 视口自适应
     window.addEventListener('resize', () => this.onResize());
   }
 
   buildSkeletonMeshes(jointCount = 21, customBonePairs = null) {
     this.jointCount = jointCount;
-    // 清理可能已有的 mesh
+
     if (this.jointMeshes && this.jointMeshes.length > 0) {
       for (const jm of this.jointMeshes) {
         this.scene.remove(jm);
@@ -126,7 +193,6 @@ class DancePlayer3D {
     }
     this.boneMeshes = [];
 
-    // 关节球体
     const jointGeo = new THREE.SphereGeometry(0.024, 16, 16);
     const jointMat = new THREE.MeshStandardMaterial({
       color: 0x00f0ff,
@@ -146,15 +212,14 @@ class DancePlayer3D {
       const isHead = (jointCount === 21 && i === 4);
       const mesh = new THREE.Mesh(isHead ? headGeo : jointGeo, isHead ? headMat : jointMat);
       mesh.position.set(0, 0, 0);
-      mesh.visible = false;
+      mesh.visible = !this.hasRobotModel;
       this.scene.add(mesh);
       this.jointMeshes.push(mesh);
     }
 
-    // 30 关节模型额外创建独立的头部球体与颈椎连接骨骼
     if (jointCount >= 29) {
       this.headMesh = new THREE.Mesh(headGeo, headMat);
-      this.headMesh.visible = false;
+      this.headMesh.visible = !this.hasRobotModel;
       this.scene.add(this.headMesh);
 
       const neckGeom = new THREE.CylinderGeometry(0.012, 0.012, 1, 8);
@@ -164,12 +229,11 @@ class DancePlayer3D {
         roughness: 0.3,
         metalness: 0.5
       }));
-      neckMesh.visible = false;
+      neckMesh.visible = !this.hasRobotModel;
       this.scene.add(neckMesh);
       this.neckMesh = neckMesh;
     }
 
-    // 骨骼连线默认配置
     const default21Bones = [
       [0, 1], [1, 2], [2, 3], [3, 4],     // 躯干
       [2, 5], [5, 6], [6, 7], [7, 8],     // 左臂
@@ -179,20 +243,14 @@ class DancePlayer3D {
     ];
 
     const default30Bones = [
-      // 躯干与胸腔 (0: pelvis -> 6: waist_roll -> 12, 13: shoulders)
       [0, 6], [6, 12], [6, 13], [12, 13],
-      // 左腿 (0 -> 1 -> 4 -> 7 -> 10 -> 14 -> 18)
       [0, 1], [1, 4], [4, 7], [7, 10], [10, 14], [14, 18],
-      // 右腿 (0 -> 2 -> 5 -> 8 -> 11 -> 15 -> 19)
       [0, 2], [2, 5], [5, 8], [8, 11], [11, 15], [15, 19],
-      // 左臂 (12 -> 16 -> 20 -> 22 -> 24 -> 26 -> 28)
       [12, 16], [16, 20], [20, 22], [22, 24], [24, 26], [26, 28],
-      // 右臂 (13 -> 17 -> 21 -> 23 -> 25 -> 27 -> 29)
       [13, 17], [17, 21], [21, 23], [23, 25], [25, 27], [27, 29]
     ];
 
     const bonePairs = customBonePairs || (jointCount >= 29 ? default30Bones : default21Bones);
-
     const boneMat = new THREE.MeshStandardMaterial({
       color: 0x38bdf8,
       emissive: 0x0284c7,
@@ -206,27 +264,308 @@ class DancePlayer3D {
       if (p1 < jointCount && p2 < jointCount) {
         const geom = new THREE.CylinderGeometry(0.012, 0.012, 1, 8);
         const mesh = new THREE.Mesh(geom, boneMat);
-        mesh.visible = false;
+        mesh.visible = !this.hasRobotModel;
         this.scene.add(mesh);
         this.boneMeshes.push({ mesh, p1, p2 });
       }
     }
   }
 
-  loadDance(danceData) {
+  clear() {
+    this.isPlaying = false;
+    this.currentDanceData = null;
+    this.currentFrame = 0;
+    this.hasRobotModel = false;
+    this.isLoadingRobotModel = false;
+    this.basePose = null;
+    this.robotLinkNodes = {};
+    this.robotJointPivots = {};
+    this.robotRootLink = null;
+
+    // 清空 3D 机器人部件
+    if (this.robotPartsGroup) {
+      while (this.robotPartsGroup.children.length > 0) {
+        const obj = this.robotPartsGroup.children[0];
+        this.robotPartsGroup.remove(obj);
+        if (obj.geometry) obj.geometry.dispose();
+      }
+    }
+    this.robotMeshParts = [];
+
+    // 清空骨骼
+    this.setSkeletonVisibility(false);
+    if (this.jointMeshes) {
+      for (const jm of this.jointMeshes) {
+        this.scene.remove(jm);
+        if (jm.geometry) jm.geometry.dispose();
+      }
+      this.jointMeshes = [];
+    }
+    if (this.boneMeshes) {
+      for (const bm of this.boneMeshes) {
+        this.scene.remove(bm.mesh);
+        if (bm.mesh.geometry) bm.mesh.geometry.dispose();
+      }
+      this.boneMeshes = [];
+    }
+    if (this.headMesh) {
+      this.scene.remove(this.headMesh);
+      if (this.headMesh.geometry) this.headMesh.geometry.dispose();
+      this.headMesh = null;
+    }
+    if (this.neckMesh) {
+      this.scene.remove(this.neckMesh);
+      if (this.neckMesh.geometry) this.neckMesh.geometry.dispose();
+      this.neckMesh = null;
+    }
+
+    // 重置进度条与时间显示
+    const scrubber = document.getElementById('dance-scrubber');
+    if (scrubber) { scrubber.value = 0; scrubber.max = 0; }
+    const timeText = document.getElementById('dance-time-text');
+    if (timeText) { timeText.textContent = '0.0s / 0.0s'; }
+    this.updatePlayBtnState();
+  }
+
+  async loadRobotMeshModel(modelInfo) {
+    if (!modelInfo || !modelInfo.parts || modelInfo.parts.length === 0) return;
+    this.isLoadingRobotModel = true;
+    this.hasRobotModel = true;
+
+    // 清理旧的机器人零件与层级树
+    while (this.robotPartsGroup.children.length > 0) {
+      const obj = this.robotPartsGroup.children[0];
+      this.robotPartsGroup.remove(obj);
+      if (obj.geometry) obj.geometry.dispose();
+    }
+    this.robotMeshParts = [];
+    this.robotLinkNodes = {};
+    this.robotJointPivots = {};
+    this.robotRootLink = null;
+
+    // 严密隐藏动捕球体与圆柱骨架
+    this.setSkeletonVisibility(false);
+
+    // 材质方案：Unitree G1 科技金属与碳素装甲 (双面渲染，杜绝翻转面破洞)
+    const titaniumMat = new THREE.MeshStandardMaterial({
+      color: 0xcfd8e3,       // 亮色科技钛银金属
+      metalness: 0.85,
+      roughness: 0.22,
+      side: THREE.DoubleSide
+    });
+
+    const armorMat = new THREE.MeshStandardMaterial({
+      color: 0x334155,       // Slate-700 哑光碳素装甲，立体沉稳不黑成剪影
+      metalness: 0.60,
+      roughness: 0.35,
+      side: THREE.DoubleSide
+    });
+
+    const rubberHandMat = new THREE.MeshStandardMaterial({
+      color: 0x1e293b,       // 橡胶夹爪碳黑磨砂质感
+      metalness: 0.20,
+      roughness: 0.85,
+      side: THREE.DoubleSide
+    });
+
+    const visorMat = new THREE.MeshStandardMaterial({
+      color: 0x0284c7,       // 头部透光发光面罩
+      emissive: 0x00d2ff,
+      emissiveIntensity: 0.70,
+      metalness: 0.90,
+      roughness: 0.10,
+      side: THREE.DoubleSide
+    });
+
+    // 1. 构建 Link 节点映射
+    const links = modelInfo.links || [];
+    const linkMap = {};
+    for (const item of links) {
+      const linkName = (typeof item === 'string') ? item : (item.name || item.link_name);
+      if (!linkName) continue;
+      const grp = new THREE.Group();
+      grp.name = 'link_' + linkName;
+      linkMap[linkName] = grp;
+    }
+    this.robotLinkNodes = linkMap;
+
+    // 2. 根据 URDF 关节层级组装 Kinematic Tree (运动学父子层级关系)
+    const joints = modelInfo.joints || [];
+    const jointPivots = {};
+    const parentLinkNames = new Set();
+    const childLinkNames = new Set();
+
+    for (const j of joints) {
+      if (!j.parent || !j.child) continue;
+      parentLinkNames.add(j.parent);
+      childLinkNames.add(j.child);
+
+      // 若节点在链接映射中尚未初始化，则动态补全
+      if (!linkMap[j.parent]) {
+        linkMap[j.parent] = new THREE.Group();
+        linkMap[j.parent].name = 'link_' + j.parent;
+      }
+      if (!linkMap[j.child]) {
+        linkMap[j.child] = new THREE.Group();
+        linkMap[j.child].name = 'link_' + j.child;
+      }
+
+      const parentNode = linkMap[j.parent];
+      const childNode = linkMap[j.child];
+
+      const pivot = new THREE.Group();
+      pivot.name = 'joint_' + j.name;
+
+      // 施加 URDF 关节原点相对位移
+      if (j.origin_xyz) {
+        pivot.position.set(j.origin_xyz[0], j.origin_xyz[1], j.origin_xyz[2]);
+      }
+      // 施加 URDF 关节原点相对旋转 (RPY)
+      if (j.origin_rpy) {
+        pivot.rotation.order = 'ZYX';
+        const euler = new THREE.Euler(j.origin_rpy[0], j.origin_rpy[1], j.origin_rpy[2], 'ZYX');
+        pivot.quaternion.setFromEuler(euler);
+      }
+
+      parentNode.add(pivot);
+      pivot.add(childNode);
+
+      const axisVec = new THREE.Vector3(...(j.axis || [0, 0, 1])).normalize();
+      jointPivots[j.name] = {
+        pivot,
+        defaultQuat: pivot.quaternion.clone(),
+        axis: axisVec,
+        type: j.type
+      };
+    }
+    this.robotJointPivots = jointPivots;
+
+    // 3. 确定 Root Link 并挂载到零件主容器
+    let rootName = modelInfo.root_link || 'pelvis';
+    if (!linkMap[rootName]) {
+      for (const p of parentLinkNames) {
+        if (!childLinkNames.has(p)) {
+          rootName = p;
+          break;
+        }
+      }
+    }
+    this.robotRootLink = linkMap[rootName] || linkMap['pelvis'];
+    if (this.robotRootLink) {
+      this.robotPartsGroup.add(this.robotRootLink);
+    }
+
+    // 4. 并行加载 STL 3D 网格并挂载至对应 Link 节点
+    const loadPromises = modelInfo.parts.map(async (part) => {
+      try {
+        let geom = DancePlayer3D.geometryCache[part.mesh_url];
+        if (!geom) {
+          const resp = await fetch(part.mesh_url);
+          if (!resp.ok) return null;
+          const buf = await resp.arrayBuffer();
+          geom = DancePlayer3D.parseBinarySTL(buf);
+          DancePlayer3D.geometryCache[part.mesh_url] = geom;
+        }
+
+        const lName = (part.link_name || '').toLowerCase();
+        let mat = titaniumMat;
+        if (lName.includes('rubber_hand') || lName.includes('palm') || lName.includes('hand')) {
+          mat = rubberHandMat;
+        } else if (lName.includes('head') || lName.includes('visor') || lName.includes('d455') || lName.includes('face')) {
+          mat = visorMat;
+        } else if (lName.includes('torso') || lName.includes('pelvis') || lName.includes('waist')) {
+          mat = armorMat;
+        }
+
+        const mesh = new THREE.Mesh(geom, mat);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+
+        const targetLink = this.robotLinkNodes[part.link_name];
+        if (targetLink) {
+          targetLink.add(mesh);
+        } else {
+          this.robotPartsGroup.add(mesh);
+        }
+
+        return {
+          mesh,
+          part,
+          joint_idx: (typeof part.joint_idx === 'number') ? part.joint_idx : 0,
+          link_name: part.link_name,
+          base_pos: part.base_pos || null,
+          origin_xyz: part.origin_xyz || [0, 0, 0],
+          origin_rpy: part.origin_rpy || [0, 0, 0]
+        };
+      } catch (err) {
+        console.warn('加载机器人 3D 部件失败:', part.mesh_url, err);
+        return null;
+      }
+    });
+
+    const loaded = await Promise.all(loadPromises);
+    this.robotMeshParts = loaded.filter(Boolean);
+    this.hasRobotModel = this.robotMeshParts.length > 0;
+    this.isLoadingRobotModel = false;
+
+    // 成功装配后再次确保骨架彻底隐藏
+    if (this.hasRobotModel) {
+      this.setSkeletonVisibility(false);
+    }
+    this.renderFrame(this.currentFrame || 0);
+  }
+
+  setSkeletonVisibility(visible) {
+    if (this.jointMeshes) this.jointMeshes.forEach(m => m.visible = visible);
+    if (this.boneMeshes) this.boneMeshes.forEach(b => b.mesh.visible = visible);
+    if (this.headMesh) this.headMesh.visible = visible;
+    if (this.neckMesh) this.neckMesh.visible = visible;
+  }
+
+  async loadDance(danceData) {
     this.currentDanceData = danceData;
     const jointCount = danceData.joint_count || (danceData.frames && danceData.frames[0] ? danceData.frames[0].length : 21);
-    this.buildSkeletonMeshes(jointCount, danceData.bone_pairs);
+
+    // 检查是否有 3D 机器人网格模型
+    const modelInfo = danceData.model_info;
+    if (modelInfo && modelInfo.has_robot_model && modelInfo.parts && modelInfo.parts.length > 0) {
+      this.hasRobotModel = true;
+      this.basePose = (modelInfo.base_pose && modelInfo.base_pose.length > 0) 
+        ? modelInfo.base_pose 
+        : (danceData.frames ? danceData.frames[0] : null);
+      this.setSkeletonVisibility(false);
+      await this.loadRobotMeshModel(modelInfo);
+    } else {
+      this.hasRobotModel = false;
+      this.basePose = null;
+      // 清空机器人零件与树形节点
+      while (this.robotPartsGroup.children.length > 0) {
+        const obj = this.robotPartsGroup.children[0];
+        this.robotPartsGroup.remove(obj);
+        if (obj.geometry) obj.geometry.dispose();
+      }
+      this.robotMeshParts = [];
+      this.robotLinkNodes = {};
+      this.robotJointPivots = {};
+      this.robotRootLink = null;
+      this.buildSkeletonMeshes(jointCount, danceData.bone_pairs);
+      this.setSkeletonVisibility(true);
+    }
+
     this.currentFrame = 0;
     this.fps = danceData.fps || 50.0;
     this.isPlaying = true;
 
-    // 根据第一帧的初始位置重设相机视角
-    if (danceData.frames && danceData.frames[0] && danceData.frames[0][0]) {
-      const p0 = danceData.frames[0][0];
-      if (this.controls) {
-        this.controls.target.set(p0[0], p0[1], p0[2]);
-        this.camera.position.set(p0[0], p0[1] - 2.6, p0[2] + 0.5);
+    // 视角对齐 (居中对焦于机器人躯干核心)
+    if (this.controls) {
+      if (modelInfo && modelInfo.has_robot_model) {
+        this.controls.target.set(0, 0, 0.65);
+        this.camera.position.set(1.4, -2.0, 1.35);
+        this.controls.update();
+      } else if (danceData.frames && danceData.frames[0] && danceData.frames[0][0]) {
+        const p0 = danceData.frames[0][0];
+        this.controls.target.set(p0[0], p0[1], p0[2] || 0.7);
+        this.camera.position.set(p0[0], p0[1] - 2.5, (p0[2] || 0.7) + 0.3);
         this.controls.update();
       }
     }
@@ -236,90 +575,157 @@ class DancePlayer3D {
   }
 
   renderFrame(frameIdx) {
-    if (!this.currentDanceData || !this.currentDanceData.frames) return;
+    if (!this.currentDanceData || !this.currentDanceData.frames || this.currentDanceData.frames.length === 0) {
+      this.setSkeletonVisibility(false);
+      if (this.robotPartsGroup) {
+        this.robotPartsGroup.children.forEach(c => c.visible = false);
+      }
+      return;
+    }
     const frames = this.currentDanceData.frames;
     if (frameIdx >= frames.length) frameIdx = frames.length - 1;
     const frame = frames[frameIdx];
-
-    // 更新关节坐标 (使用绝对统一的机器人基坐标系 X, Y, Z)
-    for (let i = 0; i < this.jointMeshes.length; i++) {
-      if (frame[i]) {
-        const [x, y, z] = frame[i];
-        this.jointMeshes[i].position.set(x, y, z);
-        this.jointMeshes[i].visible = true;
-      } else {
-        this.jointMeshes[i].visible = false;
-      }
-    }
-
     const yAxis = new THREE.Vector3(0, 1, 0);
 
-    // 若为 30 关节 G1 模型，更新头部与颈部
-    if (this.headMesh) {
-      if (frame[12] && frame[13]) {
-        const midChest = new THREE.Vector3(
-          (frame[12][0] + frame[13][0]) * 0.5,
-          (frame[12][1] + frame[13][1]) * 0.5,
-          (frame[12][2] + frame[13][2]) * 0.5
-        );
-        const headPos = new THREE.Vector3(midChest.x, midChest.y, midChest.z + 0.18);
-        this.headMesh.position.copy(headPos);
-        this.headMesh.visible = true;
+    // ==========================================
+    // 场景 A: 渲染真实 3D 机器人网格模型 (URDF 树形运动学姿态驱动)
+    // ==========================================
+    if (this.hasRobotModel) {
+      this.setSkeletonVisibility(false);
 
-        if (this.neckMesh) {
-          const neckDist = midChest.distanceTo(headPos);
-          this.neckMesh.scale.set(1, Math.max(0.001, neckDist), 1);
-          const neckMid = new THREE.Vector3().addVectors(midChest, headPos).multiplyScalar(0.5);
-          this.neckMesh.position.copy(neckMid);
-          const neckDir = new THREE.Vector3().subVectors(headPos, midChest).normalize();
-          this.neckMesh.quaternion.setFromUnitVectors(yAxis, neckDir);
-          this.neckMesh.visible = true;
+      const motion = (this.currentDanceData.model_info && this.currentDanceData.model_info.motion)
+        ? this.currentDanceData.model_info.motion
+        : null;
+
+      if (motion && motion.joint_trajectory && motion.joint_trajectory[frameIdx]) {
+        // 1. 骨盆/根节点位姿 (Pelvis Translation)
+        if (this.robotRootLink && motion.pelvis_trajectory && motion.pelvis_trajectory[frameIdx]) {
+          const p = motion.pelvis_trajectory[frameIdx];
+          const px = Array.isArray(p) ? p[0] : p.x;
+          const py = Array.isArray(p) ? p[1] : p.y;
+          const pz = Array.isArray(p) ? p[2] : p.z;
+          this.robotRootLink.position.set(px, py, pz);
         }
-      } else {
-        this.headMesh.visible = false;
-        if (this.neckMesh) this.neckMesh.visible = false;
+
+        // 2. 29 自由度真实关节角驱动 (父子层级旋转轴角度积分，肢体绝对不会脱节或断裂)
+        const frameAngles = motion.joint_trajectory[frameIdx];
+        for (const [jName, angle] of Object.entries(frameAngles)) {
+          const jInfo = this.robotJointPivots[jName];
+          if (jInfo && jInfo.pivot) {
+            const rotDelta = new THREE.Quaternion().setFromAxisAngle(jInfo.axis, angle);
+            jInfo.pivot.quaternion.copy(jInfo.defaultQuat).multiply(rotDelta);
+          }
+        }
+      } else if (this.robotMeshParts && this.robotMeshParts.length > 0) {
+        // 降级兜底：若无关节角度，采用点阵平移
+        for (let i = 0; i < this.robotMeshParts.length; i++) {
+          const item = this.robotMeshParts[i];
+          const { mesh, joint_idx, base_pos } = item;
+          if (frame[joint_idx]) {
+            const [fx, fy, fz] = frame[joint_idx];
+            const baseJoint = (this.basePose && this.basePose[joint_idx]) ? this.basePose[joint_idx] : null;
+            if (base_pos && baseJoint) {
+              const dx = fx - baseJoint[0];
+              const dy = fy - baseJoint[1];
+              const dz = fz - baseJoint[2];
+              mesh.position.set(base_pos[0] + dx, base_pos[1] + dy, base_pos[2] + dz);
+            } else {
+              mesh.position.set(fx, fy, fz);
+            }
+            mesh.visible = true;
+          } else {
+            mesh.visible = false;
+          }
+        }
       }
-    }
+    } else {
+      // 场景 B: 渲染动捕骨骼球体与连线圆柱
+      this.setSkeletonVisibility(true);
 
-    // 更新骨骼圆柱连接体
-    const vSource = new THREE.Vector3();
-    const vTarget = new THREE.Vector3();
-    const vMid = new THREE.Vector3();
+      for (let i = 0; i < this.jointMeshes.length; i++) {
+        if (frame[i]) {
+          const [x, y, z] = frame[i];
+          this.jointMeshes[i].position.set(x, y, z);
+          this.jointMeshes[i].visible = true;
+        } else {
+          this.jointMeshes[i].visible = false;
+        }
+      }
 
-    for (let i = 0; i < this.boneMeshes.length; i++) {
-      const { mesh, p1, p2 } = this.boneMeshes[i];
-      if (frame[p1] && frame[p2]) {
-        vSource.set(frame[p1][0], frame[p1][1], frame[p1][2]);
-        vTarget.set(frame[p2][0], frame[p2][1], frame[p2][2]);
-        
-        const dist = vSource.distanceTo(vTarget);
-        if (dist < 0.005 || isNaN(dist)) {
+      if (this.headMesh) {
+        if (frame[12] && frame[13]) {
+          const midChest = new THREE.Vector3(
+            (frame[12][0] + frame[13][0]) * 0.5,
+            (frame[12][1] + frame[13][1]) * 0.5,
+            (frame[12][2] + frame[13][2]) * 0.5
+          );
+          const headPos = new THREE.Vector3(midChest.x, midChest.y, midChest.z + 0.18);
+          this.headMesh.position.copy(headPos);
+          this.headMesh.visible = true;
+
+          if (this.neckMesh) {
+            const neckDist = midChest.distanceTo(headPos);
+            this.neckMesh.scale.set(1, Math.max(0.001, neckDist), 1);
+            const neckMid = new THREE.Vector3().addVectors(midChest, headPos).multiplyScalar(0.5);
+            this.neckMesh.position.copy(neckMid);
+            const neckDir = new THREE.Vector3().subVectors(headPos, midChest).normalize();
+            this.neckMesh.quaternion.setFromUnitVectors(yAxis, neckDir);
+            this.neckMesh.visible = true;
+          }
+        } else {
+          this.headMesh.visible = false;
+          if (this.neckMesh) this.neckMesh.visible = false;
+        }
+      }
+
+      const vSource = new THREE.Vector3();
+      const vTarget = new THREE.Vector3();
+      const vMid = new THREE.Vector3();
+
+      for (let i = 0; i < this.boneMeshes.length; i++) {
+        const { mesh, p1, p2 } = this.boneMeshes[i];
+        if (frame[p1] && frame[p2]) {
+          vSource.set(frame[p1][0], frame[p1][1], frame[p1][2]);
+          vTarget.set(frame[p2][0], frame[p2][1], frame[p2][2]);
+
+          const dist = vSource.distanceTo(vTarget);
+          if (dist < 0.005 || isNaN(dist)) {
+            mesh.visible = false;
+            continue;
+          }
+          mesh.visible = true;
+          mesh.scale.set(1, dist, 1);
+
+          vMid.addVectors(vSource, vTarget).multiplyScalar(0.5);
+          mesh.position.copy(vMid);
+
+          const dir = new THREE.Vector3().subVectors(vTarget, vSource).normalize();
+          mesh.quaternion.setFromUnitVectors(yAxis, dir);
+        } else {
           mesh.visible = false;
-          continue;
         }
-        mesh.visible = true;
-        mesh.scale.set(1, dist, 1);
-
-        vMid.addVectors(vSource, vTarget).multiplyScalar(0.5);
-        mesh.position.copy(vMid);
-
-        const dir = new THREE.Vector3().subVectors(vTarget, vSource).normalize();
-        mesh.quaternion.setFromUnitVectors(yAxis, dir);
-      } else {
-        mesh.visible = false;
       }
     }
 
-    // 相机目标平滑追踪机器人骨盆 root (使机器人位移漫步时始终在视野内)
-    if (frame[0] && this.controls) {
+    // 相机目标平滑追踪机器人骨盆 root
+    if (this.controls) {
+      let targetX = 0, targetY = 0, targetZ = 0.65;
+      if (this.hasRobotModel && this.robotRootLink) {
+        targetX = this.robotRootLink.position.x;
+        targetY = this.robotRootLink.position.y;
+        targetZ = (this.robotRootLink.position.z || 0.76) * 0.85;
+      } else if (frame && frame[0]) {
+        targetX = frame[0][0];
+        targetY = frame[0][1];
+        targetZ = frame[0][2] || 0.65;
+      }
       const currentTarget = this.controls.target;
-      const targetX = THREE.MathUtils.lerp(currentTarget.x, frame[0][0], 0.05);
-      const targetY = THREE.MathUtils.lerp(currentTarget.y, frame[0][1], 0.05);
-      const targetZ = THREE.MathUtils.lerp(currentTarget.z, frame[0][2], 0.05);
-      this.controls.target.set(targetX, targetY, targetZ);
+      currentTarget.x = THREE.MathUtils.lerp(currentTarget.x, targetX, 0.05);
+      currentTarget.y = THREE.MathUtils.lerp(currentTarget.y, targetY, 0.05);
+      currentTarget.z = THREE.MathUtils.lerp(currentTarget.z, targetZ, 0.05);
     }
 
-    // 更新进度条和文本
+    // 更新进度条和播放时间
     const scrubber = document.getElementById('dance-scrubber');
     const timeText = document.getElementById('dance-time-text');
     if (scrubber) scrubber.value = frameIdx;
@@ -390,9 +796,11 @@ class DancePlayer3D {
   }
 
   resetCamera() {
-    this.camera.position.set(1.5, -1.5, 3.5);
-    this.controls.target.set(0, 0, 0.7);
-    this.controls.update();
+    this.camera.position.set(1.4, -2.0, 1.35);
+    if (this.controls) {
+      this.controls.target.set(0, 0, 0.65);
+      this.controls.update();
+    }
   }
 
   onResize() {
@@ -403,6 +811,11 @@ class DancePlayer3D {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
   }
+}
+
+// 显式挂载全局
+if (typeof window !== 'undefined') {
+  window.DancePlayer3D = DancePlayer3D;
 }
 
 // 全局 3D 播放器实例

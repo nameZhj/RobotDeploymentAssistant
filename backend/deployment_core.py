@@ -582,7 +582,7 @@ fi
                 f"{image_name}"
             )
 
-            stream_callback(f"[INFO] 正在执行固化启动命令:\n{run_cmd}\n", False)
+            stream_callback(f"[INFO] 正在以固化参数启动容器 [{container_name}] (镜像: {image_name}) ...\n", False)
             code = ssh_manager.execute_command_stream(run_cmd, stream_callback, sudo=True, timeout=90.0)
             if code != 0:
                 # 遇到冲突或异常时，自动做一次强制深度清理与重试
@@ -742,7 +742,7 @@ fi
         )
         ssh_manager.execute_command(kill_cmd, sudo=True)
 
-        _cb("[PROGRESS 28%] [STEP 2/4] 正在准备机载环境并执行启动脚本 (run_bg.sh) ...\n", False)
+        _cb("[PROGRESS 28%] [STEP 2/4] 正在准备机载运行环境与数据目录 ...\n", False)
         # 清空/标记启动日志
         prepare_cmd = (
             "mkdir -p /home/ubuntu/vsis_mimic_deploy/log ; "
@@ -753,12 +753,24 @@ fi
         )
         ssh_manager.execute_command(prepare_cmd, sudo=True)
 
-        # 检查 vsis_g1 容器状态，严格确保仅在单一目标环境内拉起，绝不同时多开
+        # 检查 vsis_g1 容器状态，若未就绪则自动启动/创建容器，确保导入 License 后一键启动
         code_chk, out_chk, _ = ssh_manager.execute_command("docker inspect -f '{{.State.Running}}' vsis_g1 2>/dev/null || true", sudo=True)
         if "true" in out_chk.lower():
             start_cmd = "docker exec -d vsis_g1 bash -c 'cd /home/ubuntu/vsis_mimic_deploy && ./run_bg.sh'"
         else:
-            start_cmd = "cd /home/ubuntu/vsis_mimic_deploy && nohup ./run_bg.sh >/dev/null 2>&1 &"
+            # 容器未在运行，进一步检测容器是否已创建
+            code_exist, out_exist, _ = ssh_manager.execute_command("docker inspect vsis_g1 2>/dev/null || true", sudo=True)
+            if "id" in out_exist.lower():
+                _cb("[INFO] 检测到 vsis_g1 容器已停止，正在启动容器...\n", False)
+                ssh_manager.execute_command("docker start vsis_g1", sudo=True)
+                time.sleep(1.5)
+                start_cmd = "docker exec -d vsis_g1 bash -c 'cd /home/ubuntu/vsis_mimic_deploy && ./run_bg.sh'"
+            else:
+                _cb("[INFO] 容器 vsis_g1 尚未创建，正在自动固化启动容器...\n", False)
+                ok_start, _ = self.start_container("rl_cu118:2.0", _cb)
+                time.sleep(1.5)
+                start_cmd = "docker exec -d vsis_g1 bash -c 'cd /home/ubuntu/vsis_mimic_deploy && ./run_bg.sh'"
+
         ssh_manager.execute_command(start_cmd, sudo=True)
 
         _cb("[PROGRESS 35%] [STEP 3/4] 正在实时监听运控主程序 (g1_ctrl_vsis) 与 LoRa 启动日志...\n", False)

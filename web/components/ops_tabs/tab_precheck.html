@@ -1,20 +1,31 @@
       <!-- ======================================= -->
-      <!-- TAB 3: 环境预检与修复 -->
+      <!-- TAB 3: 环境预检与修复 (紧凑无滚动条 2列极简卡片网格) -->
       <!-- ======================================= -->
       <section class="tab-content-panel" id="tab-precheck">
         
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">🛠️ 机器人运行环境深度预检</div>
-            <div style="display: flex; gap: 8px;">
-              <button class="btn btn-secondary btn-sm" onclick="TabNetwork.installWindowsCh341()">🔌 安装上位机驱动</button>
-              <button class="btn btn-secondary btn-sm" onclick="TabPrecheck.run()">🔄 刷新预检</button>
-              <button class="btn btn-primary btn-sm" id="btn-tp-fix-ch341" style="display: none;"
-                onclick="TabPrecheck.fixCh341()">🛠️ 一键修复 LoRa 通信环境</button>
+        <div class="card" style="padding: 12px 16px; margin-bottom: 0;">
+          <div class="card-header" style="margin-bottom: 8px; padding-bottom: 4px;">
+            <div class="card-title" style="font-size: 0.88rem; display: flex; align-items: center; gap: 6px;">
+              <span>🛠️ 机器人运行环境深度预检与修复</span>
+            </div>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <button class="btn btn-secondary btn-xs" onclick="TabNetwork.installWindowsCh341()"
+                style="padding: 3px 8px; font-size: 0.72rem; white-space: nowrap;">
+                🔌 安装上位机驱动
+              </button>
+              <button class="btn btn-secondary btn-xs" onclick="TabPrecheck.run()"
+                style="padding: 3px 8px; font-size: 0.72rem; white-space: nowrap;">
+                🔄 刷新预检
+              </button>
+              <button class="btn btn-primary btn-xs" id="btn-tp-fix-ch341" style="display: none; font-weight: 700; padding: 3px 8px; font-size: 0.72rem; white-space: nowrap;"
+                onclick="TabPrecheck.fixCh341()">
+                🛠️ 一键修复 LoRa 通信环境
+              </button>
             </div>
           </div>
-          <div id="tp-precheck-items">
-            <div style="padding: 20px; color: var(--text-muted); text-align: center; font-size: 0.9rem;">点击【刷新预检】开始检测环境
+          <div id="tp-precheck-items" class="precheck-grid">
+            <div style="padding: 20px; color: var(--text-muted); text-align: center; font-size: 0.82rem; grid-column: 1 / -1;">
+              点击【刷新预检】开始检测环境
             </div>
           </div>
         </div>

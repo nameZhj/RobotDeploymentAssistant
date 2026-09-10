@@ -101,11 +101,6 @@ const Wizard = {
       btnLoadImage.addEventListener('click', () => this.startDockerLoad());
     }
 
-    // 固化启动容器
-    const btnStartContainer = document.getElementById('btn-start-container');
-    if (btnStartContainer) {
-      btnStartContainer.addEventListener('click', () => this.startContainer());
-    }
 
     // 写入自启动与 ID
     const btnWriteAutostart = document.getElementById('btn-write-autostart');
@@ -227,23 +222,6 @@ const Wizard = {
       const res = await API.getContainerStatus();
       if (res.success && res.data) {
         const d = res.data;
-        const btnStart = document.getElementById('btn-start-container');
-        const btnAuto = document.getElementById('btn-write-autostart');
-        const consoleEl = document.getElementById('container-start-console');
-
-        if (btnStart) {
-          btnStart.disabled = false;
-          btnStart.classList.add('btn-primary');
-          btnStart.classList.remove('btn-secondary');
-          if (d.running) {
-            btnStart.textContent = `🔄 重新固化启动 / 更新 vsis_g1 容器 (当前运行中)`;
-            if (consoleEl && (consoleEl.innerHTML.includes('等待执行') || consoleEl.innerHTML.includes('正在执行固化容器启动命令'))) {
-              consoleEl.innerHTML = `<div class="log-success">[就绪] 容器 vsis_g1 正在正常运行中。如需更换镜像或重新启动，可选择上方镜像后点击此按钮。</div>`;
-            }
-          } else {
-            btnStart.textContent = `⚡ 固化启动容器 vsis_g1`;
-          }
-        }
 
         const inputRobotId = document.getElementById('select-robot-id');
         if (inputRobotId && d.robot_id) {
@@ -263,13 +241,49 @@ const Wizard = {
     if (inputEl) {
       inputEl.value = id;
     }
+    this.validateInputId(false);
     this.updateWriteIdButtonText();
+  },
+
+  validateInputId(showIfInvalid = false) {
+    const inputEl = document.getElementById('select-robot-id');
+    const errEl = document.getElementById('select-robot-id-error');
+    const rawValue = inputEl ? inputEl.value : '';
+    const valResult = window.validateRobotId ? window.validateRobotId(rawValue) : { valid: true, cleanId: rawValue.trim().toUpperCase(), error: '' };
+
+    if (!valResult.valid) {
+      if (showIfInvalid) {
+        if (errEl) {
+          errEl.innerHTML = `⚠️ ${valResult.error}`;
+          errEl.style.display = 'block';
+        }
+        if (inputEl) {
+          inputEl.classList.add('input-invalid');
+        }
+      }
+      return valResult;
+    }
+
+    if (errEl) {
+      errEl.innerHTML = '';
+      errEl.style.display = 'none';
+    }
+    if (inputEl) {
+      inputEl.classList.remove('input-invalid');
+    }
+    return valResult;
   },
 
   updateWriteIdButtonText() {
     const inputEl = document.getElementById('select-robot-id');
     const val = inputEl ? inputEl.value.trim().toUpperCase() : '';
     const btn = document.getElementById('btn-write-autostart');
+    const errEl = document.getElementById('select-robot-id-error');
+
+    if (errEl && errEl.style.display !== 'none') {
+      this.validateInputId(true);
+    }
+
     if (!btn) return;
     const idLabel = val ? ` [${val}]` : '';
     btn.disabled = false;
@@ -328,7 +342,7 @@ const Wizard = {
                 <span style="font-size: 0.78rem; color: #a7f3d0;"><b style="font-family: monospace;">${tag}</b> (${vsisImg.size || ''})，可直接点击下一步继续。</span>
               </div>
               <button class="btn btn-success btn-xs" onclick="Wizard.nextStep()" style="white-space: nowrap; font-weight: 700; padding: 3px 10px;">
-                👉 下一步：固化启动容器 ➔
+                👉 下一步：分配 Robot ID ➔
               </button>
             </div>
           `;
@@ -355,9 +369,9 @@ const Wizard = {
       const res = await API.getContainerStatus();
       if (res.success && res.data) {
         const d = res.data;
-        if (d.running && d.autostart_configured) {
+        if (d.autostart_configured) {
           if (autoAdvance) {
-            showToast(`✓ 检测到 vsis_g1 运行中且自启已配置，自动进入授权校验...`, 'success', 2000);
+            showToast(`✓ 检测到 Robot ID 与开机自启已配置，自动进入授权校验...`, 'success', 2000);
             setTimeout(() => this.goToStep(5, true), 1000);
           }
         }
@@ -1093,155 +1107,18 @@ const Wizard = {
   async refreshImagesList() {
     try {
       const res = await API.listImages();
-      const select = document.getElementById('select-docker-image');
-      
-      // 1. 渲染当前宿主机已运行容器列表
-      if (res && res.running_containers) {
+      const listEl = document.getElementById('wizard-running-containers-list');
+      if (listEl && res && res.running_containers) {
         this.renderRunningContainers(res.running_containers, 'wizard-running-containers-list');
-      }
-
-      if (!select) return;
-
-      select.innerHTML = '';
-      const availableImgs = res.available_images || res.images || [];
-      if (availableImgs.length === 0) {
-        select.innerHTML = '<option value="">(所有可用镜像均已在容器中运行)</option>';
-        return;
-      }
-
-      // 优先将 vsis_dancer 镜像排在首位
-      availableImgs.sort((a, b) => {
-        const aName = `${a.repository}:${a.tag}`.toLowerCase();
-        const bName = `${b.repository}:${b.tag}`.toLowerCase();
-        const aMatch = aName.includes('vsis_dancer') || (aName.includes('vsis') && aName.includes('dancer'));
-        const bMatch = bName.includes('vsis_dancer') || (bName.includes('vsis') && bName.includes('dancer'));
-        if (aMatch && !bMatch) return -1;
-        if (!aMatch && bMatch) return 1;
-        return 0;
-      });
-
-      for (const img of availableImgs) {
-        const opt = document.createElement('option');
-        const tag = `${img.repository}:${img.tag}`;
-        opt.value = tag;
-        opt.textContent = `${tag} (${img.size})`;
-        select.appendChild(opt);
       }
     } catch (err) {
       console.error('获取镜像与容器列表失败:', err);
     }
   },
 
-  async startContainer(autoAdvance = false) {
-    return this.deployStep4Sequential(autoAdvance);
-  },
-
-  async deployStep4Sequential(autoAdvance = false) {
-    if (this.isStartingContainer) return;
-    this.isStartingContainer = true;
-
-    const inputEl = document.getElementById('select-robot-id');
-    const rawValue = inputEl ? inputEl.value : 'A';
-    const valResult = window.validateRobotId ? window.validateRobotId(rawValue) : { valid: true, cleanId: rawValue.trim().toUpperCase(), error: '' };
-
-    // 校验规则 (统一公共验证逻辑)
-    if (!valResult.valid) {
-      showToast(valResult.error, 'error');
-      if (inputEl) inputEl.focus();
-      this.isStartingContainer = false;
-      return;
-    }
-    const robotId = valResult.cleanId;
-    if (inputEl) inputEl.value = robotId;
-
-    const select = document.getElementById('select-docker-image');
-    const imgName = select && select.value ? select.value : 'rl_cu118:2.0';
-
-    const consoleEl = document.getElementById('container-start-console');
-    if (consoleEl) consoleEl.innerHTML = '';
-
-    const appendLog = (msg, isErr = false) => {
-      if (!consoleEl) return;
-      const div = document.createElement('div');
-      div.className = isErr ? 'log-error' : (msg.includes('✅') || msg.includes('SUCCESS') || msg.includes('🎉') ? 'log-success' : 'log-info');
-      div.textContent = msg;
-      consoleEl.appendChild(div);
-      consoleEl.scrollTop = consoleEl.scrollHeight;
-    };
-
-    const btnAuto = document.getElementById('btn-write-autostart');
-    const btnStart = document.getElementById('btn-start-container');
-
-    if (btnAuto) btnAuto.disabled = true;
-    if (btnStart) {
-      btnStart.disabled = true;
-      btnStart.classList.add('loading');
-      btnStart.textContent = '⏳ 正在部署 (写入ID ➔ 启动容器 ➔ 拉起机载)...';
-    }
-
-    const resetButtons = () => {
-      this.isStartingContainer = false;
-      if (btnAuto) btnAuto.disabled = false;
-      if (btnStart) {
-        btnStart.disabled = false;
-        btnStart.classList.remove('loading');
-        btnStart.textContent = '⚡ 固化启动 vsis_g1 容器';
-      }
-    };
-
-    try {
-      // 步骤 1 (优先): 写入 Robot ID 与自启钩子
-      appendLog(`[步骤 1/2 优先执行] 正在配置开机自启并写入 Robot ID [${robotId}] ...`);
-      showToast(`[步骤 1/2] 优先写入 Robot ID [${robotId}] ...`, 'info');
-
-      const autostartRes = await API.configAutostart(robotId);
-      if (!autostartRes.success) {
-        appendLog(`[ERROR] ❌ 写入 Robot ID 失败: ${autostartRes.msg}`, true);
-        showToast(`写入失败: ${autostartRes.msg}`, 'error');
-        resetButtons();
-        return;
-      }
-
-      this.isIdConfigured = true;
-      appendLog(`[SUCCESS] ✅ Robot ID [${robotId}] 与开机自启动钩子写入成功！`);
-      showToast(`✅ Robot ID [${robotId}] 写入成功！`, 'success');
-
-      // 步骤 2 (然后): 固化启动容器 vsis_g1 (第 4 步不再执行 run_bg.sh)
-      appendLog(`[步骤 2/2 然后执行] 正在启动固化参数容器 vsis_g1 (镜像: ${imgName}) ...`);
-      showToast(`[步骤 2/2] 正在启动容器 vsis_g1 ...`, 'info');
-
-      const containerRes = await API.startContainer(imgName);
-      if (containerRes.success && containerRes.task_id) {
-        API.listenStream(containerRes.task_id, (line, isErr) => {
-          appendLog(line, isErr);
-        }, async (ok) => {
-          resetButtons();
-          if (ok) {
-            appendLog('[SUCCESS] ✅ 容器 vsis_g1 固化启动完成！已就绪，请在第 5 步完成授权并拉起运控。');
-            showToast('✓ 容器 vsis_g1 已固化启动！即将进入第 5 步机器码与 License 授权...', 'success');
-            await this.refreshImagesList();
-            setTimeout(() => this.goToStep(5, true), 1000);
-          } else {
-            appendLog('[ERROR] ❌ 容器启动失败，请检查上方日志', true);
-            showToast('容器启动失败，请检查上方日志', 'error');
-          }
-        });
-      } else {
-        resetButtons();
-        appendLog(`[ERROR] ❌ 启动容器请求失败: ${containerRes?.msg || '未知错误'}`, true);
-        showToast(`启动容器失败: ${containerRes?.msg || '未知错误'}`, 'error');
-      }
-    } catch (err) {
-      resetButtons();
-      appendLog(`[ERROR] 部署异常: ${err.message}`, true);
-      showToast(`部署异常: ${err.message}`, 'error');
-    }
-  },
-
   async writeAutostartAndId() {
     const inputEl = document.getElementById('select-robot-id');
-    const rawValue = inputEl ? inputEl.value : 'A';
-    const valResult = window.validateRobotId ? window.validateRobotId(rawValue) : { valid: true, cleanId: rawValue.trim().toUpperCase(), error: '' };
+    const valResult = this.validateInputId(true);
 
     // 校验规则（与群控控制台"添加机器人"一致）
     if (!valResult.valid) {
@@ -1305,8 +1182,8 @@ const Wizard = {
           showToast(`重启容器失败: ${restartRes.msg}`, 'error');
         }
       } else {
-        appendLog(`[INFO] 容器尚未创建。Robot ID [${robotId}] 已就绪，请在下方点击【⚡ 固化启动 vsis_g1 容器】。`);
-        showToast(`✅ Robot ID [${robotId}] 写入成功！请启动容器`, 'success');
+        appendLog(`[INFO] Robot ID [${robotId}] 与开机自启配置已写入成功！请点击【下一步】完成机器码与 License 授权。`);
+        showToast(`✅ Robot ID [${robotId}] 配置完成！请进入下一步`, 'success');
       }
       if (btn) btn.disabled = false;
       this.updateWriteIdButtonText();
@@ -1722,7 +1599,7 @@ const Wizard = {
       if (pSub && sub) pSub.textContent = sub;
     };
 
-    setProgress(15, '🚀 正在拉起机载运控与通信程序 (run_bg.sh)...', '正在下发启动脚本并实时监听启动日志...');
+    setProgress(15, '🚀 正在拉起机载运控与通信服务...', '正在启动机载服务并实时监听运行日志...');
 
     try {
       // 1. 发起 startRobotProcesses 流式监听

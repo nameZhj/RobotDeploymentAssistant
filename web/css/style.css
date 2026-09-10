@@ -383,8 +383,8 @@ body {
   display: none;
 }
 
-/* 镜像与容器管理 Tab：完美自适应全高无滚动条仪表盘 */
-#tab-image.active {
+/* 环境预检与修复 Tab：完美自适应全高无多余滚动条 */
+#tab-precheck.active {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -392,34 +392,76 @@ body {
   box-sizing: border-box;
 }
 
-.image-dashboard-grid {
+.ops-content-container:has(#tab-precheck.active) {
+  padding: 12px 18px;
+  overflow: hidden;
+}
+
+.precheck-grid {
   display: grid;
-  grid-template-columns: 1.12fr 0.88fr;
-  gap: 12px;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.precheck-item-card:hover {
+  border-color: rgba(56, 189, 248, 0.35) !important;
+  background: rgba(14, 165, 233, 0.05) !important;
+}
+
+/* 网络与 License 管理 Tab：完美自适应全高无多余滚动条仪表盘 */
+#tab-network.active {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.ops-content-container:has(#tab-network.active) {
+  padding: 12px 18px;
+  overflow: hidden;
+}
+
+.network-license-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 10px;
   flex: 1;
   min-height: 0;
+  height: 100%;
   overflow: hidden;
   align-items: stretch;
 }
 
-.image-dashboard-left {
+.network-license-left {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
   min-height: 0;
   overflow-y: auto;
-  padding-right: 2px;
+  padding-right: 3px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(56, 189, 248, 0.25) transparent;
 }
 
-.image-dashboard-right {
+.network-license-left::-webkit-scrollbar {
+  width: 4px;
+}
+.network-license-left::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.25);
+  border-radius: 2px;
+}
+
+.network-license-right {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
   min-height: 0;
   overflow: hidden;
 }
 
-.image-dashboard-right .console-card {
+.network-license-right .console-card {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -428,11 +470,182 @@ body {
   margin-bottom: 0;
 }
 
-.image-dashboard-right .terminal-console {
+.network-license-right .terminal-console,
+#tp-license-result {
   flex: 1;
-  min-height: 140px;
+  min-height: 180px;
   height: auto;
-  overflow-y: auto;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+}
+
+.network-license-right .terminal-console *,
+#tp-license-result * {
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+  max-width: 100% !important;
+}
+
+.network-license-grid .btn {
+  white-space: nowrap;
+}
+
+.network-license-grid .card {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  transition: border-color 0.2s;
+}
+
+.network-license-grid .card:hover {
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+/* 舞蹈与镜像管理 Tab：完美自适应全高无多余滚动条仪表盘 */
+#tab-image.active {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+/* 激活舞蹈与镜像管理时，外层容器内边距适度舒展 */
+.ops-content-container:has(#tab-image.active) {
+  padding: 10px 16px;
+  overflow: hidden;
+}
+
+.image-dashboard-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* 上半区：2 列平衡栅格 (左侧舞蹈与服务，右侧镜像与容器) */
+.image-dashboard-top-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  align-items: stretch;
+}
+
+.image-dashboard-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.image-dashboard-col .card {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-bottom: 0;
+  padding: 10px 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  transition: border-color 0.2s, box-shadow 0.2s;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.image-dashboard-col .card:hover {
+  border-color: rgba(56, 189, 248, 0.35);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+/* 底部全宽执行日志卡片：高度紧凑适中 (~145px)，不再霸占巨幅纵向空间 */
+.image-dashboard-console-card {
+  flex: 0 0 145px;
+  height: 145px;
+  min-height: 125px;
+  max-height: 160px;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+  padding: 8px 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.image-dashboard-console-card .card-header {
+  margin-bottom: 4px;
+  padding-bottom: 2px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.image-dashboard-console-card .terminal-console,
+.image-dashboard-console-col .terminal-console,
+#tp-unified-console {
+  flex: 1;
+  min-height: 110px;
+  height: auto;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  background: #060910;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.image-dashboard-console-card .terminal-console *,
+.image-dashboard-console-col .terminal-console *,
+#tp-unified-console * {
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+  max-width: 100% !important;
+}
+
+/* 兼容类名 */
+.image-dashboard-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+.image-dashboard-left,
+.image-dashboard-right,
+.image-dashboard-console-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.image-dashboard-grid .card:hover {
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+.dance-update-card #dropzone-update-zip:hover {
+  border-color: var(--accent-cyan) !important;
+  background: rgba(14, 165, 233, 0.08) !important;
 }
 
 /* 控制台包装器：在 Flex 容器中自适应撑满 */
@@ -540,17 +753,6 @@ body {
   overflow: visible;
 }
 
-/* 手动模式命令列表：去掉固定 max-height */
-#manual-cmd-list {
-  overflow: visible;
-  max-height: none !important;
-}
-
-/* 手动模式控制台 */
-#manual-console-output {
-  height: calc(100vh - 320px) !important;
-  min-height: 280px;
-}
 
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(6px); }
@@ -721,6 +923,27 @@ body {
 .form-control:focus {
   border-color: var(--accent-cyan);
   box-shadow: 0 0 8px rgba(0, 240, 255, 0.2);
+}
+
+.input-invalid {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.35) !important;
+}
+
+.field-error-hint {
+  display: none;
+  font-size: 0.68rem;
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-left: 3px solid #ef4444;
+  border-radius: 4px;
+  padding: 3px 6px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+  line-height: 1.35;
+  word-break: break-word;
+  animation: fadeIn 0.2s ease-out;
 }
 
 /* 进度条 */
@@ -1942,6 +2165,15 @@ body {
   background: rgba(239, 68, 68, 0.28);
   border-color: #ef4444;
   box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
+}
+
+.btn-posture.btn-stop .key-badge {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.btn-posture.btn-stop .cmd-title {
+  color: #fca5a5;
 }
 
 .key-badge {

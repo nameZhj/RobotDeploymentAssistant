@@ -38,16 +38,15 @@ web/
 │   ├── navbar.html              # 顶部导航栏 (Logo, LoRa 连接徽章, 向导按钮, 综合设置菜单)
 │   ├── wizard_modal.html        # 6 步一键自动化部署向导独立模态窗
 │   ├── tab_robot_control.html   # 首页主工作台: 机器人编队卡片流, 姿态网格, 十字移动键, 舞蹈流式列表, TX 终端
-│   ├── ops_modal.html           # 运维与调试中心外层模态弹窗 (左侧导航栏 + 包含 9 个子面板)
-│   ├── ops_tabs/                # 运维中心 9 大功能子标签页
-│   │   ├── tab_network.html     # 设备发现、Windows 以太网卡直连 (192.168.123.200) 与 CH341 驱动
+│   ├── ops_modal.html           # 运维与调试中心外层模态弹窗 (左侧导航栏 + 包含各运维子面板)
+│   ├── ops_tabs/                # 运维中心功能子标签页
+│   │   ├── tab_network.html     # 网络与 License 管理: 设备发现、网卡直连 (192.168.123.200)、断网自愈重连、CH341 驱动、64位机器码读取与 License 授权导入部署 (单一日志控制台)
 │   │   ├── tab_precheck.html    # 机器人宿主机环境指标深度预检与修复
-│   │   ├── tab_image.html       # Docker 镜像 SFTP 上传、docker load、容器启动与机载程序状态
-│   │   ├── tab_license.html     # 64 位硬件机器码读取与 License 拖拽导入
-│   │   ├── tab_dance_update.html# 舞蹈动作包 (.zip / 文件夹) 上传热覆盖与自动重启
+│   │   ├── tab_image.html       # 舞蹈与镜像管理: 舞蹈动作导入、热覆盖重启、Docker 镜像 SFTP 上传、docker load、容器启动与机载程序状态 (单一日志控制台)
+│   │   ├── tab_license.html     # (已合并入 tab_network.html，保留作为向后兼容存量)
+│   │   ├── tab_dance_update.html# (已合并入 tab_image.html，保留作为向后兼容存量)
 │   │   ├── tab_3d_player.html   # Three.js 50fps 机器人 3D 骨骼物理仿真与 NPZ 动作库
 │   │   ├── tab_logs.html        # 实时日志监视器 (容器、LoRa、运控、内核 dmesg) 与智能诊断
-│   │   ├── tab_manual.html      # 远程 Bash 手动命令行控制台
 │   │   └── tab_tutorial.html    # 物理遥控器图解与现场指令操作规范表
 │   ├── modals.html              # 驱动修复流式日志弹窗, 添加机器人 ID 弹窗, 全局 Toast 容器
 │   └── scripts.html             # 前端所有底层业务脚本引用 (依赖次序敏感)
@@ -67,14 +66,13 @@ web/
 | `navbar.html` | `app.js` / `robot_control.js` | `#ctrl-serial-status-badge`, `#status-dot`, `#btn-open-wizard`, `#btn-open-ops-modal` | 串口状态药丸展示、SSH 连接状态、打开向导与设置菜单 |
 | `wizard_modal.html` | `wizard.js` | `#wizard-modal`, `#wizard-step-[1-6]`, `#btn-global-connect`, `#license-dropzone` | 引导用户逐步完成机器人网络、环境、镜像、自启动和 License 导入 |
 | `tab_robot_control.html` | `robot_control.js` | `#ctrl-target-grid-container`, `#ctrl-dance-scroll-container`, `#ctrl-terminal-output` | 多机编队多选 (Ctrl+左键)、W/A/S/D 移动 (5Hz 持续长按)、舞蹈按钮流式自适应、TX 监视器 |
-| `tab_network.html` | `tab_panels.js` (`TabNetwork`) | `#tp-nic-select`, `#btn-scan-network`, `#tp-scan-results` | Windows 本机网卡切换静态 IP、CH341 串口驱动安装、网段扫描 |
+| `tab_network.html` | `tab_panels.js` (`TabNetwork` / `TabLicense`) | `#tp-nic-select`, `#btn-scan-network`, `#tp-scan-results`, `#tp-win-ch341-status`, `#tp-machine-id-val`, `#tp-license-dropzone`, `#tp-deploy-btn` | Windows 本机网卡切换、断网自愈与连接、CH341 驱动、网段扫描、64 位机器码与 License 部署 |
 | `tab_precheck.html` | `tab_panels.js` (`TabPrecheck`) | `#tp-precheck-items`, `#btn-tp-fix-ch341` | 检查宿主机 Docker、驱动、权限并提供一键修复 |
-| `tab_image.html` | `tab_panels.js` (`TabImage`) | `#tp-local-tar-path`, `#tp-robot-id-select`, `#tp-running-containers-list` | SFTP 大文件上传、`docker load`、写入自启动与启动 `vsis_g1` |
-| `tab_license.html` | `tab_panels.js` (`TabLicense`) | `#tp-machine-id-val`, `#tp-license-dropzone`, `#tp-deploy-btn` | 读取 64 位 Machine ID、拖拽校验 License 并生效 |
-| `tab_dance_update.html` | `tab_panels.js` (`TabDanceUpdate`) | `#dropzone-update-zip`, `#dance-update-result` | 导入新动作包解压至 `/secure/config_vsis` 并热重启 |
+| `tab_image.html` | `tab_panels.js` (`TabImage`) / `app.js` | `#tp-local-tar-path`, `#tp-robot-id-select`, `#tp-running-containers-list`, `#dropzone-update-zip`, `#tp-unified-console` | 舞蹈动作更新、解压覆盖热重启、SFTP 大文件上传、`docker load`、写入自启动与启动 `vsis_g1`，全流程统一单一日志窗口 |
+| `tab_license.html` | (已合并至 `tab_network.html`) | `#tp-machine-id-val`, `#tp-license-dropzone`, `#tp-deploy-btn` | 功能与 DOM 探针完整迁移至 `tab_network.html` 保障零断裂 |
+| `tab_dance_update.html` | (已合并至 `tab_image.html`) | `#dropzone-update-zip`, `#dance-update-result` | 功能与 DOM 探针完整迁移至 `tab_image.html` 保障零断裂 |
 | `tab_3d_player.html` | `dance_player3d.js` | `#dance3d-viewport`, `#dance-3d-list`, `#btn-dance-play` | Three.js 骨骼仿真渲染、动作帧播放与 NPZ 本地解析 |
 | `tab_logs.html` | `log_viewer.js` | `#select-log-container`, `#log-console-content`, `#chk-log-timestamp` | 实时拉取并格式化高亮机器人运行日志、每行时间戳解析对齐与开关 |
-| `tab_manual.html` | `manual_mode.js` | `#manual-cmd-list`, `#manual-console-output` | 常用运维脚本一键执行与自定义 Bash 命令执行 |
 
 ---
 

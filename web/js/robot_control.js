@@ -32,8 +32,8 @@ const RobotControl = {
   ONE_SHOT_KEYS: {
     '1': 'STAND',
     '2': 'GAIT',
-    'x': 'GAIT',
-    'X': 'GAIT',
+    'x': 'STOP',
+    'X': 'STOP',
     '0': 'PASSIVE'
   },
   TRANSLATION_KEYS: {
@@ -214,6 +214,12 @@ const RobotControl = {
 
     if (btnSubmit) btnSubmit.addEventListener('click', () => this.submitAddRobot());
     if (inputField) {
+      inputField.addEventListener('input', () => {
+        const errEl = document.getElementById('add-robot-id-error');
+        if (errEl && errEl.style.display !== 'none') {
+          this.validateInputId(true);
+        }
+      });
       inputField.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
@@ -225,11 +231,51 @@ const RobotControl = {
     }
   },
 
+  validateInputId(showIfInvalid = false) {
+    const inputField = document.getElementById('input-new-robot-id');
+    const errEl = document.getElementById('add-robot-id-error');
+    if (!inputField) return { valid: false, error: '输入框未就绪' };
+
+    const valResult = window.validateRobotId ? window.validateRobotId(inputField.value) : { valid: true, cleanId: inputField.value.trim().toUpperCase(), error: '' };
+    if (!valResult.valid) {
+      if (showIfInvalid) {
+        if (errEl) {
+          errEl.innerHTML = `⚠️ ${valResult.error}`;
+          errEl.style.display = 'block';
+        }
+        inputField.classList.add('input-invalid');
+      }
+      return valResult;
+    }
+
+    const cleanId = valResult.cleanId;
+    if (this.activeRobots.includes(cleanId)) {
+      const dupError = `机器人 ID [${cleanId}] 已存在于受控列表中！`;
+      if (showIfInvalid) {
+        if (errEl) {
+          errEl.innerHTML = `⚠️ ${dupError}`;
+          errEl.style.display = 'block';
+        }
+        inputField.classList.add('input-invalid');
+      }
+      return { valid: false, cleanId, error: dupError };
+    }
+
+    if (errEl) {
+      errEl.innerHTML = '';
+      errEl.style.display = 'none';
+    }
+    inputField.classList.remove('input-invalid');
+    return { valid: true, cleanId, error: '' };
+  },
+
   openAddRobotModal() {
     const modal = document.getElementById('modal-add-robot');
     const inputField = document.getElementById('input-new-robot-id');
     const chipsContainer = document.getElementById('add-robot-chips-container');
     if (!modal) return;
+
+    this.validateInputId(false);
 
     // 计算下一个推荐 ID
     const nextId = this.getNextSuggestedId();
@@ -258,6 +304,7 @@ const RobotControl = {
         chip.addEventListener('click', () => {
           if (inputField) {
             inputField.value = s;
+            this.validateInputId(false);
             inputField.focus();
           }
         });
@@ -276,6 +323,7 @@ const RobotControl = {
 
   closeAddRobotModal() {
     const modal = document.getElementById('modal-add-robot');
+    this.validateInputId(false);
     if (modal) modal.style.display = 'none';
   },
 
@@ -283,18 +331,15 @@ const RobotControl = {
     const inputField = document.getElementById('input-new-robot-id');
     if (!inputField) return;
 
-    const valResult = window.validateRobotId ? window.validateRobotId(inputField.value) : { valid: true, cleanId: inputField.value.trim().toUpperCase(), error: '' };
+    const valResult = this.validateInputId(true);
     if (!valResult.valid) {
-      alert(valResult.error);
+      if (typeof showToast === 'function') {
+        showToast(valResult.error, 'error');
+      }
       inputField.focus();
       return;
     }
     const cleanId = valResult.cleanId;
-    if (this.activeRobots.includes(cleanId)) {
-      alert(`机器人 ID [${cleanId}] 已存在于受控列表中！`);
-      inputField.focus();
-      return;
-    }
 
     this.activeRobots.push(cleanId);
     this.saveStoredFleet();
@@ -302,6 +347,9 @@ const RobotControl = {
     this.selectedTargets.add(cleanId);
     this.renderTargetCards();
     this.closeAddRobotModal();
+    if (typeof showToast === 'function') {
+      showToast(`成功添加受控机器人 [${cleanId}]`, 'success');
+    }
     this.logTerminal('system', `[FLEET] 成功添加受控机器人: [${cleanId}] (当前共 ${this.activeRobots.length} 台)`);
   },
 
@@ -599,12 +647,11 @@ const RobotControl = {
 
   async sendSinglePacket(target, command) {
     const packet = `${target}|${command}\n`;
-    const timestamp = (Date.now() / 1000).toFixed(6);
 
     try {
       const res = await API.sendSerialCmd(target, command);
       if (res && res.success) {
-        this.logTerminal('tx', `[TX] ${packet.trim()} @ ${timestamp}`);
+        this.logTerminal('tx', `[TX] ${packet.trim()}`);
       } else {
         this.logTerminal('error', `[TX WARN] 发送未成功: ${res?.msg || '串口未连接'} (拟发送: ${packet.trim()})`);
       }
@@ -983,17 +1030,19 @@ const RobotControl = {
   },
 
   highlightBtn(key) {
-    const btn = Array.from(document.querySelectorAll('.tab-robot-control .btn-cmd')).find(b =>
-      b.getAttribute('data-key') && b.getAttribute('data-key').toLowerCase() === key.toLowerCase()
-    );
-    if (btn) btn.classList.add('key-active');
+    document.querySelectorAll('.tab-robot-control .btn-cmd').forEach(b => {
+      if (b.getAttribute('data-key') && b.getAttribute('data-key').toLowerCase() === key.toLowerCase()) {
+        b.classList.add('key-active');
+      }
+    });
   },
 
   unhighlightBtn(key) {
-    const btn = Array.from(document.querySelectorAll('.tab-robot-control .btn-cmd')).find(b =>
-      b.getAttribute('data-key') && b.getAttribute('data-key').toLowerCase() === key.toLowerCase()
-    );
-    if (btn) btn.classList.remove('key-active');
+    document.querySelectorAll('.tab-robot-control .btn-cmd').forEach(b => {
+      if (b.getAttribute('data-key') && b.getAttribute('data-key').toLowerCase() === key.toLowerCase()) {
+        b.classList.remove('key-active');
+      }
+    });
   },
 
   logTerminal(type, text) {
@@ -1039,12 +1088,12 @@ const RobotControl = {
             if (msg.timestamp > this.lastMsgTimestamp) {
               this.lastMsgTimestamp = msg.timestamp;
             }
-            // 在界面监视器中打印每一条串口收发字符串
-            const tag = (msg.type === 'rx') ? 'rx' : 'tx';
-            const prefix = (msg.type === 'rx') ? '[RX]' : '[TX]';
-            this.logTerminal(tag, `${prefix} ${msg.text}`);
-            if (msg.type === 'rx' && (msg.text.includes(':') || msg.text.includes('Group') || msg.text.includes('['))) {
-              hasDanceMsg = true;
+            // 仅在监视器中打印下位机回传 (RX) 消息（TX 指令已在发送时即时打印，避免重复记录）
+            if (msg.type === 'rx') {
+              this.logTerminal('rx', `[RX] ${msg.text}`);
+              if (msg.text.includes(':') || msg.text.includes('Group') || msg.text.includes('[')) {
+                hasDanceMsg = true;
+              }
             }
           });
         }
@@ -1161,7 +1210,7 @@ const RobotControl = {
           请确认机器人机载程序处于正常运行状态且 LoRa 频段一致。
         </div>
         <button class="btn btn-primary btn-xs" style="margin-top: 10px; padding: 4px 14px; font-size: 0.8rem;" onclick="RobotControl.fetchAndRenderDanceList(true)">
-          🔄 重新发送 ALL|GETDANCELIST
+          🔄 重新获取列表
         </button>
       </div>
     `;
