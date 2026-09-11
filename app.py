@@ -64,9 +64,20 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/models/<path:filename>")
 @app.route("/preview/<path:filename>")
 def serve_preview_asset(filename):
-    return send_from_directory(preview_manager.preview_dir, filename)
+    models_dir = preview_manager.get_builtin_models_dir()
+    clean_subpath = filename.replace("preview/", "").replace("models/", "").lstrip("/")
+    in_models = os.path.join(models_dir, clean_subpath)
+    if os.path.exists(in_models):
+        return send_from_directory(models_dir, clean_subpath)
+
+    target = os.path.join(preview_manager.preview_dir, filename)
+    if os.path.exists(target):
+        return send_from_directory(preview_manager.preview_dir, filename)
+
+    return send_from_directory(models_dir, clean_subpath)
 
 
 @app.route("/<path:path>")
@@ -768,7 +779,8 @@ def upload_npz():
     f = request.files["file"]
     save_path = os.path.join(preview_manager.preview_dir, f.filename)
     f.save(save_path)
-    data = npz_service.parse_npz_file(save_path)
+    dance_id = os.path.splitext(f.filename)[0]
+    data = preview_manager.get_dance_data(dance_id)
     return jsonify(data)
 
 

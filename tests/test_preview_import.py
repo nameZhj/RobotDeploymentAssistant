@@ -170,6 +170,22 @@ class TestPreviewImport(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
             self.assertGreater(len(resp.data), 1000)
 
+    @classmethod
+    def tearDownClass(cls):
+        """测试完成后清理测试生成的文件，保持 preview 目录纯净"""
+        import shutil
+        clean_prefixes = ("test_", "g1_29dof", "sample_custom")
+        for entry in os.listdir(preview_manager.preview_dir):
+            if any(entry.startswith(p) for p in clean_prefixes):
+                target = os.path.join(preview_manager.preview_dir, entry)
+                try:
+                    if os.path.isdir(target):
+                        shutil.rmtree(target, ignore_errors=True)
+                    else:
+                        os.remove(target)
+                except Exception:
+                    pass
+
 
 if __name__ == "__main__":
     unittest.main()

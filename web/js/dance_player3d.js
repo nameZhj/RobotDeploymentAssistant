@@ -331,6 +331,7 @@ class DancePlayer3D {
     this.robotLinkNodes = {};
     this.robotJointPivots = {};
     this.robotRootLink = null;
+    this._bodyLinksDetached = false;
 
     // 清空 3D 机器人部件
     if (this.robotPartsGroup) {
@@ -392,6 +393,7 @@ class DancePlayer3D {
     this.robotLinkNodes = {};
     this.robotJointPivots = {};
     this.robotRootLink = null;
+    this._bodyLinksDetached = false;
 
     // 严密隐藏动捕球体与圆柱骨架
     this.setSkeletonVisibility(false);
@@ -511,6 +513,28 @@ class DancePlayer3D {
     if (this.robotRootLink) {
       this.robotPartsGroup.add(this.robotRootLink);
     }
+
+    // 建立 body_index → linkNode 映射（与 IsaacLab / PhysX body_pos_w 顺序严格一致：URDF 广度优先 BFS 遍历顺序）
+    const G1_BODY_LINK_NAMES = [
+      'pelvis',
+      'left_hip_pitch_link', 'right_hip_pitch_link', 'waist_yaw_link',
+      'left_hip_roll_link', 'right_hip_roll_link', 'waist_roll_link',
+      'left_hip_yaw_link', 'right_hip_yaw_link', 'torso_link',
+      'left_knee_link', 'right_knee_link',
+      'left_shoulder_pitch_link', 'right_shoulder_pitch_link',
+      'left_ankle_pitch_link', 'right_ankle_pitch_link',
+      'left_shoulder_roll_link', 'right_shoulder_roll_link',
+      'left_ankle_roll_link', 'right_ankle_roll_link',
+      'left_shoulder_yaw_link', 'right_shoulder_yaw_link',
+      'left_elbow_link', 'right_elbow_link',
+      'left_wrist_roll_link', 'right_wrist_roll_link',
+      'left_wrist_pitch_link', 'right_wrist_pitch_link',
+      'left_wrist_yaw_link', 'right_wrist_yaw_link'
+    ];
+    const bodyNames = (modelInfo && Array.isArray(modelInfo.body_link_names) && modelInfo.body_link_names.length === 30)
+      ? modelInfo.body_link_names
+      : G1_BODY_LINK_NAMES;
+    this.bodyIndexToLinkNode = bodyNames.map(n => linkMap[n] || null);
 
 
     // 4. 并行加载 STL 3D 网格并挂载至对应 Link 节点
@@ -664,15 +688,52 @@ class DancePlayer3D {
         ? this.currentDanceData.model_info.motion
         : null;
 
-      if (motion && motion.joint_trajectory && motion.joint_trajectory[frameIdx]) {
-        // 1. 骨盆/根节点位姿 (Pelvis Translation)
+      if (motion && motion.body_world_trajectory && motion.body_world_trajectory[frameIdx]) {
+        // === 路径 A: IsaacLab body_world_trajectory ===
+        // 直接用每个刚体的世界位置 + 四元数设置对应 link 节点的世界变换。
+        // 关键：link 节点被挂在 URDF 层级树中，setWorldPosition/Quaternion 需先 detach 到 scene。
+        // 最简方案：将所有 link 节点从层级树中解绑，直接设置 position/quaternion（世界坐标）。
+        const bodyTraj = motion.body_world_trajectory[frameIdx]; // [30, 7]
+        const bodyLinks = this.bodyIndexToLinkNode;
+        if (bodyLinks && bodyLinks.length > 0) {
+          // 第一帧初始化时：将所有 body link 节点从 URDF 层级树解绑，直接挂在 robotPartsGroup 下
+          if (!this._bodyLinksDetached) {
+            this._bodyLinksDetached = true;
+            // 先将 URDF 层级树从 robotPartsGroup 移除
+            if (this.robotRootLink) this.robotPartsGroup.remove(this.robotRootLink);
+            // 将每个可动 body link 直接挂在 robotPartsGroup（脱离 URDF 层级）
+            for (let b = 0; b < bodyLinks.length; b++) {
+              const lNode = bodyLinks[b];
+              if (lNode) {
+                // 把 lNode 从原父节点移除，直接加入 robotPartsGroup
+                if (lNode.parent) lNode.parent.remove(lNode);
+                this.robotPartsGroup.add(lNode);
+              }
+            }
+          }
+          for (let b = 0; b < bodyLinks.length && b < bodyTraj.length; b++) {
+            const lNode = bodyLinks[b];
+            if (!lNode) continue;
+            const bd = bodyTraj[b]; // [px, py, pz, qx, qy, qz, qw]
+            lNode.position.set(bd[0], bd[1], bd[2]);
+            lNode.quaternion.set(bd[3], bd[4], bd[5], bd[6]);
+          }
+        }
+
+      } else if (motion && motion.joint_trajectory && motion.joint_trajectory[frameIdx]) {
+        // === 路径 B: URDF 关节角度驱动（内置演示舞蹈）===
         if (this.robotRootLink && motion.pelvis_trajectory && motion.pelvis_trajectory[frameIdx]) {
           const p = motion.pelvis_trajectory[frameIdx];
           const px = Array.isArray(p) ? p[0] : p.x;
           const py = Array.isArray(p) ? p[1] : p.y;
           const pz = Array.isArray(p) ? p[2] : p.z;
           this.robotRootLink.position.set(px, py, pz);
+          if (Array.isArray(p) && p.length >= 7) {
+            const qx = p[3], qy = p[4], qz = p[5], qw = p[6];
+            this.robotRootLink.quaternion.set(qx, qy, qz, qw);
+          }
         }
+
 
         // 2. 29 自由度真实关节角驱动 (父子层级旋转轴角度积分，肢体绝对不会脱节或断裂)
         const frameAngles = motion.joint_trajectory[frameIdx];

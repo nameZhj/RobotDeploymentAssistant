@@ -36,13 +36,20 @@ class PreviewManager:
         self._cached_model_info: Optional[Dict[str, Any]] = None
         self._ensure_preview_dir()
 
+    def get_builtin_models_dir(self) -> str:
+        """获取程序内置打包的模型资产目录（支持源码运行与 PyInstaller 打包环境）"""
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            return os.path.join(sys._MEIPASS, "backend", "models")
+        return os.path.abspath(os.path.join(os.path.dirname(__file__), "models"))
+
     def _ensure_preview_dir(self):
-        """确保程序运行根目录下的 preview 文件夹存在，且仅首次初始化一次内置演示"""
+        """确保程序运行根目录下的 preview 文件夹存在，且清理内部临时文件"""
         try:
             os.makedirs(self.preview_dir, exist_ok=True)
+
+            # 确保 preview 根目录就绪
             init_marker = os.path.join(self.preview_dir, ".initialized")
             if not os.path.exists(init_marker):
-                # 仅在系统首次运行时生成默认演示动作
                 from backend.npz_service import npz_service
                 npz_service.demo_dir = self.preview_dir
                 npz_service._ensure_demo_npz_files()
@@ -70,14 +77,19 @@ class PreviewManager:
             if not os.path.isfile(clean_path):
                 return {"success": False, "msg": f"指定的文件路径不存在: {clean_path}"}
             
-            # 自动识别：若为 .npz 动捕动作文件，直接复制至 preview 目录并解析
+            # 自动识别：若为 .npz 动捕动作文件，直接复制至 preview 目录
             if clean_path.lower().endswith(".npz"):
                 dest_npz = os.path.join(self.preview_dir, os.path.basename(clean_path))
                 if os.path.abspath(clean_path) != os.path.abspath(dest_npz):
                     shutil.copy2(clean_path, dest_npz)
-                from backend.npz_service import npz_service
-                parse_res = npz_service.parse_npz_file(dest_npz)
+                # 清除可能的只读属性（如微信接收的文件）
+                try:
+                    import stat
+                    os.chmod(dest_npz, stat.S_IRUSR | stat.S_IWUSR)
+                except Exception:
+                    pass
                 dance_id = os.path.splitext(os.path.basename(clean_path))[0]
+                parse_res = self.get_dance_data(dance_id)
                 parse_res["dance_id"] = dance_id
                 parse_res["dance_name"] = parse_res.get("dance_name") or dance_id
                 parse_res["msg"] = f"✓ 成功导入 NPZ 动捕舞蹈动作: {os.path.basename(clean_path)}"
@@ -95,9 +107,8 @@ class PreviewManager:
                 elif hasattr(zip_source, "read"):
                     with open(dest_npz, "wb") as f:
                         f.write(zip_source.read())
-                from backend.npz_service import npz_service
-                parse_res = npz_service.parse_npz_file(dest_npz)
                 dance_id = os.path.splitext(upload_name)[0]
+                parse_res = self.get_dance_data(dance_id)
                 parse_res["dance_id"] = dance_id
                 parse_res["dance_name"] = parse_res.get("dance_name") or dance_id
                 parse_res["msg"] = f"✓ 成功上传并导入 NPZ 动捕动作: {upload_name}"
@@ -446,6 +457,19 @@ class PreviewManager:
                 dz = pt[2] - 0.76
                 frames[t] = base_pose + np.array([dx, dy, dz], dtype=np.float32)
 
+            from collections import deque
+            children_map = {}
+            for j in joints_list:
+                if j.get("type") != "fixed":
+                    children_map.setdefault(j["parent"], []).append(j["child"])
+            bfs_body_names = []
+            q = deque(["pelvis"])
+            while q:
+                curr = q.popleft()
+                bfs_body_names.append(curr)
+                for c in children_map.get(curr, []):
+                    q.append(c)
+
             model_info = {
                 "has_robot_model": len(links_list) > 0,
                 "model_name": model_name,
@@ -454,6 +478,7 @@ class PreviewManager:
                 "parts": links_list,
                 "links": links_list,
                 "joints": joints_list,
+                "body_link_names": bfs_body_names,
                 "motion": {
                     "pelvis_trajectory": pelvis_trajectories,
                     "joint_trajectory": joint_trajectories
@@ -505,12 +530,23 @@ class PreviewManager:
         from backend.npz_service import npz_service
 
         npz_files = [f for f in os.listdir(self.preview_dir) if f.endswith(".npz")]
+        default_model = self._get_default_model_info()
+        has_default_model = bool(default_model and default_model.get("has_robot_model"))
+
+        # 排除内部系统模型与程序资产动作文件，列表中仅展示用户导入的动捕舞蹈动作
+        EXCLUDED_KEYWORDS = ("g1_29dof", "test_", "rubber_hand", "mode_15", "mode_5")
+
         res = []
         for f in npz_files:
+            lower_f = f.lower()
+            if any(kw in lower_f for kw in EXCLUDED_KEYWORDS):
+                continue
             p = os.path.join(self.preview_dir, f)
             info = npz_service.parse_npz_file(p)
             if info.get("success"):
                 model_meta = info.get("model_info") or {}
+                # 若 NPZ 自身内嵌模型，或全局默认 G1 模型就绪，则均具有 3D 实体模型
+                has_model = bool(model_meta.get("has_robot_model")) or has_default_model
                 res.append({
                     "id": os.path.splitext(f)[0],
                     "filename": f,
@@ -518,7 +554,7 @@ class PreviewManager:
                     "duration": info.get("duration_seconds", 0),
                     "frames": info.get("total_frames", 0),
                     "fps": info.get("fps", 50.0),
-                    "has_robot_model": bool(model_meta.get("has_robot_model"))
+                    "has_robot_model": has_model
                 })
         return res
 
@@ -531,16 +567,22 @@ class PreviewManager:
         if self._cached_model_info is not None:
             return self._cached_model_info
 
-        # 搜索默认 G1 模型目录
-        default_dirs = []
-        for entry in os.listdir(self.preview_dir):
-            entry_path = os.path.join(self.preview_dir, entry)
-            if os.path.isdir(entry_path) and ("g1" in entry.lower() or "rubber" in entry.lower()):
-                default_dirs.append(entry_path)
-        if not default_dirs:
-            return None
+        # 搜索默认 G1 模型目录 (优先使用程序内置打包的 backend/models)
+        builtin_models_dir = self.get_builtin_models_dir()
+        dest_folder = os.path.join(builtin_models_dir, "g1_29dof_rubber_hand")
 
-        dest_folder = default_dirs[0]
+        if not os.path.isdir(dest_folder):
+            preview_folder = os.path.join(self.preview_dir, "g1_29dof_rubber_hand")
+            if os.path.isdir(preview_folder):
+                dest_folder = preview_folder
+            else:
+                for entry in os.listdir(self.preview_dir):
+                    entry_path = os.path.join(self.preview_dir, entry)
+                    if os.path.isdir(entry_path) and ("g1" in entry.lower() or "rubber" in entry.lower()):
+                        dest_folder = entry_path
+                        break
+        if not os.path.isdir(dest_folder):
+            return None
         # 优先选 mode_15 URDF
         urdf_candidates = []
         for root_dir, _, fnames in os.walk(dest_folder):
@@ -592,8 +634,7 @@ class PreviewManager:
                     "axis": axis
                 })
 
-            # 解析 link 视觉网格 — 构建 mesh_url 供前端 fetch
-            rel_folder = os.path.relpath(dest_folder, self.preview_dir).replace("\\", "/")
+            # 解析 link 视觉网格 — 构建内置模型 mesh_url 供前端 fetch
             links_list = []
             for l_el in urdf_root.findall("link"):
                 l_name = l_el.attrib.get("name", "")
@@ -604,12 +645,26 @@ class PreviewManager:
                         fn = geom.find("mesh").attrib.get("filename", "")
                         if fn:
                             clean_fn = fn.replace("\\", "/").lstrip("/")
-                            mesh_url = f"/preview/{rel_folder}/{clean_fn}"
+                            mesh_url = f"/models/g1_29dof_rubber_hand/{clean_fn}"
                             links_list.append({
                                 "name": l_name,
                                 "link_name": l_name,
                                 "mesh_url": mesh_url
                             })
+
+            # 计算 30 个可动刚体的 BFS 遍历顺序（与 IsaacLab / PhysX body_pos_w 严格一致）
+            from collections import deque
+            children_map = {}
+            for j in joints_list:
+                if j.get("type") != "fixed":
+                    children_map.setdefault(j["parent"], []).append(j["child"])
+            bfs_body_names = []
+            q = deque(["pelvis"])
+            while q:
+                curr = q.popleft()
+                bfs_body_names.append(curr)
+                for c in children_map.get(curr, []):
+                    q.append(c)
 
             model_info = {
                 "has_robot_model": len(links_list) > 0,
@@ -619,6 +674,7 @@ class PreviewManager:
                 "parts": links_list,
                 "links": links_list,
                 "joints": joints_list,
+                "body_link_names": bfs_body_names,
                 # 无 motion：前端将以位置平移方式驱动各部件（降级兜底，优于骨架）
             }
             if model_info["has_robot_model"]:
@@ -630,9 +686,23 @@ class PreviewManager:
             logger.warning(f"解析默认 G1 URDF 失败，将降级为骨架渲染: {e}")
             return None
 
+    # G1 29-DoF 标准关节顺序（与 URDF revolute 关节顺序严格对应）
+    _G1_JOINT_ORDER = [
+        "left_hip_pitch_joint", "left_hip_roll_joint", "left_hip_yaw_joint",
+        "left_knee_joint", "left_ankle_pitch_joint", "left_ankle_roll_joint",
+        "right_hip_pitch_joint", "right_hip_roll_joint", "right_hip_yaw_joint",
+        "right_knee_joint", "right_ankle_pitch_joint", "right_ankle_roll_joint",
+        "waist_yaw_joint", "waist_roll_joint", "waist_pitch_joint",
+        "left_shoulder_pitch_joint", "left_shoulder_roll_joint", "left_shoulder_yaw_joint",
+        "left_elbow_joint", "left_wrist_roll_joint", "left_wrist_pitch_joint", "left_wrist_yaw_joint",
+        "right_shoulder_pitch_joint", "right_shoulder_roll_joint", "right_shoulder_yaw_joint",
+        "right_elbow_joint", "right_wrist_roll_joint", "right_wrist_pitch_joint", "right_wrist_yaw_joint",
+    ]
+
     def get_dance_data(self, dance_id: str) -> Dict[str, Any]:
         """获取指定舞蹈动作的完整 3D 帧数据与机器人模型资产。
-        若 NPZ 内未内嵌 model_info，自动注入本地 G1 机器人模型结构（优于骨架渲染）。
+        若 NPZ 内未内嵌 model_info，自动注入本地 G1 机器人模型结构。
+        若 NPZ 含有 G1 原生 joint_pos（29-DoF）+ body_pos_w，则构建完整关节角度轨迹驱动。
         """
         self._ensure_preview_dir()
         filename = f"{dance_id}.npz" if not dance_id.endswith(".npz") else dance_id
@@ -641,12 +711,85 @@ class PreviewManager:
             return {"success": False, "msg": f"舞蹈文件不存在: preview/{filename}"}
         from backend.npz_service import npz_service
         result = npz_service.parse_npz_file(path)
+        if not result.get("success"):
+            return result
+
         # 若 NPZ 自身无内嵌机器人模型，尝试自动注入默认 G1 模型结构
-        if result.get("success") and not (result.get("model_info") or {}).get("has_robot_model"):
+        if not (result.get("model_info") or {}).get("has_robot_model"):
             default_model = self._get_default_model_info()
             if default_model and default_model.get("has_robot_model"):
-                result["model_info"] = default_model
+                result["model_info"] = dict(default_model)  # 浅拷贝，不污染缓存
+
+                # 检测 G1 原生格式：含 body_pos_w (N, 30, 3) + body_quat_w (N, 30, 4)
+                # 直接使用每个刚体的世界位置+朝向，完全绕过关节角度坐标系问题
+                try:
+                    raw = np.load(path, allow_pickle=True)
+                    if "body_pos_w" in raw.files and "body_quat_w" in raw.files:
+                        bpw = raw["body_pos_w"]   # (N, 30, 3) 刚体世界位置 (Z-up)
+                        bqw = raw["body_quat_w"]  # (N, 30, 4) 刚体世界四元数 [w,x,y,z]
+                        n_frames = min(int(bpw.shape[0]), int(bqw.shape[0]))
+                        n_bodies = int(bpw.shape[1])  # 30
+
+                        # 中心化：减去初始骨盆 XY 偏移，让机器人在视口正中
+                        origin_x = float(bpw[0, 0, 0])
+                        origin_y = float(bpw[0, 0, 1])
+
+                        body_world_traj = []
+                        for t in range(n_frames):
+                            frame_bodies = []
+                            for b in range(n_bodies):
+                                px = round(float(bpw[t, b, 0]) - origin_x, 4)
+                                py = round(float(bpw[t, b, 1]) - origin_y, 4)
+                                pz = round(float(bpw[t, b, 2]), 4)
+                                # IsaacLab 四元数 [w,x,y,z] → Three.js [x,y,z,w]
+                                qw = round(float(bqw[t, b, 0]), 5)
+                                qx = round(float(bqw[t, b, 1]), 5)
+                                qy = round(float(bqw[t, b, 2]), 5)
+                                qz = round(float(bqw[t, b, 3]), 5)
+                                frame_bodies.append([px, py, pz, qx, qy, qz, qw])
+                            body_world_traj.append(frame_bodies)
+
+                        result["model_info"]["motion"] = {
+                            "body_world_trajectory": body_world_traj,  # [N, 30, 7] 每个body世界变换
+                        }
+                        logger.info(f"识别 G1 body_pos_w 格式，注入 {n_frames} 帧 {n_bodies} 刚体世界变换轨迹")
+                    elif "joint_pos" in raw.files and "body_pos_w" in raw.files:
+                        # 仅有 body_pos_w 但缺少 body_quat_w 的降级路径
+                        bpw = raw["body_pos_w"]
+                        n_frames = int(bpw.shape[0])
+                        n_bodies = int(bpw.shape[1])
+                        origin_x = float(bpw[0, 0, 0])
+                        origin_y = float(bpw[0, 0, 1])
+                        body_world_traj = []
+                        for t in range(n_frames):
+                            frame_bodies = []
+                            for b in range(n_bodies):
+                                px = round(float(bpw[t, b, 0]) - origin_x, 4)
+                                py = round(float(bpw[t, b, 1]) - origin_y, 4)
+                                pz = round(float(bpw[t, b, 2]), 4)
+                                frame_bodies.append([px, py, pz, 0.0, 0.0, 0.0, 1.0])
+                            body_world_traj.append(frame_bodies)
+                        result["model_info"]["motion"] = {"body_world_trajectory": body_world_traj}
+                except Exception as ex:
+                    logger.warning(f"解析 body_pos_w 失败，退化为刚体平移: {ex}")
+
+                # 永久性改变：持久化回写 model_info 到 NPZ 文件（如果文件自身尚未固化模型元数据）
+                try:
+                    if raw is not None and "model_info" not in raw.files:
+                        raw_dict = {k: raw[k] for k in raw.files}
+                        raw_dict["model_info"] = np.array(json.dumps(result["model_info"]))
+                        import stat
+                        try:
+                            os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+                        except Exception:
+                            pass
+                        np.savez_compressed(path, **raw_dict)
+                        logger.info(f"已永久将 G1 3D 机器人模型固化写入 NPZ: {filename}")
+                except Exception as w_err:
+                    logger.debug(f"持久化 model_info 至 NPZ 跳过: {w_err}")
+
         return result
+
 
     def delete_dance(self, dance_id: str) -> Dict[str, Any]:
         """彻底删除 preview 目录下的指定舞蹈动作文件与关联解压模型"""
@@ -663,10 +806,12 @@ class PreviewManager:
                 return {"success": False, "msg": f"删除动作文件失败: {str(e)}"}
 
         # 若存在关联的解压模型目录（如 preview/g1_29dof_rubber_hand）
+        # 保护：严禁删除全局内置的 G1 机器人模型！
+        PROTECTED_FOLDERS = {"g1_29dof_rubber_hand", "g1_29dof", "meshes", "models"}
         dance_id_clean = dance_id.replace(".npz", "")
         base_name = dance_id_clean.replace("_dance", "")
         for folder_candidate in set([dance_id_clean, base_name]):
-            if not folder_candidate:
+            if not folder_candidate or folder_candidate.lower() in PROTECTED_FOLDERS:
                 continue
             model_dir = os.path.join(self.preview_dir, folder_candidate)
             if os.path.exists(model_dir) and os.path.isdir(model_dir):

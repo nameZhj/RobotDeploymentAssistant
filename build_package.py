@@ -87,11 +87,13 @@ def step_2_build_standalone_exe():
     
     web_dir = os.path.abspath("web")
     drivers_dir = os.path.abspath(os.path.join("backend", "drivers"))
+    models_dir = os.path.abspath(os.path.join("backend", "models"))
     icon_abs = os.path.abspath(ICON_PATH)
     
     add_data_args = [
         f'--add-data={web_dir}{os.pathsep}web',
         f'--add-data={drivers_dir}{os.pathsep}backend/drivers',
+        f'--add-data={models_dir}{os.pathsep}backend/models',
     ]
     if os.path.exists(icon_abs):
         add_data_args.append(f'--add-data={icon_abs}{os.pathsep}.')
