@@ -51,10 +51,10 @@ const API = {
     return this.request('/api/network/interfaces');
   },
 
-  autoConnect(forceNic = true) {
+  autoConnect(forceNic = true, nicName = '', targetIp = '') {
     return this.request('/api/network/auto_connect', {
       method: 'POST',
-      body: JSON.stringify({ force_nic: forceNic })
+      body: JSON.stringify({ force_nic: forceNic, nic_name: nicName, target_ip: targetIp })
     });
   },
 
@@ -338,26 +338,39 @@ const API = {
     return this.request(`/api/serial/messages?since=${since}`);
   },
 
-  getSerialDanceList(forceRefresh = false) {
-    const url = forceRefresh ? '/api/serial/dance_list?refresh=1' : '/api/serial/dance_list';
+  getSerialDanceList(forceRefresh = false, target = 'ALL') {
+    let url = `/api/serial/dance_list?target=${encodeURIComponent(target)}`;
+    if (forceRefresh) url += '&refresh=1';
     return this.request(url);
   },
 
-  refreshSerialDanceList(timeout = 2.5) {
+  refreshSerialDanceList(timeout = 2.5, target = 'ALL') {
     return this.request('/api/serial/refresh_dance_list', {
       method: 'POST',
-      body: JSON.stringify({ timeout })
+      body: JSON.stringify({ timeout, target })
     });
   },
 
-  parseSerialDances(yamlContent) {
+  parseSerialDances(yamlContent, target = 'ALL') {
     return this.request('/api/serial/parse_dances', {
       method: 'POST',
-      body: JSON.stringify({ content: yamlContent })
+      body: JSON.stringify({ content: yamlContent, target })
     });
   },
 
-  // 10. SSE 任务日志流监听
+  // 10. 受控机器人机队配置持久化
+  getFleet() {
+    return this.request('/api/fleet');
+  },
+
+  saveFleet(robots = [], selected = []) {
+    return this.request('/api/fleet', {
+      method: 'POST',
+      body: JSON.stringify({ robots, selected })
+    });
+  },
+
+  // 11. SSE 任务日志流监听
   listenStream(taskId, onMessage, onComplete, onError) {
     const es = new EventSource(`/api/stream/${taskId}`);
     es.onmessage = (e) => {

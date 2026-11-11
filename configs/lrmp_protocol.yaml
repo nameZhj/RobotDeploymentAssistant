@@ -1,0 +1,99 @@
+protocol_meta:
+  name: "LRMP"
+  version: "V1.0-R3"
+  delimiter_target: "|"
+  delimiter_param: ","
+
+target_rules:
+  broadcast_token: "ALL"
+  unbound_gateway_prefix: "GW_"
+  registered_aliases: ["A", "B", "C", "D", "E", "F", "G", "H"]
+  allow_broadcast_commands: ["DISCOVER"]
+  expand_multi_target: true
+
+frame_types:
+  request: "REQ"
+  response: "RSP"
+  event: "EVT"
+  acknowledge: "ACK"
+  async_accepted_token: "ACCEPTED"
+  ready_state_token: "READY"
+
+control_authorities:
+  free: "FREE"
+  manual: "MANUAL"
+  choreo: "CHOREO"
+
+transport_policy:
+  ack_timeout_ms: 800
+  max_retries: 3
+  discover_backoff_max_ms: 500
+  choreo_play_lead_time_ms: 3000
+  require_source_id_in_log: true
+
+device_management_commands:
+  discover:
+    cmd: "DISCOVER"
+    params_count: 0
+    is_long_task: false
+  bind:
+    cmd: "BIND"
+    params: ["alias"]
+    require_auth: true
+    is_long_task: false
+  setup:
+    cmd: "SETUP"
+    params: ["job_id"]
+    is_long_task: true
+  deploy:
+    cmd: "DEPLOY"
+    params: ["job_id"]
+    is_long_task: true
+  status:
+    cmd: "STATUS"
+    optional_subkeys: ["NET", "ID", "LICENSE", "DEPLOY", "OWNER", "SHOW", "CLOCK"]
+    is_long_task: false
+
+direct_motion_commands:
+  stand: { cmd: "STAND", params_count: 0, auto_acquire: "MANUAL" }
+  gait: { cmd: "GAIT", params_count: 0, auto_acquire: "MANUAL" }
+  passive: { cmd: "PASSIVE", params_count: 0, auto_acquire: "MANUAL" }
+  forward: { cmd: "FORWARD", params: ["duration_s"], auto_acquire: "MANUAL" }
+  back: { cmd: "BACK", params: ["duration_s"], auto_acquire: "MANUAL" }
+  move_left: { cmd: "MOVE_LEFT", params: ["duration_s"], auto_acquire: "MANUAL" }
+  move_right: { cmd: "MOVE_RIGHT", params: ["duration_s"], auto_acquire: "MANUAL" }
+  turn_left: { cmd: "TURN_LEFT", params: ["duration_s"], auto_acquire: "MANUAL" }
+  turn_right: { cmd: "TURN_RIGHT", params: ["duration_s"], auto_acquire: "MANUAL" }
+  move:
+    cmd: "MOVE"
+    params: ["forward", "left", "turn", "duration_s"]
+    axis_range: [-1.0, 1.0]
+    max_duration_s: 15.0
+    auto_acquire: "MANUAL"
+  dance:
+    cmd: "DANCE"
+    params: ["action_name"]
+    require_license_check: true
+    auto_acquire: "MANUAL"
+  stop: { cmd: "STOP", params_count: 0 }
+  release: { cmd: "RELEASE", params_count: 0, allowed_authority_only: "MANUAL" }
+
+legacy_admin_commands:
+  require_admin_whitelist: true
+  commands: ["GROUP1", "GROUP2", "GROUP3", "OPENING", "BUTTON", "MASK"]
+
+choreography_commands:
+  prep:
+    cmd: "PREP"
+    params: ["plan_id", "run_id"]
+    is_long_task: true
+    acquire_authority: "CHOREO"
+    immutable_plan_id: true
+  play:
+    cmd: "PLAY"
+    params: ["run_id", "t0_ms"]
+    require_all_ready: true
+    require_clock_sync: true
+  barrier:
+    cmd: "BARRIER"
+    params: ["run_id", "barrier_id", "release_ms"]

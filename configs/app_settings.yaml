@@ -1,0 +1,52 @@
+app_info:
+  app_title: "ChoreoNexus - 机器人集群编排与虚拟演播工作台"
+  version: "1.0.0"
+  target_os: ["Windows 10", "Windows 11"]
+
+paths:
+  workspace_dir: ".agent_workspace"
+  docs_dir: "docs"
+  assets_dir: "assets"
+  cache_dir: "runtime/cache"
+  logs_dir: "runtime/logs"
+  projects_dir: "runtime/choreo_projects"
+
+ui_layout:
+  default_width: 1440
+  default_height: 900
+  min_width: 1200
+  min_height: 720
+  timeline_fps: 30
+  log_max_visible_lines: 500
+
+graphics_3d:
+  auto_detect_gpu: true
+  default_fallback_profile: "eco"
+  stage_grid_size_meters: 10.0
+  stage_grid_step_meters: 0.5
+  collision_warning_radius_m: 0.65
+
+  profiles:
+    eco:
+      description: "无独显办公本兼容模式（核显/集显优化）"
+      opengl_version: "3.3"
+      use_angle_dx11_fallback: true
+      target_fps: 60
+      msaa_samples: 0
+      enable_shadows: false
+      enable_bloom_postprocess: false
+      avatar_lod: "low_poly_primitive"
+      trajectory_style: "simple_polyline"
+      max_instanced_avatars: 20
+
+    pro:
+      description: "独立显卡高画质演播模式"
+      opengl_version: "4.3"
+      use_angle_dx11_fallback: false
+      target_fps: 60
+      msaa_samples: 4
+      enable_shadows: true
+      enable_bloom_postprocess: true
+      avatar_lod: "high_detail_urdf_mesh"
+      trajectory_style: "glowing_ribbon_spline"
+      max_instanced_avatars: 50

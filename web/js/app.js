@@ -115,13 +115,13 @@ const App = {
             targetStep = 3;
           } else if (!res.has_license) {
             reason = '未检测到 License 授权文件';
-            targetStep = 5;
+            targetStep = 4;
           } else if (!res.license_valid) {
             reason = 'License 机器码不匹配或包含未授权舞蹈';
-            targetStep = 5;
+            targetStep = 4;
           } else if (!res.is_ctrl_running || !res.is_lora_running) {
             reason = '机载运控与通信程序尚未就绪';
-            targetStep = 5;
+            targetStep = 4;
           } else {
             reason = '首次向导配置未完成';
             targetStep = 1;
@@ -155,6 +155,34 @@ const App = {
 
     if (btnOpen) {
       btnOpen.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.openOpsModal('tab-3d-player');
+      });
+    }
+
+    const btnStudioWindow = document.getElementById('btn-open-studio-window');
+    if (btnStudioWindow) {
+      btnStudioWindow.addEventListener('click', (e) => {
+        e.stopPropagation();
+        fetch('/api/system/open-studio', { method: 'POST' })
+          .then(res => res.json())
+          .then(data => {
+            if (typeof showToast === 'function') {
+              showToast(data.msg || '正在启动舞台编导控制台...', data.success ? 'success' : 'warning');
+            }
+          })
+          .catch(err => {
+            console.error('Launch studio error:', err);
+            if (typeof showToast === 'function') {
+              showToast('启动舞台编导服务通信异常', 'error');
+            }
+          });
+      });
+    }
+
+    const btnDancePreview = document.getElementById('btn-open-dance-preview');
+    if (btnDancePreview) {
+      btnDancePreview.addEventListener('click', (e) => {
         e.stopPropagation();
         this.openOpsModal('tab-3d-player');
       });

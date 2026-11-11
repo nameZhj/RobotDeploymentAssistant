@@ -21,8 +21,11 @@ ENV/
 *.swp
 *.swo
 
-# Temporary / Uploads / Scratch scripts & logs
+# Temporary / Uploads / Scratch scripts & logs / Persistent local user data
 temp_uploads/
+user_data/
+cache/
+robot_fleet.json
 scratch/
 *.log
 *.tmp
@@ -36,7 +39,7 @@ scratch/
 
 # 3D dance and robot preview assets
 preview/*
-!preview/.initialized
+!preview/.gitkeep
 
 # System files
 Thumbs.db
@@ -44,6 +47,46 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 .DS_Store
+
+# Python 字节码与虚拟环境缓存
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 打包与分发目录
+build/
+dist/
+*.egg-info/
+*.spec
+
+# 运行时缓存、通信日志与本地编排工程产物
+runtime/cache/*
+runtime/logs/*
+runtime/choreo_projects/*
+!runtime/cache/.gitkeep
+!runtime/logs/.gitkeep
+!runtime/choreo_projects/.gitkeep
+
+# Agent 工作区临时快照（仅保留 Skill、命名映射表与说明文件）
+.agent_workspace/*
+!.agent_workspace/skills/
+!.agent_workspace/naming_mapping.json
+!.agent_workspace/active_plan.md
+
+# IDE 与系统临时文件
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+*.log
 
 
 

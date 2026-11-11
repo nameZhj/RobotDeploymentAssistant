@@ -1,7 +1,8 @@
 @echo off
+chcp 65001 >nul
 cd /d "%~dp0"
 echo ========================================================
-echo   VSISLAB Robot Deployment Assistant - Packaging EXE
+echo   VSISLAB Robot Deployment Assistant - Packaging
 echo ========================================================
 echo.
 python build_package.py
@@ -13,6 +14,6 @@ if errorlevel 1 (
     exit /b 1
 )
 echo.
-echo [SUCCESS] Standalone EXE created successfully in dist folder.
+echo [SUCCESS] Build process completed successfully.
 echo.
 pause

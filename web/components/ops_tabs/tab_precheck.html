@@ -8,18 +8,18 @@
             <div class="card-title" style="font-size: 0.88rem; display: flex; align-items: center; gap: 6px;">
               <span>🛠️ 机器人运行环境深度预检与修复</span>
             </div>
-            <div style="display: flex; gap: 6px; align-items: center;">
-              <button class="btn btn-secondary btn-xs" onclick="TabNetwork.installWindowsCh341()"
-                style="padding: 3px 8px; font-size: 0.72rem; white-space: nowrap;">
-                🔌 安装上位机驱动
-              </button>
+            <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
               <button class="btn btn-secondary btn-xs" onclick="TabPrecheck.run()"
                 style="padding: 3px 8px; font-size: 0.72rem; white-space: nowrap;">
                 🔄 刷新预检
               </button>
-              <button class="btn btn-primary btn-xs" id="btn-tp-fix-ch341" style="display: none; font-weight: 700; padding: 3px 8px; font-size: 0.72rem; white-space: nowrap;"
-                onclick="TabPrecheck.fixCh341()">
-                🛠️ 一键修复 LoRa 通信环境
+              <button class="btn btn-primary btn-xs" id="btn-tp-fix-ch341" style="font-weight: 700; padding: 3px 9px; font-size: 0.72rem; white-space: nowrap; background: linear-gradient(135deg, #0284c7, #2563eb);"
+                onclick="TabPrecheck.fixCh341()" title="在线编译安装机器人机载 Linux CH341 串口驱动，放行权限并启动守护">
+                🤖 安装下位机 LoRa 驱动
+              </button>
+              <button class="btn btn-secondary btn-xs" onclick="TabNetwork.installWindowsCh341()"
+                style="padding: 3px 8px; font-size: 0.72rem; white-space: nowrap;" title="在当前 Windows 电脑安装 CH341 串口模块驱动">
+                💻 安装上位机驱动
               </button>
             </div>
           </div>

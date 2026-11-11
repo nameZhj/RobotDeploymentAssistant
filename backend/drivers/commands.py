@@ -282,6 +282,9 @@ nohup bash -c "$(declare -f launch_lora_daemon); launch_lora_daemon '$ROBOT_ID'"
 echo "[SUCCESS] 运控与 LoRa 接收程序已在后台启动完成。"
 '''
 
+CUSTOM_STARTUP_REMOTE_PATH = "/docker_config/custom_startup.sh"
+CUSTOM_STARTUP_SCRIPT_TEMPLATE = "#!/bin/bash\nsleep 3\n/home/ubuntu/vsis_mimic_deploy/run_bg.sh\n"
+
 RUN_BG_SYNC_AND_CHMOD_CMD = (
     "chmod +x /home/ubuntu/vsis_mimic_deploy/run_bg.sh /home/ubuntu/vsis_mimic_deploy/sec_run.sh /home/ubuntu/vsis_mimic_deploy/g1_ctrl_vsis /home/ubuntu/vsis_mimic_deploy/lora_recv_group /docker_config/custom_startup.sh 2>/dev/null || true ; "
     "chmod 666 /dev/ttyCH341* /dev/ttyUSB* /dev/ttyACM* /dev/bus/usb/*/* 2>/dev/null || true ; "

@@ -655,6 +655,11 @@ class SerialManager:
             "raw": raw_yaml_text
         }
 
+    def sync_dance_list_from_robot(self, timeout: float = 3.0) -> Tuple[bool, List[Dict[str, Any]], str]:
+        """从机器人实时同步最新动作列表并更新本地缓存"""
+        res = self.request_dance_list(timeout=timeout, force=True)
+        return res.get("success", False), res.get("groups", []), res.get("msg", "")
+
     def disconnect(self, safety_stop: bool = True) -> Dict[str, Any]:
         """断开连接，并在断开前安全广播 ALL|STOP"""
         self._stop_reader_thread()

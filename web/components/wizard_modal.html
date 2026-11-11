@@ -1,255 +1,261 @@
-  <!-- ========================================================= -->
-  <!-- 一键部署向导 独立模态浮窗 (仅未授权/未部署或手动点击时弹出) -->
-  <!-- ========================================================= -->
-  <div class="wizard-modal-overlay" id="wizard-modal">
-    <div class="wizard-modal-container">
-      <div class="wizard-modal-header">
-        <div class="wizard-modal-title">
-          <span>🚀</span>
-          <span>VSISLAB 机器人自动化部署向导</span>
+<!-- ========================================================= -->
+<!-- 一键部署向导 独立模态浮窗 (仅未授权/未部署或手动点击时弹出) -->
+<!-- ========================================================= -->
+<div class="wizard-modal-overlay" id="wizard-modal">
+  <div class="wizard-modal-container">
+    <div class="wizard-modal-header">
+      <div class="wizard-modal-title">
+        <span>🚀</span>
+        <span>VSISLAB 机器人自动化部署向导</span>
+      </div>
+      <button class="wizard-modal-close" id="btn-close-wizard" title="关闭向导 (右上角随时可重新唤起)">✕</button>
+    </div>
+
+    <div class="wizard-modal-body">
+      <!-- 步骤指示条 -->
+      <div class="wizard-steps">
+        <div class="step-node active" data-step="1">
+          <div class="step-circle">1</div>
+          <div class="step-label">连接与发现</div>
         </div>
-        <button class="wizard-modal-close" id="btn-close-wizard" title="关闭向导 (右上角随时可重新唤起)">✕</button>
+        <div class="step-node" data-step="2">
+          <div class="step-circle">2</div>
+          <div class="step-label">环境预检</div>
+        </div>
+        <div class="step-node" data-step="3">
+          <div class="step-circle">3</div>
+          <div class="step-label">镜像与自启配置</div>
+        </div>
+        <div class="step-node" data-step="4">
+          <div class="step-circle">4</div>
+          <div class="step-label">机器码与License</div>
+        </div>
+        <div class="step-node" data-step="5">
+          <div class="step-circle">5</div>
+          <div class="step-label">部署就绪</div>
+        </div>
       </div>
 
-      <div class="wizard-modal-body">
-        <!-- 步骤指示条 -->
-        <div class="wizard-steps">
-          <div class="step-node active" data-step="1">
-            <div class="step-circle">1</div>
-            <div class="step-label">连接与发现</div>
-          </div>
-          <div class="step-node" data-step="2">
-            <div class="step-circle">2</div>
-            <div class="step-label">环境预检</div>
-          </div>
-          <div class="step-node" data-step="3">
-            <div class="step-circle">3</div>
-            <div class="step-label">镜像导入</div>
-          </div>
-          <div class="step-node" data-step="4">
-            <div class="step-circle">4</div>
-            <div class="step-label">ID与开机自启</div>
-          </div>
-          <div class="step-node" data-step="5">
-            <div class="step-circle">5</div>
-            <div class="step-label">机器码与License</div>
-          </div>
-          <div class="step-node" data-step="6">
-            <div class="step-circle">6</div>
-            <div class="step-label">部署就绪</div>
-          </div>
-        </div>
-
-        <!-- 向导步骤 1: 连接与网络 -->
-        <div class="wizard-step-pane" id="wizard-step-1">
-          <div class="grid-2">
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">🔌 机器人连接参数 (默认预置)</div>
-                <span class="card-badge">宇树标准网段</span>
-              </div>
-              <div class="form-group">
-                <label class="form-label">机器人 IP 地址</label>
-                <input type="text" class="form-control" id="input-host" value="192.168.123.164">
-              </div>
-              <div class="grid-2">
-                <div class="form-group">
-                  <label class="form-label">SSH 端口</label>
-                  <input type="number" class="form-control" id="input-port" value="22">
-                </div>
-                <div class="form-group">
-                  <label class="form-label">用户名</label>
-                  <input type="text" class="form-control" id="input-username" value="unitree">
-                </div>
-              </div>
-              <div class="form-group">
-                <label class="form-label">SSH 密码</label>
-                <input type="password" class="form-control" id="input-password" value="123">
-              </div>
-              <div style="display: flex; gap: 10px; margin-top: 14px;">
-                <button class="btn btn-primary" id="btn-global-connect" style="flex: 1;">⚡ 连接机器人</button>
-                <button class="btn btn-secondary" onclick="Wizard.nextStep()">下一步 ➔</button>
-              </div>
-            </div>
-
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">📡 断网自愈与网卡直连模式</div>
-                <span class="card-badge"
-                  style="background: rgba(16, 185, 129, 0.2); color: var(--accent-green);">已常驻守护</span>
-              </div>
-              <div
-                style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
-                <div>
-                  <div style="font-weight: 700; font-size: 0.9rem; color: var(--accent-cyan);">⚡ 断网自动检测与自愈连接</div>
-                  <div style="font-size: 0.76rem; color: var(--text-secondary); margin-top: 2px;">
-                    网线直连或断网环境下，系统自动配置直连网卡（192.168.123.200）并自动完成机器人握手连接。
-                  </div>
-                </div>
-                <button class="btn btn-primary btn-sm" id="btn-wizard-auto-connect"
-                  onclick="Wizard.autoDetectAndConnect()" style="white-space: nowrap;">
-                  ⚡ 立即执行自愈连接
-                </button>
-              </div>
-
-              <div class="form-group">
-                <label class="form-label">选择电脑以太网卡 (网线直连口)</label>
-                <select class="form-control" id="select-nic-list">
-                  <option value="">正在检测本地网卡...</option>
-                </select>
-              </div>
-              <div style="display: flex; gap: 8px; margin-bottom: 14px;">
-                <button class="btn btn-secondary btn-sm" id="btn-refresh-nics">🔄 刷新网卡</button>
-                <button class="btn btn-primary btn-sm" id="btn-config-nic-static">🌐 一键设为同网段 (192.168.123.200)</button>
-                <button class="btn btn-secondary btn-sm" id="btn-config-nic-dhcp">恢复 DHCP</button>
-              </div>
-              <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.06); margin: 12px 0;">
-              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-                <div style="font-size: 0.85rem; font-weight: 600;">局域网设备扫描 (192.168.123.x)</div>
-                <button class="btn btn-primary btn-sm" id="btn-scan-network">🔍 一键全网扫描</button>
-              </div>
-              <div id="scan-results-list" style="max-height: 140px; overflow-y: auto;">
-                <div style="font-size: 0.78rem; color: var(--text-muted);">点击上方按钮扫描当前网段中的机器人与活跃主机</div>
-              </div>
-
-              <!-- Windows 本机 LoRa 串口驱动卡片 -->
-              <div
-                style="background: rgba(0,0,0,0.22); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 10px 12px; margin-top: 12px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
-                  <div style="font-size: 0.82rem; font-weight: 600; color: #ffffff;">🔌 本机 LoRa 串口 (CH340/CH341)</div>
-                  <div style="display: flex; gap: 6px;">
-                    <button class="btn btn-secondary btn-xs" onclick="Wizard.loadWindowsCh341()">🔄 刷新</button>
-                    <button class="btn btn-primary btn-xs" onclick="Wizard.installWindowsCh341()">⚡ 安装上位机驱动</button>
-                  </div>
-                </div>
-                <div id="wizard-win-ch341-status"
-                  style="font-size: 0.75rem; padding: 6px 10px; background: rgba(0,0,0,0.3); border-radius: 6px; border: 1px solid var(--border-color);">
-                  <span style="color: var(--text-muted);">正在检测 Windows 本机串口状态...</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 向导步骤 2: 环境预检与修复 -->
-        <div class="wizard-step-pane" id="wizard-step-2" style="display: none;">
-          <div class="card" style="margin-bottom: 16px;">
+      <!-- 向导步骤 1: 连接与网络 -->
+      <div class="wizard-step-pane" id="wizard-step-1">
+        <div class="grid-2">
+          <div class="card">
             <div class="card-header">
-              <div class="card-title">🛠️ 机器人宿主机环境预检 (G1 硬件与运行时)</div>
-              <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
-                <button class="btn btn-secondary btn-sm" id="btn-run-precheck" onclick="Wizard.runPrecheck(false)">🔄
-                  重新检测</button>
-                <button class="btn btn-secondary btn-sm" id="btn-wizard-win-ch341"
-                  onclick="Wizard.installWindowsCh341()" title="若电脑上位机插有 USB LoRa 发射器，需在本机安装 Windows CH341 串口驱动">🔌
-                  安装上位机驱动</button>
-                <button class="btn btn-primary btn-sm" id="btn-wizard-fix-ch341" onclick="Wizard.runFixCh341()">🛠️ 一键修复
-                  CH341 驱动</button>
+              <div class="card-title">🔌 机器人连接参数 (默认预置)</div>
+              <span class="card-badge">宇树标准网段</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label">机器人 IP 地址</label>
+              <input type="text" class="form-control" id="input-host" value="192.168.123.164">
+            </div>
+            <div style="display: flex; gap: 12px; margin-bottom: 10px;">
+              <div class="form-group" style="flex: 1; min-width: 0; margin-bottom: 0;">
+                <label class="form-label">SSH 端口</label>
+                <input type="number" class="form-control" id="input-port" value="22">
+              </div>
+              <div class="form-group" style="flex: 1; min-width: 0; margin-bottom: 0;">
+                <label class="form-label">用户名</label>
+                <input type="text" class="form-control" id="input-username" value="unitree">
               </div>
             </div>
-            <div id="precheck-items-list">
-              <div style="padding: 20px; color: var(--accent-cyan);">⏳ 正在检测环境指标...</div>
+            <div class="form-group">
+              <label class="form-label">SSH 密码</label>
+              <input type="password" class="form-control" id="input-password" value="123">
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 14px;">
+              <button class="btn btn-primary" id="btn-global-connect" style="flex: 1; white-space: nowrap;">⚡ 连接机器人</button>
+              <button class="btn btn-secondary" onclick="Wizard.nextStep()" style="white-space: nowrap;">下一步 ➔</button>
             </div>
           </div>
-          <div style="display: flex; justify-content: space-between;">
-            <button class="btn btn-secondary" onclick="Wizard.prevStep()">⬅️ 上一步</button>
-            <button class="btn btn-primary" onclick="Wizard.nextStep()">下一步：镜像导入 ➔</button>
+
+          <div class="card">
+            <div class="card-header" style="margin-bottom: 8px;">
+              <div class="card-title">🌐 本机网卡直连与断网自愈</div>
+              <span class="card-badge"
+                style="background: rgba(16, 185, 129, 0.2); color: var(--accent-green);">常驻守护中</span>
+            </div>
+
+            <!-- 网卡选择与直连配置核心区 -->
+            <div
+              style="background: rgba(15, 23, 42, 0.55); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                <label class="form-label"
+                  style="margin-bottom: 0; font-size: 0.8rem; font-weight: 600; color: var(--text-primary);">
+                  电脑以太网卡 (网线直连口)
+                </label>
+                <div style="display: flex; gap: 6px;">
+                  <button class="btn btn-secondary btn-xs" id="btn-refresh-nics" onclick="Wizard.refreshInterfaces()"
+                    title="刷新网卡列表" style="white-space: nowrap;">🔄 刷新</button>
+                  <button class="btn btn-secondary btn-xs" id="btn-config-nic-dhcp" onclick="Wizard.restoreNicDhcp()"
+                    title="将选中的以太网卡恢复为自动获取 IP" style="white-space: nowrap;">恢复 DHCP</button>
+                </div>
+              </div>
+              <select class="form-control" id="select-nic-list" onchange="Wizard.onNicSelected()"
+                style="font-size: 0.82rem; margin-bottom: 8px;">
+                <option value="">正在检测本地网卡...</option>
+              </select>
+              <div id="wizard-nic-status-badge"
+                style="font-size: 0.74rem; padding: 4px 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.04); color: var(--text-secondary); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+                <span>ℹ️ 正在读取网卡 IP 状态...</span>
+              </div>
+
+              <!-- 合并后的核心主按钮 -->
+              <button class="btn btn-primary" id="btn-wizard-auto-connect" onclick="Wizard.oneClickDirectConnect()"
+                style="width: 100%; padding: 9px 14px; font-size: 0.9rem; font-weight: 700; background: linear-gradient(135deg, #0284c7, #2563eb); box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35); border: none; border-radius: 6px; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; white-space: nowrap;">
+                ⚡ 设为同网段并连接
+              </button>
+              <div style="font-size: 0.72rem; color: var(--text-muted); text-align: center; margin-top: 5px;">
+                自动将直连网卡配为 192.168.123.200 并自动握手连接目标机器人
+              </div>
+            </div>
+            <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.06); margin: 10px 0;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+              <div style="font-size: 0.82rem; font-weight: 600;">局域网设备扫描 (192.168.123.x)</div>
+              <button class="btn btn-primary btn-xs" id="btn-scan-network" style="white-space: nowrap; padding: 3px 8px;">🔍 一键全网扫描</button>
+            </div>
+            <div id="scan-results-list" style="max-height: 90px; overflow-y: auto; font-size: 0.76rem;">
+              <div style="font-size: 0.76rem; color: var(--text-muted); padding: 4px 0;">点击上方按钮扫描当前网段中的机器人与活跃主机</div>
+            </div>
+
+            <!-- Windows 本机 LoRa 串口驱动卡片 -->
+            <div
+              style="background: rgba(0,0,0,0.22); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 8px 10px; margin-top: 8px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; flex-wrap: wrap; gap: 6px;">
+                <div style="font-size: 0.8rem; font-weight: 600; color: #ffffff;">🔌 本机 LoRa 串口 (CH340/CH341)</div>
+                <div style="display: flex; gap: 6px;">
+                  <button class="btn btn-secondary btn-xs" onclick="Wizard.loadWindowsCh341()" style="white-space: nowrap; padding: 2px 6px;">🔄 刷新</button>
+                  <button class="btn btn-primary btn-xs" onclick="Wizard.installWindowsCh341()" style="white-space: nowrap; padding: 2px 8px;">⚡ 安装上位机驱动</button>
+                </div>
+              </div>
+              <div id="wizard-win-ch341-status"
+                style="font-size: 0.74rem; padding: 4px 8px; background: rgba(0,0,0,0.3); border-radius: 6px; border: 1px solid var(--border-color); line-height: 1.3;">
+                <span style="color: var(--text-muted);">正在检测 Windows 本机串口状态...</span>
+              </div>
+            </div>
           </div>
         </div>
+      </div>
 
-        <!-- 向导步骤 3: 镜像上传与导入 -->
-        <div class="wizard-step-pane" id="wizard-step-3" style="display: none;">
-          <div id="wizard-step3-image-hint" style="display: none;"></div>
-          <div class="grid-2" style="gap: 14px; margin-bottom: 12px; align-items: stretch;">
-            <!-- 左侧：镜像选择与 SFTP 高速上传 -->
-            <div class="card"
-              style="padding: 16px 18px; margin-bottom: 0; display: flex; flex-direction: column; justify-content: space-between;">
-              <div>
-                <div class="card-header" style="margin-bottom: 10px; padding-bottom: 6px;">
-                  <div class="card-title" style="font-size: 0.92rem; display: flex; align-items: center; gap: 6px;">
-                    <span>📤 镜像上传 (SFTP 大文件流式传输)</span>
-                  </div>
-                  <span class="card-badge" style="font-size: 0.7rem;">步骤 3.1</span>
-                </div>
-                <div class="form-group" style="margin-bottom: 10px;">
-                  <label class="form-label" style="font-size: 0.8rem; margin-bottom: 4px;">选择本地镜像归档文件 (.tar / .tar.gz /
-                    .tgz)</label>
-                  <div style="display: flex; gap: 6px;">
-                    <input type="text" class="form-control" id="input-local-tar-path"
-                      placeholder="点击右侧浏览选取，或直接输入本机文件完整绝对路径..."
-                      style="font-family: monospace; font-size: 0.78rem; flex: 1;">
-                    <button type="button" class="btn btn-secondary btn-sm" id="btn-wizard-browse-tar"
-                      onclick="Wizard.browseTarFile()"
-                      style="white-space: nowrap; font-weight: 600; padding: 4px 12px;">
-                      📁 浏览...
-                    </button>
-                  </div>
-                  <div id="image-selected-name"
-                    style="font-size: 0.75rem; color: var(--accent-cyan); margin-top: 4px; min-height: 16px;"></div>
-                </div>
-
-                <div style="display: flex; gap: 8px; margin-bottom: 10px;">
-                  <button class="btn btn-primary btn-sm" id="btn-start-upload"
-                    style="flex: 1; font-weight: 700; padding: 7px 14px;">🚀 开始 SFTP 高速上传</button>
-                  <button class="btn btn-danger btn-sm" id="btn-cancel-upload-wizard"
-                    style="display: none; padding: 7px 12px;" onclick="Wizard.cancelUpload()">🛑 取消上传</button>
-                </div>
-
-                <!-- 上传进度条 -->
-                <div id="upload-progress-box"
-                  style="display: none; margin-bottom: 10px; background: rgba(0,0,0,0.3); border-radius: 6px; padding: 8px 10px; border: 1px solid rgba(56, 189, 248, 0.25);">
-                  <div
-                    style="background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; height: 7px; margin-bottom: 4px;">
-                    <div id="image-upload-bar"
-                      style="height: 100%; background: var(--accent-cyan); width: 0%; transition: width 0.3s;"></div>
-                  </div>
-                  <div
-                    style="display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--text-muted); font-family: monospace;">
-                    <span id="image-upload-info">等待上传...</span>
-                    <span id="image-upload-pct" style="color: var(--accent-cyan); font-weight: 700;">0%</span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- 传输技术与说明卡片（自然撑满左侧区域） -->
-              <div
-                style="background: rgba(0,0,0,0.22); border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; padding: 10px 12px; font-size: 0.76rem; color: var(--text-secondary); line-height: 1.55;">
-                <div
-                  style="font-weight: 600; color: #ffffff; margin-bottom: 4px; display: flex; align-items: center; gap: 4px;">
-                  <span>💡 镜像上传与部署要点</span>
-                </div>
-                <div>• 支持官方与 VSIS 定制 <code>vsis_dancer</code> 运控跳舞 Docker 镜像归档；</div>
-                <div>• 采用专属独立 SFTP 会话与滑动窗口加速，传输完毕后在右侧一键导入。</div>
-              </div>
+      <!-- 向导步骤 2: 环境预检与修复 -->
+      <div class="wizard-step-pane" id="wizard-step-2" style="display: none;">
+        <div class="card" style="margin-bottom: 14px; padding: 14px 16px;">
+          <div class="card-header" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+            <div class="card-title" style="font-size: 0.92rem; display: flex; align-items: center; gap: 8px;">
+              <span>🛠️ 机器人宿主机环境预检 (G1 硬件与运行时)</span>
             </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+              <button class="btn btn-secondary btn-sm" id="btn-run-precheck" onclick="Wizard.runPrecheck(false)" style="white-space: nowrap;">
+                🔄 重新检测
+              </button>
+              <button class="btn btn-primary btn-sm" id="btn-wizard-fix-ch341" onclick="Wizard.runFixCh341()"
+                style="background: linear-gradient(135deg, #0284c7, #2563eb); font-weight: 700; white-space: nowrap; box-shadow: 0 2px 10px rgba(37, 99, 235, 0.4);"
+                title="在机器人下位机 (Linux) 在线编译安装 CH341 串口驱动，放行权限并启动自愈守护">
+                🤖 安装下位机 LoRa 驱动
+              </button>
+              <button class="btn btn-secondary btn-sm" id="btn-wizard-win-ch341" onclick="Wizard.installWindowsCh341()"
+                style="white-space: nowrap;"
+                title="若电脑上位机插有 USB LoRa 发射器，需在本机安装 Windows CH341 串口驱动">
+                💻 安装上位机驱动
+              </button>
+            </div>
+          </div>
 
-            <!-- 右侧：远端路径配置、加载进度与控制台 -->
-            <div class="card" style="padding: 16px 18px; margin-bottom: 0; display: flex; flex-direction: column;">
+          <!-- 提示条 -->
+          <div style="background: rgba(14, 165, 233, 0.05); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 6px; padding: 6px 12px; margin-bottom: 10px; font-size: 0.74rem; color: var(--text-secondary); display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+            <div>💡 提示：点击【🤖 安装下位机 LoRa 驱动】将在机器人机载端自动编译安装驱动与放行串口；电脑端插有发射器请安装上位机驱动。</div>
+          </div>
+
+          <div id="precheck-items-list">
+            <div style="padding: 20px; color: var(--accent-cyan); text-align: center;">⏳ 正在检测环境指标...</div>
+          </div>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+          <button class="btn btn-secondary" onclick="Wizard.prevStep()" style="white-space: nowrap;">⬅️ 上一步</button>
+          <button class="btn btn-primary" onclick="Wizard.nextStep()" style="white-space: nowrap;">下一步：镜像与自启配置 ➔</button>
+        </div>
+      </div>
+
+      <!-- 向导步骤 3: 镜像导入与自启配置 (原步骤3与步骤4功能整合) -->
+      <div class="wizard-step-pane" id="wizard-step-3" style="display: none;">
+        <div id="wizard-step3-image-hint" style="display: none;"></div>
+
+        <div class="grid-2" style="gap: 14px; margin-bottom: 12px; align-items: stretch;">
+          <!-- 左列：镜像上传/加载与 ID 自启动配置操作区 -->
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+
+            <!-- 模块 1: Docker 镜像上传与加载 -->
+            <div class="card" style="padding: 14px 16px; margin-bottom: 0; border: 1px solid rgba(56, 189, 248, 0.25);">
               <div class="card-header" style="margin-bottom: 10px; padding-bottom: 6px;">
-                <div class="card-title" style="font-size: 0.92rem; display: flex; align-items: center; gap: 6px;">
-                  <span>📥 镜像解压与加载 (docker load)</span>
+                <div class="card-title" style="font-size: 0.9rem; display: flex; align-items: center; gap: 6px;">
+                  <span>📤 1. Docker 镜像上传与导入</span>
                 </div>
-                <span class="card-badge" style="font-size: 0.7rem;">步骤 3.2</span>
+                <span class="card-badge" style="font-size: 0.68rem;">支持 .tar / .tar.gz</span>
               </div>
+
+              <!-- 本地镜像文件选择 -->
               <div class="form-group" style="margin-bottom: 8px;">
-                <label class="form-label" style="font-size: 0.8rem; margin-bottom: 4px;">远端镜像包存放路径</label>
+                <label class="form-label" style="font-size: 0.78rem; margin-bottom: 3px;">选择本地镜像归档文件</label>
+                <div style="display: flex; gap: 6px;">
+                  <input type="text" class="form-control" id="input-local-tar-path"
+                    placeholder="点击右侧浏览选取，或直接输入本机文件绝对路径..."
+                    style="font-family: monospace; font-size: 0.78rem; flex: 1;">
+                  <button type="button" class="btn btn-secondary btn-sm" id="btn-wizard-browse-tar"
+                    onclick="Wizard.browseTarFile()" style="white-space: nowrap; font-weight: 600; padding: 4px 12px;">
+                    📁 浏览...
+                  </button>
+                </div>
+                <div id="image-selected-name"
+                  style="font-size: 0.74rem; color: var(--accent-cyan); margin-top: 3px; min-height: 16px;"></div>
+              </div>
+
+              <!-- SFTP 上传操作按钮与取消 -->
+              <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                <button class="btn btn-primary btn-sm" id="btn-start-upload"
+                  style="flex: 1; font-weight: 700; padding: 6px 14px; font-size: 0.8rem;">🚀 开始 SFTP 高速上传</button>
+                <button class="btn btn-danger btn-sm" id="btn-cancel-upload-wizard"
+                  style="display: none; padding: 6px 12px; font-size: 0.8rem;" onclick="Wizard.cancelUpload()">🛑
+                  取消上传</button>
+              </div>
+
+              <!-- 上传进度条 -->
+              <div id="upload-progress-box"
+                style="display: none; margin-bottom: 8px; background: rgba(0,0,0,0.3); border-radius: 6px; padding: 8px 10px; border: 1px solid rgba(56, 189, 248, 0.25);">
+                <div
+                  style="background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; height: 7px; margin-bottom: 4px;">
+                  <div id="image-upload-bar"
+                    style="height: 100%; background: var(--accent-cyan); width: 0%; transition: width 0.3s;"></div>
+                </div>
+                <div
+                  style="display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--text-muted); font-family: monospace;">
+                  <span id="image-upload-info">等待上传...</span>
+                  <span id="image-upload-pct" style="color: var(--accent-cyan); font-weight: 700;">0%</span>
+                </div>
+              </div>
+
+              <hr style="border: 0; border-top: 1px solid rgba(255, 255, 255, 0.06); margin: 8px 0;">
+
+              <!-- 远端加载路径与导入启动 -->
+              <div class="form-group" style="margin-bottom: 6px;">
+                <label class="form-label" style="font-size: 0.78rem; margin-bottom: 3px;">远端镜像包路径与 Docker 加载</label>
                 <div style="display: flex; gap: 6px;">
                   <input type="text" class="form-control" id="input-remote-load-path"
                     value="/home/ubuntu/vsis_dancer_cpu_1.0.tar.gz"
                     style="font-family: monospace; font-size: 0.78rem; flex: 1;">
                   <button class="btn btn-primary btn-sm" id="btn-docker-load"
-                    style="white-space: nowrap; font-weight: 700; padding: 5px 14px;">⚡ 执行 docker load</button>
+                    style="white-space: nowrap; font-weight: 700; padding: 5px 14px; font-size: 0.8rem;">⚡
+                    执行导入并启动</button>
                 </div>
               </div>
 
-              <!-- 镜像安装进度条 -->
+              <!-- 复合进度条 (1/5 ~ 5/5) -->
               <div id="docker-load-progress-box"
-                style="display: none; margin-bottom: 8px; background: rgba(0,0,0,0.3); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 6px; padding: 8px 10px;">
+                style="display: none; margin-top: 8px; background: rgba(0,0,0,0.3); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 6px; padding: 8px 10px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
                   <span id="docker-load-stage-text"
-                    style="font-size: 0.76rem; font-weight: 600; color: var(--accent-cyan);">⏳ 正在执行解压与镜像加载 (预计需 1~3
-                    分钟)...</span>
+                    style="font-size: 0.74rem; font-weight: 600; color: var(--accent-cyan);">⏳
+                    正在执行镜像导入、容器启动与自动编译...</span>
                   <span id="docker-load-pct"
-                    style="font-size: 0.76rem; font-weight: 700; color: var(--accent-cyan); font-family: monospace;">15%</span>
+                    style="font-size: 0.74rem; font-weight: 700; color: var(--accent-cyan); font-family: monospace;">15%</span>
                 </div>
                 <div style="background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; height: 6px;">
                   <div id="docker-load-progress-bar"
@@ -257,248 +263,213 @@
                   </div>
                 </div>
                 <div id="docker-load-subtext" style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px;">
-                  正在准备远端文件解压与 Docker 归档导入...
+                  正在准备远端文件解压、Docker 导入、容器启动与自动编译...
                 </div>
-              </div>
-
-              <!-- 终端日志控制台 (自适应高度) -->
-              <div class="terminal-console" id="image-load-console"
-                style="flex: 1; min-height: 150px; height: 180px; padding: 10px; font-size: 0.76rem; line-height: 1.45; overflow-y: auto;">
-                <div class="log-info">等待执行 docker load ...</div>
               </div>
             </div>
-          </div>
-          <div style="display: flex; justify-content: space-between; margin-top: 14px;">
-            <button class="btn btn-secondary" onclick="Wizard.prevStep()">⬅️ 上一步</button>
-            <button class="btn btn-primary" onclick="Wizard.nextStep()">下一步：分配 Robot ID ➔</button>
-          </div>
-        </div>
 
-        <!-- 向导步骤 4: 分配 Robot ID 与开机自启 -->
-        <div class="wizard-step-pane" id="wizard-step-4" style="display: none;">
-          <div class="grid-2">
-            <!-- 左侧：分配 Robot ID 与开机自启 -->
-            <div>
-              <div class="card"
-                style="margin-bottom: 14px; border: 1px solid rgba(56, 189, 248, 0.28); background: rgba(14, 165, 233, 0.03);">
-                <div class="card-header" style="margin-bottom: 8px;">
-                  <div class="card-title"
-                    style="font-size: 0.92rem; color: var(--accent-cyan); display: flex; align-items: center; gap: 6px;">
-                    <span>⚙️ 分配 Robot ID 与开机自启配置</span>
-                  </div>
-                  <span class="card-badge" style="font-size: 0.7rem;">群控寻址配置</span>
+            <!-- 模块 2: 分配 Robot ID 与开机自启 -->
+            <div class="card"
+              style="padding: 14px 16px; margin-bottom: 0; border: 1px solid rgba(56, 189, 248, 0.25); background: rgba(14, 165, 233, 0.03);">
+              <div class="card-header" style="margin-bottom: 8px; padding-bottom: 4px;">
+                <div class="card-title"
+                  style="font-size: 0.9rem; color: var(--accent-cyan); display: flex; align-items: center; gap: 6px;">
+                  <span>⚙️ 2. 分配 Robot ID 与自启动配置</span>
                 </div>
-                <div class="form-group">
-                  <label class="form-label">分配 Robot ID (群控寻址唯一标识)</label>
-                  <input type="text" class="form-control" id="select-robot-id"
-                    placeholder="输入自定义 Robot ID，如 A、B、R1、G1_02..."
-                    style="font-size: 1.1rem; font-weight: 700; color: var(--accent-cyan); text-transform: uppercase;"
+                <span class="card-badge" style="font-size: 0.68rem;">群控寻址标识</span>
+              </div>
+
+              <div class="form-group" style="margin-bottom: 8px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px;">
+                  <label class="form-label" style="font-size: 0.78rem; margin-bottom: 0;">Robot ID (每台机器人唯一)</label>
+                  <span style="font-size: 0.72rem; color: var(--text-muted);">开机自动加载此群控标识</span>
+                </div>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <input type="text" class="form-control" id="select-robot-id" placeholder="自定义 Robot ID，如 A、B、R1..."
+                    style="font-size: 1.05rem; font-weight: 700; color: var(--accent-cyan); text-transform: uppercase; flex: 1; height: 36px;"
                     maxlength="20" autocomplete="off" value="A" oninput="Wizard.updateWriteIdButtonText()">
-                  <div id="select-robot-id-error" class="field-error-hint"></div>
-                  <div class="robot-id-chips" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;">
-                    <button type="button" class="chip-btn" onclick="Wizard.setRobotId('A')">A</button>
-                    <button type="button" class="chip-btn" onclick="Wizard.setRobotId('B')">B</button>
-                    <button type="button" class="chip-btn" onclick="Wizard.setRobotId('C')">C</button>
-                    <button type="button" class="chip-btn" onclick="Wizard.setRobotId('D')">D</button>
-                    <button type="button" class="chip-btn" onclick="Wizard.setRobotId('R1')">R1</button>
-                    <button type="button" class="chip-btn" onclick="Wizard.setRobotId('G1_02')">G1_02</button>
-                  </div>
-                  <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px;">
-                    每台机器人必须唯一！配置后开机将自动加载此群控标识。
-                  </div>
+                  <button class="btn btn-success btn-sm" id="btn-write-autostart"
+                    style="white-space: nowrap; height: 36px; padding: 0 16px; font-weight: 700;">
+                    💾 写入配置并生效
+                  </button>
                 </div>
-                <button class="btn btn-success" id="btn-write-autostart" style="width: 100%;">
-                  💾 写入 Robot ID 与自启配置
-                </button>
-              </div>
-            </div>
-
-            <!-- 右侧：宿主机容器状态看板 & 执行控制台日志 -->
-            <div>
-              <!-- 宿主机已启动运行的容器 -->
-              <div class="card"
-                style="margin-bottom: 14px; background: rgba(16, 185, 129, 0.04); border: 1px solid rgba(16, 185, 129, 0.22);">
-                <div class="card-header" style="margin-bottom: 8px;">
-                  <div class="card-title"
-                    style="font-size: 0.92rem; color: var(--accent-green); display: flex; align-items: center; gap: 6px;">
-                    <span>🟢 宿主机已启动运行的容器 (Running Containers)</span>
-                  </div>
-                  <button class="btn btn-secondary btn-sm" onclick="Wizard.refreshImagesList()"
-                    style="padding: 2px 8px; font-size: 0.75rem;">🔄 刷新</button>
-                </div>
-                <div id="wizard-running-containers-list">
-                  <div style="font-size: 0.8rem; color: var(--text-muted);">正在获取容器列表...</div>
-                </div>
-              </div>
-
-              <div class="card" style="margin-bottom: 0;">
-                <div class="card-header" style="margin-bottom: 6px;">
-                  <div class="card-title" style="font-size: 0.86rem;">📋 执行控制台日志</div>
-                </div>
-                <div class="terminal-console" id="container-start-console" style="height: 180px;">
-                  <div class="log-info">就绪。请确认 Robot ID 后点击左侧【写入】按钮...</div>
+                <div id="select-robot-id-error" class="field-error-hint" style="margin-top: 4px;"></div>
+                <div class="robot-id-chips" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;">
+                  <button type="button" class="chip-btn" onclick="Wizard.setRobotId('A')">A</button>
+                  <button type="button" class="chip-btn" onclick="Wizard.setRobotId('B')">B</button>
+                  <button type="button" class="chip-btn" onclick="Wizard.setRobotId('C')">C</button>
+                  <button type="button" class="chip-btn" onclick="Wizard.setRobotId('D')">D</button>
+                  <button type="button" class="chip-btn" onclick="Wizard.setRobotId('R1')">R1</button>
+                  <button type="button" class="chip-btn" onclick="Wizard.setRobotId('G1_02')">G1_02</button>
                 </div>
               </div>
             </div>
           </div>
-          <div style="display: flex; justify-content: space-between; margin-top: 16px;">
-            <button class="btn btn-secondary" onclick="Wizard.prevStep()">⬅️ 上一步</button>
-            <button class="btn btn-primary" onclick="Wizard.nextStep()">下一步：机器码与License ➔</button>
+
+          <!-- 右列：统一部署与执行终端控制台 (通高展示，空间充盈) -->
+          <div style="display: flex; flex-direction: column;">
+            <div class="card"
+              style="padding: 14px 16px; margin-bottom: 0; height: 100%; display: flex; flex-direction: column; border: 1px solid rgba(56, 189, 248, 0.25);">
+              <div class="card-header" style="margin-bottom: 8px; padding-bottom: 6px;">
+                <div class="card-title" style="font-size: 0.9rem; display: flex; align-items: center; gap: 6px;">
+                  <span>📋 统一部署与执行终端日志 (Live Output)</span>
+                </div>
+                <div style="display: flex; gap: 6px;">
+                  <button type="button" class="btn btn-secondary btn-xs" onclick="Wizard.copyUnifiedConsole()"
+                    title="复制终端日志" style="font-size: 0.74rem; padding: 3px 8px;">📋 复制</button>
+                  <button type="button" class="btn btn-secondary btn-xs" onclick="Wizard.clearUnifiedConsole()"
+                    title="清空终端日志" style="font-size: 0.74rem; padding: 3px 8px;">🧹 清空</button>
+                </div>
+              </div>
+
+              <div class="terminal-console" id="image-load-console"
+                style="flex: 1; min-height: 320px; padding: 10px 12px; font-size: 0.76rem; line-height: 1.5; overflow-y: auto;">
+                <div class="log-info">[INFO] 统一部署控制台就绪。您可执行镜像上传/导入，或配置 Robot ID 与自启动。</div>
+              </div>
+              <!-- 兼容占位 (隐藏元素，保证历史与后台刷新逻辑稳健无报错) -->
+              <div id="container-start-console" style="display: none;"></div>
+              <div id="wizard-running-containers-list" style="display: none;"></div>
+            </div>
           </div>
         </div>
 
-        <!-- 向导步骤 5: 机器码与 License 导入 -->
-        <div class="wizard-step-pane" id="wizard-step-5" style="display: none;">
-          <!-- 64 位机器码大字号展示牌 -->
-          <div class="machine-id-hero">
-            <div class="machine-id-title">🔑 机器人硬件 64 位机器码 (MACHINE ID)</div>
-            <div class="machine-id-value" id="machine-id-display">正在读取中...</div>
-            <div style="margin-top: 12px; display: flex; justify-content: center; gap: 12px;">
-              <button class="btn btn-primary" onclick="Wizard.copyMachineId()">📋 一键复制机器码</button>
-              <button class="btn btn-secondary btn-sm" id="btn-read-machine-id">🔄 重新读取</button>
+        <div style="display: flex; justify-content: space-between; margin-top: 14px;">
+          <button class="btn btn-secondary" onclick="Wizard.prevStep()">⬅️ 上一步</button>
+          <button class="btn btn-primary" onclick="Wizard.nextStep()">下一步：机器码与License ➔</button>
+        </div>
+      </div>
+
+      <!-- 向导步骤 4: 机器码与 License 导入 (原步骤5) -->
+      <div class="wizard-step-pane" id="wizard-step-4" style="display: none;">
+        <!-- 顶部横条: 64 位机器码紧凑高精条 -->
+        <div class="machine-id-strip"
+          style="background: rgba(14, 165, 233, 0.06); border: 1px solid rgba(56, 189, 248, 0.28); border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1;">
+            <span style="font-size: 1.3rem; flex-shrink: 0;">🔑</span>
+            <div style="min-width: 0; flex: 1;">
+              <div style="font-size: 0.74rem; color: var(--text-secondary); font-weight: 600; letter-spacing: 0.5px;">
+                机器人硬件 64 位机器码 (MACHINE ID)
+              </div>
+              <div id="machine-id-display"
+                style="font-family: monospace; font-size: 0.95rem; font-weight: 700; color: var(--accent-cyan); letter-spacing: 0.8px; word-break: break-all; margin-top: 2px;">
+                正在读取中...
+              </div>
             </div>
           </div>
+          <div style="display: flex; gap: 8px; flex-shrink: 0;">
+            <button class="btn btn-primary btn-sm" onclick="Wizard.copyMachineId()"
+              style="white-space: nowrap; font-weight: 600; padding: 5px 12px; font-size: 0.8rem;">
+              📋 一键复制机器码
+            </button>
+            <button class="btn btn-secondary btn-sm" id="btn-read-machine-id"
+              style="white-space: nowrap; padding: 5px 10px; font-size: 0.8rem;">
+              🔄 重新读取
+            </button>
+          </div>
+        </div>
 
-          <div class="grid-2">
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">📄 导入并校验 License 文件</div>
-                <span class="card-badge">license.json</span>
+        <!-- 双列核心工作区 -->
+        <div class="grid-2" style="gap: 14px; margin-bottom: 12px; align-items: stretch;">
+
+          <!-- 左列: License 拖拽选择与下发部署 -->
+          <div class="card"
+            style="padding: 14px 16px; margin-bottom: 0; display: flex; flex-direction: column; justify-content: space-between; border: 1px solid rgba(56, 189, 248, 0.25);">
+            <div>
+              <div class="card-header" style="margin-bottom: 8px; padding-bottom: 4px;">
+                <div class="card-title" style="font-size: 0.9rem; display: flex; align-items: center; gap: 6px;">
+                  <span>📄 1. 导入与部署 License 授权文件</span>
+                </div>
+                <span class="card-badge" style="font-size: 0.68rem;">license.json</span>
               </div>
+
               <div class="dropzone" id="license-dropzone"
+                style="padding: 22px 14px; margin: 8px 0 10px 0; border: 1.5px dashed rgba(56, 189, 248, 0.4); border-radius: 8px; background: rgba(14, 165, 233, 0.04); cursor: pointer;"
                 ondragenter="event.preventDefault(); event.stopPropagation(); this.classList.add('dragover');"
                 ondragover="event.preventDefault(); event.stopPropagation(); this.classList.add('dragover'); if(event.dataTransfer) event.dataTransfer.dropEffect='copy';"
                 ondragleave="event.preventDefault(); event.stopPropagation(); this.classList.remove('dragover');"
                 ondrop="event.preventDefault(); event.stopPropagation(); this.classList.remove('dragover'); Wizard.handleLicenseDrop(event);"
                 onclick="document.getElementById('license-file-input').click()">
-                <div class="dropzone-icon">📥</div>
-                <div class="dropzone-text">点击选择或将 license.json 拖拽至此处</div>
-                <div class="dropzone-hint">上传后自动部署并重启机器人主控程序进行生效校验</div>
+                <div class="dropzone-icon" style="font-size: 1.8rem; margin-bottom: 4px;">📥</div>
+                <div class="dropzone-text" style="font-size: 0.85rem; font-weight: 600; color: #f1f5f9;">点击选择或拖拽
+                  license.json 至此处</div>
+                <div class="dropzone-hint" style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">
+                  载入后系统将自动校验授权并启动机载服务
+                </div>
                 <input type="file" id="license-file-input" style="display: none;" accept=".json"
                   onchange="Wizard.handleLicenseFileInput(this)">
               </div>
-              <button class="btn btn-success" id="btn-deploy-license" style="width: 100%;"
+            </div>
+
+            <div>
+              <button class="btn btn-success" id="btn-deploy-license"
+                style="width: 100%; padding: 8px 14px; font-weight: 700; font-size: 0.84rem;"
                 onclick="Wizard.deployLicense()" disabled>
                 🚀 部署 License 至机器人
               </button>
             </div>
+          </div>
 
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">🔍 授权与生效结果</div>
+          <!-- 右列: 服务启动进度监控 与 授权结果看板 -->
+          <div class="card"
+            style="padding: 14px 16px; margin-bottom: 0; display: flex; flex-direction: column; border: 1px solid rgba(56, 189, 248, 0.25); background: rgba(15, 23, 42, 0.55);">
+            <div class="card-header" style="margin-bottom: 8px; padding-bottom: 4px;">
+              <div class="card-title" style="font-size: 0.9rem; display: flex; align-items: center; gap: 6px;">
+                <span>🔍 2. 授权生效与机载服务拉起进度</span>
               </div>
-              <div id="license-verify-result">
-                <div style="color: var(--text-muted); font-size: 0.85rem; padding: 20px; text-align: center;">
-                  请在左侧拖入或选择 license.json 文件
+              <div style="display: flex; gap: 6px;">
+                <span id="step5-ctrl-badge" class="container-status-badge stopped"
+                  style="font-size: 0.7rem; padding: 2px 8px;">🦾 运控: 待就绪</span>
+                <span id="step5-lora-badge" class="container-status-badge stopped"
+                  style="font-size: 0.7rem; padding: 2px 8px;">📡 LoRa: 待就绪</span>
+              </div>
+            </div>
+
+            <!-- 授权后自动拉起机载程序并校验进度条 (置于右侧顶层，完全在第一屏立即可见，无须滚动！) -->
+            <div id="step5-process-progress-box"
+              style="margin-bottom: 10px; background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 8px; padding: 10px 12px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <span id="step5-process-stage-text"
+                  style="font-size: 0.8rem; font-weight: 700; color: var(--accent-cyan);">⏳ 机载服务启动监听 (就绪)</span>
+                <span id="step5-process-pct"
+                  style="font-size: 0.82rem; font-weight: 700; color: var(--accent-cyan); font-family: monospace;">0%</span>
+              </div>
+              <div
+                style="background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; height: 7px; margin-bottom: 6px;">
+                <div id="step5-process-bar"
+                  style="height: 100%; background: linear-gradient(90deg, #0ea5e9, #10b981); width: 0%; transition: width 0.3s ease;">
                 </div>
               </div>
-            </div>
-          </div>
 
-          <!-- 步骤 5: 授权后自动拉起机载程序并校验进度条 -->
-          <div id="step5-process-progress-box"
-            style="display: none; margin-top: 14px; background: rgba(14, 165, 233, 0.06); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 10px; padding: 14px 16px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <span id="step5-process-stage-text"
-                style="font-size: 0.85rem; font-weight: 700; color: var(--accent-cyan);">🚀 正在拉起机载运控与通信服务...</span>
-              <span id="step5-process-pct"
-                style="font-size: 0.88rem; font-weight: 700; color: var(--accent-cyan); font-family: monospace;">15%</span>
             </div>
-            <div
-              style="background: rgba(255,255,255,0.08); border-radius: 6px; overflow: hidden; height: 9px; margin-bottom: 10px;">
-              <div id="step5-process-bar"
-                style="height: 100%; background: linear-gradient(90deg, #0ea5e9, #10b981); width: 15%; transition: width 0.3s ease;">
-              </div>
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-              <div id="step5-process-subtext" style="font-size: 0.76rem; color: var(--text-secondary);">
-                正在启动跳舞运控 (g1_ctrl_vsis) 与 LoRa 接收程序，请稍候...
-              </div>
-              <div style="display: flex; gap: 8px;">
-                <span id="step5-ctrl-badge" class="container-status-badge stopped"
-                  style="font-size: 0.72rem; padding: 2px 8px;">🦾 运控: 启动中</span>
-                <span id="step5-lora-badge" class="container-status-badge stopped"
-                  style="font-size: 0.72rem; padding: 2px 8px;">📡 LoRa: 启动中</span>
-              </div>
-            </div>
-          </div>
 
-          <div style="display: flex; justify-content: space-between; margin-top: 16px;">
-            <button class="btn btn-secondary" onclick="Wizard.prevStep()">⬅️ 上一步</button>
-            <button class="btn btn-primary" onclick="Wizard.nextStep()">下一步 ➔</button>
+            <!-- 授权信息与生效结果展示区 (自适应滚动) -->
+            <div id="license-verify-result" style="flex: 1; overflow-y: auto; max-height: 180px;">
+              <div style="color: var(--text-muted); font-size: 0.82rem; padding: 16px; text-align: center;">
+
+              </div>
+            </div>
           </div>
         </div>
 
-        <!-- 向导步骤 6: 部署就绪与功能联调 -->
-        <div class="wizard-step-pane" id="wizard-step-6" style="display: none;">
-          <div class="card" style="text-align: center; padding: 24px 20px;">
-            <div style="font-size: 2.8rem; margin-bottom: 8px;">🎉</div>
-            <h2 style="color: var(--accent-cyan); margin-bottom: 6px;">机器人商业化环境部署就绪！</h2>
-            <p style="color: var(--text-secondary); max-width: 650px; margin: 0 auto 16px; font-size: 0.88rem;">
-              宿主机 CH341 串口驱动、Docker 固化容器、自启动钩子、Robot ID 与授权 License 已全部配置完毕。
-            </p>
+        <div style="display: flex; justify-content: space-between; margin-top: 14px;">
+          <button class="btn btn-secondary" onclick="Wizard.prevStep()">⬅️ 上一步</button>
+          <button class="btn btn-primary" onclick="Wizard.nextStep()">下一步：部署就绪 ➔</button>
+        </div>
+      </div>
 
-            <div class="grid-2" style="text-align: left; gap: 14px; margin-top: 16px;">
-              <!-- 快捷指令动作测试 -->
-              <div
-                style="background: rgba(0,0,0,0.3); padding: 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
-                <div
-                  style="font-weight: 700; color: #ffffff; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between;">
-                  <span>🎮 现场快捷动作与 LoRa 联调：</span>
-                  <span class="card-badge" style="font-size: 0.7rem;">广播 ALL</span>
-                </div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
-                  <button class="btn btn-primary btn-sm" onclick="Wizard.sendTestCmd('ALL', 'STAND')">🧍 1. 站立
-                    (STAND)</button>
-                  <button class="btn btn-primary btn-sm" onclick="Wizard.sendTestCmd('ALL', 'GAIT')">🚶 2. 步态
-                    (GAIT)</button>
-                  <button class="btn btn-secondary btn-sm" onclick="Wizard.sendTestCmd('ALL', 'DANCE,G1_TIKTOK')">🕺 3.
-                    舞蹈 (TIKTOK)</button>
-                  <button class="btn btn-danger btn-sm" onclick="Wizard.sendTestCmd('ALL', 'STOP')">🛑 4. 停止
-                    (STOP)</button>
-                </div>
-                <div style="font-size: 0.75rem; color: var(--text-muted); line-height: 1.5;">
-                  提示：若上位机已插 LoRa 发射器，点击按钮将通过串口向所有机器人发送无线指令。
-                </div>
-              </div>
+      <!-- 向导步骤 5: 部署就绪与功能联调 (原步骤6) -->
+      <div class="wizard-step-pane" id="wizard-step-5" style="display: none;">
+        <div class="card" style="text-align: center; padding: 24px 20px;">
+          <div style="font-size: 2.8rem; margin-bottom: 8px;">🎉</div>
+          <h2 style="color: var(--accent-cyan); margin-bottom: 6px;">机器人环境部署就绪！</h2>
 
-              <!-- 核心功能导航 -->
-              <div
-                style="background: rgba(0,0,0,0.3); padding: 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); display: flex; flex-direction: column; justify-content: space-between;">
-                <div>
-                  <div style="font-weight: 700; color: #ffffff; margin-bottom: 8px;">🚀 核心功能入口：</div>
-                  <div style="display: flex; flex-direction: column; gap: 8px;">
-                    <button class="btn btn-secondary btn-sm" style="justify-content: flex-start;"
-                      onclick="Wizard.closeModal(); App.switchTab('tab-robot-control')">
-                      🎯 群控与实时控制台 (全机队状态与动作调度)
-                    </button>
-                    <button class="btn btn-secondary btn-sm" style="justify-content: flex-start;"
-                      onclick="Wizard.closeModal(); App.switchTab('tab-image')">
-                      💃 舞蹈与镜像管理 (上传新动作并热生效 / 容器镜像维护)
-                    </button>
-                    <button class="btn btn-secondary btn-sm" style="justify-content: flex-start;"
-                      onclick="Wizard.closeModal(); App.switchTab('tab-3d-player')">
-                      🕺 3D 舞蹈预览与动作库
-                    </button>
-                    <button class="btn btn-secondary btn-sm" style="justify-content: flex-start;"
-                      onclick="Wizard.closeModal(); App.switchTab('tab-logs')">
-                      📋 实时运行日志与诊断监控
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div style="display: flex; justify-content: center; gap: 14px; margin-top: 20px;">
-              <button class="btn btn-primary btn-lg" onclick="Wizard.closeModal(); App.switchTab('tab-robot-control')">
-                🎉 完成向导并进入群控控制台
-              </button>
-              <button class="btn btn-secondary btn-lg" onclick="Wizard.closeModal()">
-                ✕ 关闭向导
-              </button>
-            </div>
+          <div style="display: flex; justify-content: center; margin-top: 18px;">
+            <button class="btn btn-primary btn-lg" onclick="Wizard.closeModal(); App.switchTab('tab-robot-control')">
+              🎉 进入控制台
+            </button>
           </div>
         </div>
       </div>
     </div>
   </div>
+</div>

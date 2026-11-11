@@ -1,0 +1,50 @@
+{
+  "plan_id": "plan_03ccc79b7a1d",
+  "sha256": "03ccc79b7a1d88d6592bd2e8d1ca49116d1bed1d5ad0a9ea54655ff7ef3cc26f",
+  "compiled_at": 1793786417.47603,
+  "payload": {
+    "task_name": "默认任务1",
+    "protocol_version": "LRMP-1.0-R3",
+    "bgm_path": "",
+    "robots": {
+      "1": {
+        "actions": [
+          {
+            "ref_id": "550502",
+            "start_ms": 0,
+            "duration_ms": 0
+          }
+        ],
+        "trajectories": [
+          {
+            "ref_id": "100001",
+            "start_ms": 0,
+            "duration_ms": 0,
+            "waypoints": [
+              {
+                "x": -2.0,
+                "y": 0.0,
+                "t": 0.0
+              },
+              {
+                "x": -2.0,
+                "y": 3.0,
+                "t": 5.0
+              }
+            ]
+          }
+        ]
+      },
+      "2": {
+        "actions": [
+          {
+            "ref_id": "550503",
+            "start_ms": 0,
+            "duration_ms": 0
+          }
+        ],
+        "trajectories": []
+      }
+    }
+  }
+}

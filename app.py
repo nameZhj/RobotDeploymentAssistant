@@ -1007,6 +1007,20 @@ def stream_events(task_id):
     return Response(event_stream(), mimetype="text/event-stream")
 
 
+# ==========================================
+# 11. 舞台编导 Studio 控制台唤起接口
+# ==========================================
+@app.route("/api/system/open-studio", methods=["POST"])
+def open_studio_route():
+    try:
+        from main import launch_studio_window
+        success, msg = launch_studio_window()
+        return jsonify({"success": success, "msg": msg})
+    except Exception as e:
+        logger.error(f"唤起舞台编导失败: {e}", exc_info=True)
+        return jsonify({"success": False, "msg": f"启动失败: {e}"}), 500
+
+
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=8088, debug=False)
 

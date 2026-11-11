@@ -3,7 +3,7 @@
  */
 const Wizard = {
   currentStep: 1,
-  totalSteps: 6,
+  totalSteps: 5,
   detectedMachineId: '',
   uploadInterval: null,
 
@@ -55,10 +55,6 @@ const Wizard = {
       btnRefreshNics.addEventListener('click', () => this.refreshInterfaces());
     }
 
-    const btnConfigNic = document.getElementById('btn-config-nic-static');
-    if (btnConfigNic) {
-      btnConfigNic.addEventListener('click', () => this.configNicStatic());
-    }
 
     const btnRestoreDhcp = document.getElementById('btn-config-nic-dhcp');
     if (btnRestoreDhcp) {
@@ -207,17 +203,55 @@ const Wizard = {
       this.runPrecheck(autoTrigger);
     } else if (this.currentStep === 3) {
       this.autoCheckStep3(autoTrigger);
-    } else if (this.currentStep === 4) {
       this.refreshImagesList();
-      this.updateStep4ButtonStatus();
+      this.updateStep3ButtonStatus();
       this.checkProcessStatus();
-      if (autoTrigger) this.autoCheckStep4(autoTrigger);
-    } else if (this.currentStep === 5) {
+    } else if (this.currentStep === 4) {
       this.fetchMachineId();
     }
   },
 
-  async updateStep4ButtonStatus() {
+  // --- 步骤 3 统一控制台操作工具方法 ---
+  getStep3Console() {
+    return document.getElementById('image-load-console') || document.getElementById('container-start-console');
+  },
+
+  appendStep3Log(msg, isErr = false) {
+    const consoleEl = this.getStep3Console();
+    if (!consoleEl) return;
+    const div = document.createElement('div');
+    if (isErr) {
+      div.className = 'log-error';
+    } else if (msg.includes('✅') || msg.includes('SUCCESS') || msg.includes('🎉')) {
+      div.className = 'log-success';
+    } else {
+      div.className = 'log-info';
+    }
+    div.textContent = msg;
+    consoleEl.appendChild(div);
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  },
+
+  clearUnifiedConsole() {
+    const consoleEl = this.getStep3Console();
+    if (consoleEl) {
+      consoleEl.innerHTML = '<div class="log-info">[INFO] 终端日志已清屏。</div>';
+    }
+    if (typeof showToast === 'function') showToast('终端日志已清屏', 'info', 1500);
+  },
+
+  copyUnifiedConsole() {
+    const consoleEl = this.getStep3Console();
+    if (!consoleEl) return;
+    const text = consoleEl.innerText || consoleEl.textContent;
+    if (!text || text.trim() === '') {
+      if (typeof showToast === 'function') showToast('终端无日志可复制', 'warning');
+      return;
+    }
+    copyToClipboard(text, '终端日志已复制到剪贴板！');
+  },
+
+  async updateStep3ButtonStatus() {
     try {
       const res = await API.getContainerStatus();
       if (res.success && res.data) {
@@ -234,6 +268,10 @@ const Wizard = {
     } catch (e) {
       console.warn(e);
     }
+  },
+
+  updateStep4ButtonStatus() {
+    return this.updateStep3ButtonStatus();
   },
 
   setRobotId(id) {
@@ -322,7 +360,7 @@ const Wizard = {
     try {
       const res = await API.listImages();
       const allImgs = res.all_images || res.available_images || res.images || [];
-      
+
       // 仅判断 vsis_dancer 名称类似的镜像是否存在，不考虑其它镜像
       const vsisImg = allImgs.find(img => {
         const repo = (img.repository || '').toLowerCase();
@@ -339,22 +377,18 @@ const Wizard = {
             <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 6px; padding: 6px 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
               <div>
                 <span style="font-weight: 700; color: #34d399; font-size: 0.82rem;">✅ 宿主机已检测到运控跳舞镜像 (vsis_dancer)：</span>
-                <span style="font-size: 0.78rem; color: #a7f3d0;"><b style="font-family: monospace;">${tag}</b> (${vsisImg.size || ''})，可直接点击下一步继续。</span>
+                <span style="font-size: 0.78rem; color: #a7f3d0;"><b style="font-family: monospace;">${tag}</b> (${vsisImg.size || ''})，可直接在下方配置 Robot ID，或直接进入下一步。</span>
               </div>
               <button class="btn btn-success btn-xs" onclick="Wizard.nextStep()" style="white-space: nowrap; font-weight: 700; padding: 3px 10px;">
-                👉 下一步：分配 Robot ID ➔
+                👉 下一步：机器码与License ➔
               </button>
             </div>
           `;
         }
       } else {
         if (hintEl) {
-          hintEl.style.display = 'block';
-          hintEl.innerHTML = `
-            <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 6px; padding: 6px 12px; margin-bottom: 8px; font-size: 0.78rem; color: var(--text-secondary); display: flex; align-items: center; gap: 6px;">
-              <span>ℹ️ 机器人宿主机尚未检测到运控/舞蹈镜像 (vsis_dancer)，请在下方选择本地 <code>.tar / .tar.gz</code> 文件并执行上传与导入。</span>
-            </div>
-          `;
+          hintEl.style.display = 'none';
+          hintEl.innerHTML = '';
         }
       }
     } catch (err) {
@@ -363,114 +397,170 @@ const Wizard = {
   },
 
   async autoCheckStep4(autoAdvance = false) {
-    try {
-      await this.updateStep4ButtonStatus();
-      await this.checkProcessStatus();
-      const res = await API.getContainerStatus();
-      if (res.success && res.data) {
-        const d = res.data;
-        if (d.autostart_configured) {
-          if (autoAdvance) {
-            showToast(`✓ 检测到 Robot ID 与开机自启已配置，自动进入授权校验...`, 'success', 2000);
-            setTimeout(() => this.goToStep(5, true), 1000);
-          }
-        }
-      }
-    } catch (err) {
-      console.warn('Step 4 auto check failed:', err);
-    }
+    // 兼容别名
   },
 
   // ==========================
   // 自动化智能判定与跳步引擎
   // ==========================
-  async autoDetectAndConnect() {
-    showToast('⚡ 正在自愈直连网卡并并发探测连接机器人 (192.168.123.x)...', 'info', 3000);
+  // ==========================
+  // 自动化智能判定与跳步引擎 / 一键直连并自愈连接
+  // ==========================
+  async oneClickDirectConnect() {
+    const select = document.getElementById('select-nic-list');
+    const nicName = select ? select.value : '';
+    const hostInput = document.getElementById('input-host');
+    const targetIp = hostInput ? hostInput.value.trim() : '192.168.123.164';
+
     const btn = document.getElementById('btn-wizard-auto-connect');
+    const originalText = btn ? btn.innerHTML : '⚡ 设为同网段并连接机器人';
     if (btn) {
       btn.disabled = true;
-      btn.textContent = '⏳ 探测连接中...';
+      btn.innerHTML = '⏳ 正在配置网卡并探测连接...';
     }
+
+    showToast('⚡ 正在自动将网卡设为 192.168.123.200 并探测连接机器人...', 'info', 4000);
     try {
-      const res = await API.autoConnect(true);
+      const res = await API.autoConnect(true, nicName, targetIp);
+      await this.refreshInterfaces();
       if (res.connected) {
-        showToast(res.msg, 'success', 3500);
-        App.updateStatus();
+        showToast(res.msg || `成功连接至机器人 [${res.target_ip || targetIp}]`, 'success', 3500);
+        if (typeof App !== 'undefined' && App.updateStatus) {
+          App.updateStatus();
+        }
         setTimeout(() => this.goToStep(2, true), 800);
       } else {
-        showToast(res.msg || '未探测到在线机器人', 'warning', 3500);
+        if (res.msg && (res.msg.includes('管理员') || res.msg.includes('权限'))) {
+          showToast(res.msg, 'error', 6000);
+        } else {
+          showToast(res.msg || '未能探测到在线机器人，请检查网线连接与机器人电源', 'warning', 4500);
+        }
       }
     } catch (err) {
-      showToast(`自愈连接异常: ${err.message}`, 'error');
+      showToast(`一键直连异常: ${err.message}`, 'error', 4500);
     } finally {
       if (btn) {
         btn.disabled = false;
-        btn.textContent = '⚡ 立即执行自愈连接';
+        btn.innerHTML = originalText;
       }
     }
+  },
+
+  // 兼容旧接口别名
+  async autoDetectAndConnect() {
+    return this.oneClickDirectConnect();
+  },
+
+  async configNicStatic() {
+    return this.oneClickDirectConnect();
   },
 
   // ==========================
   // Step 1: 网络与网卡
   // ==========================
+  _cachedNics: [],
+
   async refreshInterfaces() {
     try {
       const res = await API.getInterfaces();
       const select = document.getElementById('select-nic-list');
       if (!select) return;
 
+      this._cachedNics = res.interfaces || [];
       select.innerHTML = '';
-      if (!res.interfaces || res.interfaces.length === 0) {
+      if (this._cachedNics.length === 0) {
         select.innerHTML = '<option value="">未找到可用网卡</option>';
+        this.updateNicStatusBadge(null);
         return;
       }
 
-      for (const nic of res.interfaces) {
+      let autoSelectedNic = null;
+      for (const nic of this._cachedNics) {
+        if (nic.is_loopback) continue;
+        if (nic.is_unitree_subnet) {
+          autoSelectedNic = nic;
+          break;
+        }
+      }
+      if (!autoSelectedNic) {
+        for (const nic of this._cachedNics) {
+          if (nic.is_loopback) continue;
+          const nameLower = (nic.name || '').toLowerCase();
+          if (nameLower.includes('以太网') || nameLower.includes('ethernet')) {
+            autoSelectedNic = nic;
+            break;
+          }
+        }
+      }
+      if (!autoSelectedNic && this._cachedNics.length > 0) {
+        autoSelectedNic = this._cachedNics[0];
+      }
+
+      for (const nic of this._cachedNics) {
         if (nic.is_loopback) continue;
         const opt = document.createElement('option');
         opt.value = nic.name;
-        opt.textContent = `${nic.name} (${nic.ip || '未分配IP'} / ${nic.is_up ? '已连接' : '未连接'})`;
-        if (nic.is_unitree_subnet) opt.selected = true;
+        const upTxt = nic.is_up ? '已连线' : '未插网线';
+        opt.textContent = `${nic.name} (${nic.ip || '未分配IP'} / ${upTxt})`;
+        if (autoSelectedNic && nic.name === autoSelectedNic.name) {
+          opt.selected = true;
+        }
         select.appendChild(opt);
       }
+
+      this.onNicSelected();
     } catch (err) {
       console.error('获取网卡列表失败:', err);
     }
   },
 
-  async configNicStatic() {
+  onNicSelected() {
     const select = document.getElementById('select-nic-list');
-    const nicName = select ? select.value : '';
-    if (!nicName) {
-      showToast('请先选择需要配置的以太网卡', 'warning');
+    const badge = document.getElementById('wizard-nic-status-badge');
+    if (!select || !badge) return;
+
+    const nicName = select.value;
+    const nic = (this._cachedNics || []).find(n => n.name === nicName);
+    this.updateNicStatusBadge(nic);
+  },
+
+  updateNicStatusBadge(nic) {
+    const badge = document.getElementById('wizard-nic-status-badge');
+    if (!badge) return;
+
+    if (!nic) {
+      badge.innerHTML = '<span style="color: var(--text-muted);">未检测到网卡信息</span>';
+      badge.style.background = 'rgba(255, 255, 255, 0.04)';
+      badge.style.border = '1px solid rgba(255, 255, 255, 0.08)';
       return;
     }
 
-    showToast(`正在将网卡 [${nicName}] 设为 192.168.123.200 ...`, 'info');
-    try {
-      const res = await API.configureNic(nicName, '192.168.123.200');
-      if (res.success) {
-        showToast(res.msg, 'success');
-        this.refreshInterfaces();
-      } else {
-        showToast(`配置失败: ${res.msg}`, 'error');
-      }
-    } catch (err) {
-      showToast(`网卡配置异常: ${err.message}`, 'error');
+    const ip = nic.ip || '未分配 IP';
+    if (nic.is_unitree_subnet) {
+      badge.innerHTML = `<span style="color: var(--accent-green); font-weight: 600;">✅ 网卡就绪：处于机器人同网段 (${ip})</span>`;
+      badge.style.background = 'rgba(16, 185, 129, 0.12)';
+      badge.style.border = '1px solid rgba(16, 185, 129, 0.3)';
+    } else {
+      badge.innerHTML = `<span style="color: var(--accent-yellow); font-weight: 600;">⚠️ 当前 IP: ${ip}（未处于 192.168.123.x 网段，点击下方按钮一键设为同网段并连接）</span>`;
+      badge.style.background = 'rgba(245, 158, 11, 0.12)';
+      badge.style.border = '1px solid rgba(245, 158, 11, 0.3)';
     }
   },
 
   async restoreNicDhcp() {
     const select = document.getElementById('select-nic-list');
     const nicName = select ? select.value : '';
-    if (!nicName) return;
+    if (!nicName) {
+      showToast('请先选择需要恢复的网卡', 'warning');
+      return;
+    }
 
     showToast(`正在将网卡 [${nicName}] 恢复为 DHCP ...`, 'info');
     try {
       const res = await API.restoreDhcp(nicName);
       if (res.success) {
         showToast(res.msg, 'success');
-        this.refreshInterfaces();
+        setTimeout(() => this.refreshInterfaces(), 1200);
       } else {
         showToast(res.msg, 'error');
       }
@@ -546,55 +636,80 @@ const Wizard = {
     const container = document.getElementById('precheck-items-list');
     if (!container) return;
 
-    container.innerHTML = '<div style="padding: 20px; color: var(--accent-cyan);">⏳ 正在执行环境预检，请稍候...</div>';
+    container.innerHTML = '<div style="padding: 24px; color: var(--accent-cyan); text-align: center; font-size: 0.85rem;">⏳ 正在并行检测各项硬件与运行时指标，请稍候...</div>';
 
     try {
       const res = await API.getPrecheck();
       if (!res.success || !res.data) {
-        container.innerHTML = `<div style="padding: 20px; color: var(--accent-red);">预检失败: ${res.msg}</div>`;
+        container.innerHTML = `<div style="padding: 20px; color: var(--accent-red); text-align: center;">预检失败: ${res.msg}</div>`;
         return;
       }
 
       const items = res.data.items;
-      let html = '';
+      let html = '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; width: 100%;">';
       for (const key in items) {
         const item = items[key];
         let statusIcon = '✅';
+        let badgeBg = 'rgba(16, 185, 129, 0.15)';
+        let badgeColor = '#34d399';
+        let badgeText = '正常';
         if (item.status === 'error') {
           statusIcon = '❌';
+          badgeBg = 'rgba(239, 68, 68, 0.18)';
+          badgeColor = '#f87171';
+          badgeText = '异常';
         } else if (item.status === 'warning') {
           statusIcon = '⚠️';
+          badgeBg = 'rgba(245, 158, 11, 0.18)';
+          badgeColor = '#fbbf24';
+          badgeText = '关注';
         }
 
         const copyText = `【${item.name}】状态: ${item.status}\n指标/版本: ${item.version}\n说明: ${item.msg}`;
 
+        // 核心：若为 serial_ch341 (LoRa 串口) 始终渲染醒目的【🤖 安装下位机驱动】按钮，杜绝用户找不到按钮
+        let actionBtnHtml = '';
+        if (key === 'serial_ch341') {
+          actionBtnHtml = `<button class="btn btn-primary btn-xs" onclick="Wizard.runFixCh341()" style="font-weight: 700; white-space: nowrap; padding: 3px 8px; background: linear-gradient(135deg, #0284c7, #2563eb); border: none; border-radius: 4px; box-shadow: 0 2px 6px rgba(37,99,235,0.4);" title="在机器人下位机 (Linux) 在线编译安装 CH341 串口驱动，放行设备权限并配置自愈守护">🤖 安装下位机驱动</button>`;
+        } else if (item.can_fix) {
+          actionBtnHtml = `<button class="btn btn-primary btn-xs" onclick="Wizard.runFixItem('${key}')" style="white-space: nowrap; padding: 3px 8px;">🛠️ 一键修复</button>`;
+        }
+
         html += `
-          <div class="card" style="margin-bottom: 12px;">
-            <div class="card-header">
-              <div class="card-title">
-                <span>${statusIcon}</span>
-                <span>${item.name}</span>
+          <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; justify-content: space-between; min-height: 84px; transition: border-color 0.2s;">
+            <div>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px;">
+                <div style="display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1;">
+                  <span style="font-size: 0.95rem; flex-shrink: 0;">${statusIcon}</span>
+                  <span style="font-size: 0.84rem; font-weight: 700; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${item.name}</span>
+                  <span style="font-size: 0.68rem; padding: 1px 6px; border-radius: 4px; background: ${badgeBg}; color: ${badgeColor}; flex-shrink: 0; font-weight: 600;">${badgeText}</span>
+                </div>
+                <div style="display: flex; gap: 5px; align-items: center; flex-shrink: 0;">
+                  <button class="btn-copy-mini" onclick="copyToClipboard(${JSON.stringify(copyText)}, '指标信息已复制')" style="padding: 2px 6px; font-size: 0.7rem; white-space: nowrap;" title="复制当前指标详情">📋 复制</button>
+                  ${actionBtnHtml}
+                </div>
               </div>
-              <div style="display: flex; gap: 8px; align-items: center;">
-                <button class="btn-copy-mini" onclick="copyToClipboard(${JSON.stringify(copyText)}, '指标信息已复制')">📋 复制</button>
-                ${item.can_fix ? `<button class="btn btn-primary btn-sm" onclick="Wizard.runFixItem('${key}')">🛠️ 一键修复</button>` : ''}
+              <div style="font-size: 0.78rem; color: var(--accent-cyan); font-family: monospace; margin-bottom: 3px; word-break: break-all; line-height: 1.35; user-select: text;">
+                ${item.version || '无版本信息'}
               </div>
             </div>
-            <div style="font-size: 0.85rem; color: #ffffff; font-family: monospace; margin-bottom: 4px; user-select: text;">${item.version}</div>
-            <div style="font-size: 0.8rem; color: var(--text-secondary); user-select: text;">${item.msg}</div>
+            <div style="font-size: 0.73rem; color: var(--text-secondary); word-break: break-word; line-height: 1.35; user-select: text; margin-top: 2px;">
+              ${item.msg || ''}
+            </div>
           </div>
         `;
       }
+      html += '</div>';
       container.innerHTML = html;
 
-      // 智能判定：如果全部指标通过且为自动化模式，自动流转至第3步（若已有舞蹈镜像则自动进第4步）
+      // 智能判定：如果全部指标通过且为自动化模式，自动流转至第3步
       if (res.data.all_passed) {
         if (autoAdvance) {
-          showToast('✓ 运行环境预检全部通过，进入第 3 步镜像检测...', 'success', 2000);
-          setTimeout(() => this.goToStep(3, true), 1000);
+          showToast('✓ 运行环境预检全部通过，即将进入第 3 步镜像检测...', 'success', 2200);
+          setTimeout(() => this.goToStep(3, true), 1200);
         }
       } else {
-        showToast('⚠️ 检测到部分环境指标异常，请使用【一键修复】按钮解决', 'warning', 4000);
+        showToast('⚠️ 检测到部分环境指标异常，请使用【安装/修复】按钮解决', 'warning', 4000);
       }
     } catch (err) {
       container.innerHTML = `<div style="padding: 20px; color: var(--accent-red);">预检异常: ${err.message}</div>`;
@@ -929,8 +1044,8 @@ const Wizard = {
     if (bar) bar.style.width = `${pct}%`;
     if (pctText) pctText.textContent = `${pct}%`;
     if (infoText) {
-      const mbTrans = (((p.transferred_bytes || 0)) / (1024*1024)).toFixed(1);
-      const mbTotal = (((p.total_bytes || 0)) / (1024*1024)).toFixed(1);
+      const mbTrans = (((p.transferred_bytes || 0)) / (1024 * 1024)).toFixed(1);
+      const mbTotal = (((p.total_bytes || 0)) / (1024 * 1024)).toFixed(1);
       const speed = p.speed_mbps !== undefined && p.speed_mbps !== null ? p.speed_mbps : 0;
       const eta = p.eta_seconds !== undefined && p.eta_seconds !== null ? `${p.eta_seconds}s` : '--';
       infoText.textContent = `${mbTrans} MB / ${mbTotal} MB | 速率: ${speed} MB/s | 剩余: ${eta}`;
@@ -995,46 +1110,50 @@ const Wizard = {
 
           // 根据输出流关键字动态推进阶段进度
           const text = String(line || '');
-          if (text.includes('[STEP 1/3]')) {
-            setProgress(20, '🔍 步骤 1/3: 检查镜像包格式与磁盘...', '检测 GZIP / TAR 压缩状态与 NVMe 剩余空间');
-          } else if (text.includes('[STEP 2/3]') || text.includes('解压') || text.includes('pigz') || text.includes('gzip')) {
-            setProgress(45, '📦 步骤 2/3: 正在物理完整解压镜像 TAR 归档...', '利用多核 pigz/gzip 高速解压缩 (预计 30~60 秒)');
+          if (text.includes('[STEP 1/')) {
+            setProgress(15, '🔍 步骤 1/5: 检查镜像包格式与磁盘...', '检测 GZIP / TAR 压缩状态与 NVMe 剩余空间');
+          } else if (text.includes('[STEP 2/') || text.includes('解压') || text.includes('pigz') || text.includes('gzip')) {
+            setProgress(35, '📦 步骤 2/5: 正在物理完整解压镜像 TAR 归档...', '利用多核 pigz/gzip 高速解压缩 (预计 30~60 秒)');
           } else if (text.includes('解压完成')) {
-            setProgress(65, '✅ TAR 归档解压完成，准备导入 Docker 引擎...', '已落盘，正在调用 docker load 引擎');
-          } else if (text.includes('[STEP 3/3]') || text.includes('docker load')) {
-            setProgress(75, '⚡ 步骤 3/3: 正在向 Docker 引擎加载镜像层...', '写入 Layer 分层数据与 OCI 格式元数据');
-          } else if (text.includes('Loaded image') || text.includes('ctr') || text.includes('skopeo')) {
-            setProgress(90, '🎉 镜像层加载成功，正在巡检环境权限...', '执行权限配置与开机环境适配');
+            setProgress(50, '✅ TAR 归档解压完成，准备导入 Docker 引擎...', '已落盘，正在调用 docker load 引擎');
+          } else if (text.includes('[STEP 3/') || text.includes('docker load')) {
+            setProgress(65, '⚡ 步骤 3/5: 正在向 Docker 引擎加载镜像层...', '写入 Layer 分层数据与 OCI 格式元数据');
+          } else if (text.includes('[STEP 4/') || text.includes('准备固化启动容器') || text.includes('以固化参数启动容器') || text.includes('正在自动固化启动容器')) {
+            setProgress(80, '🚀 步骤 4/5: 镜像导入成功，正在自动启动容器 vsis_g1...', '配置宿主网络、共享内存与硬件直通');
+          } else if (text.includes('[STEP 5/') || text.includes('自动编译') || text.includes('正在进入 vsis_g1 容器编译') || text.includes('正在自动执行机载程序编译')) {
+            setProgress(90, '⚙️ 步骤 5/5: 容器已启动，正在自动编译运控与通信程序...', '执行 make.sh / cmake 原生编译生成 aarch64 二进制');
           } else if (text.includes('[SUCCESS]') || text.includes('🎉')) {
-            setProgress(100, '✅ Docker 镜像导入与环境适配全部完成！', '镜像已成功注册至 Docker，可进入下一步固化启动');
+            setProgress(100, '✅ Docker 镜像导入、程序编译与容器启动全部完成！', '容器已处于运行就绪状态，可进入下一步分配 Robot ID');
           }
         }, (ok) => {
           if (ticker) clearInterval(ticker);
           if (ok) {
-            setProgress(100, '✅ Docker 镜像安装与导入成功！', '已成功加载至宿主机，请点击【下一步】继续。');
+            setProgress(100, '✅ Docker 镜像导入、编译与启动成功！', '已成功加载镜像并拉起 vsis_g1 容器，请点击【下一步】继续。');
             if (consoleEl) {
               const banner = document.createElement('div');
               banner.className = 'upload-success-badge';
               banner.style.cssText = 'margin-top: 10px; padding: 10px 14px; background: rgba(16, 185, 129, 0.18); border: 1px solid #10b981; border-radius: 6px; color: #10b981; font-weight: 700; font-size: 0.9rem; display: flex; align-items: center; gap: 8px; box-shadow: 0 0 12px rgba(16, 185, 129, 0.2);';
-              banner.innerHTML = '<span>✅</span> <span>Docker 镜像安装导入成功！请点击【下一步】继续。</span>';
+              banner.innerHTML = '<span>✅</span> <span>Docker 镜像导入、自动编译与容器固化启动成功！请点击【下一步】继续。</span>';
               consoleEl.appendChild(banner);
               consoleEl.scrollTop = consoleEl.scrollHeight;
             }
             if (btnLoad) {
               btnLoad.disabled = false;
               btnLoad.classList.remove('loading');
-              btnLoad.textContent = '✅ 重新执行 docker load -i';
+              btnLoad.textContent = '✅ 镜像已导入并启动 (可重新执行)';
             }
-            showToast('✅ Docker 镜像安装导入成功！请点击【下一步】继续。', 'success', 3000);
+            showToast('✅ 镜像导入、自动编译与容器启动成功！', 'success', 3500);
             this.refreshImagesList();
+            this.checkProcessStatus();
             this.autoCheckStep3();
+            this.updateStep3ButtonStatus();
           } else {
             setProgress(currentPct, '❌ 镜像安装遇到异常', '请查看下方控制台详细错误日志');
             if (pBar) pBar.style.background = '#f87171';
             if (btnLoad) {
               btnLoad.disabled = false;
               btnLoad.classList.remove('loading');
-              btnLoad.textContent = '⚡ 执行 docker load -i';
+              btnLoad.textContent = '⚡ 执行 docker load (导入并启动)';
             }
             showToast('❌ 镜像导入异常，请查看下方终端输出', 'error');
           }
@@ -1072,14 +1191,14 @@ const Wizard = {
     let html = '<div style="display: flex; flex-direction: column; gap: 6px;">';
     for (const c of containers) {
       const isUp = c.is_running;
-      const statusBadge = isUp 
+      const statusBadge = isUp
         ? `<span class="container-status-badge running">🟢 运行中</span>`
         : `<span class="container-status-badge stopped">⚪ ${c.status || '已停止'}</span>`;
-      
+
       const isWizard = targetElId.includes('wizard');
       const stopHandler = isWizard ? `Wizard.stopContainer('${c.name}')` : `TabImage.stopContainer('${c.name}')`;
 
-      const stopBtn = isUp 
+      const stopBtn = isUp
         ? `<button class="btn btn-danger btn-xs" style="padding: 4px 10px; font-size: 0.75rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; font-weight: 600; cursor: pointer; flex-shrink: 0;" onclick="${stopHandler}" title="停止并关闭该容器">⏹️ 关闭容器</button>`
         : '';
 
@@ -1137,14 +1256,8 @@ const Wizard = {
       btn.textContent = `⏳ 正在写入 ID [${robotId}] ...`;
     }
 
-    const consoleEl = document.getElementById('container-start-console');
     const appendLog = (msg, isErr = false) => {
-      if (!consoleEl) return;
-      const div = document.createElement('div');
-      div.className = isErr ? 'log-error' : (msg.includes('✅') || msg.includes('SUCCESS') || msg.includes('🎉') ? 'log-success' : 'log-info');
-      div.textContent = msg;
-      consoleEl.appendChild(div);
-      consoleEl.scrollTop = consoleEl.scrollHeight;
+      this.appendStep3Log(msg, isErr);
     };
 
     appendLog(`[INFO] 正在写入 Robot ID [${robotId}] 与配置开机自启钩子...`);
@@ -1176,6 +1289,7 @@ const Wizard = {
         const restartRes = await API.restartContainer('vsis_g1');
         if (restartRes.success) {
           appendLog(`[SUCCESS] ✅ 容器 vsis_g1 已重启，新 ID [${robotId}] 已应用生效！`);
+          appendLog(`[INFO] 💡 镜像与自启配置已就绪，请点击【下一步】进行机器码与 License 授权。`);
           showToast(`🎉 Robot ID [${robotId}] 已写入，容器已重启就绪！`, 'success');
         } else {
           appendLog(`[ERROR] ❌ 重启容器失败: ${restartRes.msg}`, true);
@@ -1187,6 +1301,8 @@ const Wizard = {
       }
       if (btn) btn.disabled = false;
       this.updateWriteIdButtonText();
+      await this.refreshImagesList();
+      await this.checkProcessStatus();
     } catch (err) {
       appendLog(`[ERROR] 写入异常: ${err.message}`, true);
       showToast(`写入失败: ${err.message}`, 'error');
@@ -1201,16 +1317,21 @@ const Wizard = {
       return;
     }
     showToast(`正在关闭容器 [${containerName}] ...`, 'info');
+    this.appendStep3Log(`[INFO] 正在关闭容器 [${containerName}] ...`);
     try {
       const res = await API.stopContainer(containerName);
       if (res.success) {
         showToast(`✅ ${res.msg}`, 'success');
+        this.appendStep3Log(`[SUCCESS] ✅ 容器 [${containerName}] 已成功关闭`);
         await this.refreshImagesList();
+        await this.checkProcessStatus();
       } else {
         showToast(`关闭失败: ${res.msg}`, 'error');
+        this.appendStep3Log(`[ERROR] ❌ 关闭容器失败: ${res.msg}`, true);
       }
     } catch (err) {
       showToast(`关闭容器异常: ${err.message}`, 'error');
+      this.appendStep3Log(`[ERROR] ❌ 关闭容器异常: ${err.message}`, true);
     }
   },
 
@@ -1220,6 +1341,11 @@ const Wizard = {
     const textEl = document.getElementById('wizard-process-status-text');
     const ctrlSub = document.getElementById('wizard-ctrl-sub-badge');
     const loraSub = document.getElementById('wizard-lora-sub-badge');
+    const step4Ctrl = document.getElementById('step5-ctrl-badge');
+    const step4Lora = document.getElementById('step5-lora-badge');
+
+    if (ctrlSub) ctrlSub.style.display = 'none';
+    if (loraSub) loraSub.style.display = 'none';
 
     try {
       const res = await API.getRobotProcessStatus();
@@ -1227,18 +1353,18 @@ const Wizard = {
         if (dotEl) { dotEl.style.background = '#94a3b8'; dotEl.className = 'pulse-dot'; }
         if (textEl) textEl.textContent = '未连接';
         if (badgeEl) { badgeEl.style.borderColor = 'rgba(255,255,255,0.1)'; badgeEl.style.background = 'rgba(255,255,255,0.05)'; }
-        if (ctrlSub) { ctrlSub.className = 'container-status-badge stopped'; ctrlSub.textContent = '未连接'; }
-        if (loraSub) { loraSub.className = 'container-status-badge stopped'; loraSub.textContent = '未连接'; }
+        if (step4Ctrl) { step4Ctrl.className = 'container-status-badge stopped'; step4Ctrl.textContent = '🦾 运控: 待就绪'; }
+        if (step4Lora) { step4Lora.className = 'container-status-badge stopped'; step4Lora.textContent = '📡 LoRa: 待就绪'; }
         return;
       }
 
-      if (ctrlSub) {
-        ctrlSub.className = res.g1_ctrl_running ? 'container-status-badge running' : 'container-status-badge stopped';
-        ctrlSub.textContent = res.g1_ctrl_running ? '🟢 运行中' : '⚪ 未运行';
+      if (step4Ctrl) {
+        step4Ctrl.className = res.g1_ctrl_running ? 'container-status-badge running' : 'container-status-badge stopped';
+        step4Ctrl.textContent = res.g1_ctrl_running ? '🦾 运控: 运行中' : '🦾 运控: 未运行';
       }
-      if (loraSub) {
-        loraSub.className = res.lora_recv_running ? 'container-status-badge running' : 'container-status-badge stopped';
-        loraSub.textContent = res.lora_recv_running ? '🟢 运行中' : '⚪ 未运行';
+      if (step4Lora) {
+        step4Lora.className = res.lora_recv_running ? 'container-status-badge running' : 'container-status-badge stopped';
+        step4Lora.textContent = res.lora_recv_running ? '📡 LoRa: 运行中' : '📡 LoRa: 未运行';
       }
 
       if (dotEl && textEl && badgeEl) {
@@ -1268,7 +1394,7 @@ const Wizard = {
           badgeEl.style.background = 'rgba(239, 68, 68, 0.08)';
         }
       }
-    } catch (_) {}
+    } catch (_) { }
   },
 
   // --- 一键修复与任务执行实时流式弹窗控制器 ---
@@ -1500,15 +1626,14 @@ const Wizard = {
     let dancesHtml = (p.dances || []).map(d => `<span class="card-badge" style="margin: 2px;">${d}</span>`).join(' ');
 
     resBox.innerHTML = `
-      <div style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); padding: 12px; border-radius: 6px; color: #38bdf8; font-weight: 600; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
-        <span>📄 License 文件已加载，正在自动写入机器人并重启主控程序进行生效校验...</span>
+      <div style="background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); padding: 8px 10px; border-radius: 6px; color: #38bdf8; font-weight: 600; font-size: 0.78rem; margin-bottom: 8px;">
+        <span>📄 License 文件已载入，正在写入机器人并生效校验...</span>
       </div>
-      <div class="card" style="padding: 14px;">
-        <div style="font-size: 0.85rem; margin-bottom: 6px; user-select: text;"><b>授权客户:</b> ${p.customer || '商业客户'} | <b>适用机型:</b> ${p.model || 'Unitree G1'}</div>
-        <div style="font-size: 0.85rem; margin-bottom: 6px; user-select: text;"><b>有效期至:</b> <span style="color: var(--accent-cyan); font-weight: 600;">${p.expire_date || '永久授权'}</span></div>
-        ${p.dance_count > 0 ? `<div style="font-size: 0.85rem; margin-bottom: 8px; user-select: text;"><b>包含舞蹈清单 (${p.dance_count} 支):</b></div>
-        <div style="display: flex; flex-wrap: wrap; gap: 4px; max-height: 120px; overflow-y: auto; user-select: text;">${dancesHtml}</div>` : ''}
+      <div style="font-size: 0.76rem; line-height: 1.5; margin-bottom: 6px; padding: 6px 10px; background: rgba(0,0,0,0.3); border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); user-select: text;">
+        <div><b>客户:</b> ${p.customer || '商业客户'} | <b>机型:</b> ${p.model || 'Unitree G1'} | <b>有效期:</b> <span style="color: var(--accent-cyan); font-weight: 600;">${p.expire_date || '永久授权'}</span></div>
       </div>
+      ${p.dance_count > 0 ? `<div style="font-size: 0.72rem; color: var(--text-secondary); margin-bottom: 3px;">包含动作库 (${p.dance_count} 支):</div>
+      <div style="display: flex; flex-wrap: wrap; gap: 3px; max-height: 60px; overflow-y: auto; user-select: text; margin-bottom: 6px;">${dancesHtml}</div>` : ''}
     `;
 
     const deployBtn = document.getElementById('btn-deploy-license');
@@ -1536,18 +1661,19 @@ const Wizard = {
         if (resBox && res.log_snippet) {
           const logCard = document.createElement('div');
           logCard.className = 'diag-alert success';
-          logCard.style.marginTop = '12px';
+          logCard.style.marginTop = '6px';
+          logCard.style.padding = '8px 10px';
           logCard.innerHTML = `
             <div style="flex: 1;">
-              <div><b>✅ License 部署与授权成功！</b> ${res.msg}</div>
-              <div style="font-size: 0.76rem; color: #a7f3d0; margin-top: 4px; font-family: monospace; white-space: pre-wrap; max-height: 100px; overflow-y: auto;">${res.log_snippet}</div>
+              <div style="font-size: 0.76rem;"><b>✅ 授权生效:</b> ${res.msg}</div>
+              <div style="font-size: 0.7rem; color: #a7f3d0; margin-top: 2px; font-family: monospace; white-space: pre-wrap; max-height: 50px; overflow-y: auto;">${res.log_snippet}</div>
             </div>
-            <button class="btn-copy-mini" onclick="copyToClipboard(${JSON.stringify(res.log_snippet)}, '主控验证日志已复制')">📋 复制日志</button>
+            <button class="btn-copy-mini" onclick="copyToClipboard(${JSON.stringify(res.log_snippet)}, '主控验证日志已复制')">📋 复制</button>
           `;
           resBox.appendChild(logCard);
         }
 
-        // 第 5 步授权成功后，自动执行 run_bg.sh 并展示执行进度条，等待 lora 和运控完全启动成功后再进入第 6 步
+        // 授权成功后，自动执行 run_bg.sh 并展示执行进度条，等待 lora 和运控完全启动成功后再进入下一步
         await this.startStep5ProcessesWithProgress(autoAdvance);
       } else {
         showToast(`❌ 机器端校验失败: ${res.msg}`, 'error');
@@ -1632,7 +1758,7 @@ const Wizard = {
 
           if (ok && status?.all_running) {
             setProgress(100, '🎉 机载程序启动成功！', '商业化环境全流程校验通过，即将进入测试联调...');
-            showToast('🎉 机载程序已启动，自动进入第 6 步！', 'success', 3000);
+            showToast('🎉 机载程序已启动，自动进入第 5 步！', 'success', 3000);
             await this.checkProcessStatus();
 
             // 刷新全站授权与进程状态
@@ -1651,13 +1777,13 @@ const Wizard = {
             }
 
             if (autoAdvance) {
-              setTimeout(() => this.goToStep(6, true), 1200);
+              setTimeout(() => this.goToStep(5, true), 1200);
             }
           } else {
             setProgress(100, '⚠️ 机载服务启动指令已完成', '双进程已在后台启动，可点击下一步进入联调测试。');
             showToast('机载程序已拉起，正在后台稳定运行', 'info', 3000);
             if (autoAdvance) {
-              setTimeout(() => this.goToStep(6, true), 1500);
+              setTimeout(() => this.goToStep(5, true), 1500);
             }
           }
         });

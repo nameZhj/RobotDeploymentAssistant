@@ -59,6 +59,10 @@ const RobotControl = {
     this.bindKeyboardListeners();
     this.renderTargetCards();
 
+    // 核心保障：从后端本地持久化文件恢复机队（彻底解决打包 EXE 或重启后 LocalStorage 丢失问题）
+    await this.syncFleetFromBackend();
+    this.renderTargetCards();
+
     this.logTerminal('system', '[SYSTEM] 机器人群控控制台已就绪。正在自动检测串口通信通道...');
 
     // 0. 初始化加载并渲染舞蹈列表
@@ -79,9 +83,16 @@ const RobotControl = {
       const stored = localStorage.getItem('g1_custom_robot_fleet');
       if (stored !== null) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           this.activeRobots = parsed.map(r => String(r).trim().toUpperCase()).filter(r => r && r !== 'ALL');
-          // 选中状态：若存在机器人，默认全选现有机器人；若为空则为空集合
+          const storedSel = localStorage.getItem('g1_custom_selected_targets');
+          if (storedSel !== null) {
+            const parsedSel = JSON.parse(storedSel);
+            if (Array.isArray(parsedSel) && parsedSel.length > 0) {
+              this.selectedTargets = new Set(parsedSel);
+              return;
+            }
+          }
           if (this.activeRobots.length === 1) {
             this.selectedTargets = new Set([this.activeRobots[0]]);
           } else if (this.activeRobots.length > 1) {
@@ -93,15 +104,49 @@ const RobotControl = {
         }
       }
     } catch (_) { }
-    // 用户未添加机器人时不要有默认的机器人
+    // 若暂无记录则初始化为空
     this.activeRobots = [];
     this.selectedTargets = new Set();
+  },
+
+  async syncFleetFromBackend() {
+    try {
+      if (typeof API === 'undefined' || typeof API.getFleet !== 'function') return;
+      const res = await API.getFleet();
+      if (res && res.success && Array.isArray(res.robots)) {
+        if (res.robots.length > 0) {
+          this.activeRobots = res.robots;
+          if (Array.isArray(res.selected) && res.selected.length > 0) {
+            this.selectedTargets = new Set(res.selected);
+          } else {
+            this.selectedTargets = (this.activeRobots.length === 1) ? new Set([this.activeRobots[0]]) : new Set(['ALL']);
+          }
+          try {
+            localStorage.setItem('g1_custom_robot_fleet', JSON.stringify(this.activeRobots));
+            localStorage.setItem('g1_custom_selected_targets', JSON.stringify(Array.from(this.selectedTargets)));
+          } catch (_) { }
+        } else if (this.activeRobots.length > 0) {
+          // 本地缓存有但后端尚未保存时，主动向后端同步落盘
+          API.saveFleet(this.activeRobots, Array.from(this.selectedTargets)).catch(() => {});
+        }
+      }
+    } catch (e) {
+      console.warn('从后端同步机队配置失败:', e);
+    }
   },
 
   saveStoredFleet() {
     try {
       localStorage.setItem('g1_custom_robot_fleet', JSON.stringify(this.activeRobots));
+      localStorage.setItem('g1_custom_selected_targets', JSON.stringify(Array.from(this.selectedTargets)));
     } catch (_) { }
+
+    // 核心保障：同步写入本地持久化文件 robot_fleet.json，抵御 EXE 重启、缓存丢失等任何异常
+    if (typeof API !== 'undefined' && typeof API.saveFleet === 'function') {
+      API.saveFleet(this.activeRobots, Array.from(this.selectedTargets)).catch(err => {
+        console.warn('持久化保存机队配置到本地文件失败:', err);
+      });
+    }
   },
 
   bindEvents() {
@@ -183,12 +228,22 @@ const RobotControl = {
       });
     }
 
-    // 刷新舞蹈列表按钮 (ALL|GETDANCELIST)
+    // 刷新舞蹈列表按钮 (严格由选中状态决定，支持单机 A 或多机编队 A,B，未选中时不发，绝不发送 ALL)
     const refreshDanceBtn = document.getElementById('ctrl-refresh-dance-btn');
     if (refreshDanceBtn) {
       refreshDanceBtn.addEventListener('click', () => {
-        this.logTerminal('system', '[DANCE] 正在向机器人发送 ALL|GETDANCELIST 重新同步舞蹈列表...');
-        this.fetchAndRenderDanceList(true);
+        const effective = this.getEffectiveSelectedRobots();
+        if (effective.length === 0) {
+          if (typeof showToast === 'function') {
+            showToast('请先在上方勾选受控机器人后再刷新动作列表', 'warning');
+          }
+          this.logTerminal('system', '[DANCE] 请先在上方选择受控机器人后再刷新动作列表');
+          this.renderUnselectedTargetState();
+          return;
+        }
+        const targetStr = effective.join(',');
+        this.logTerminal('system', `[DANCE] 正在向机器人发送 ${targetStr}|GETDANCELIST 重新同步舞蹈列表...`);
+        this.fetchAndRenderDanceList(true, targetStr);
       });
     }
 
@@ -340,17 +395,48 @@ const RobotControl = {
       return;
     }
     const cleanId = valResult.cleanId;
+    const isFirstRobot = (this.activeRobots.length === 0);
 
+    // 无论在线或离线，立即将机器人加入受控列表并持久化保存至本地 localStorage
     this.activeRobots.push(cleanId);
     this.saveStoredFleet();
-    // 默认选中新添加的机器
-    this.selectedTargets.add(cleanId);
-    this.renderTargetCards();
+
+    // 立即关闭模态窗并清空输入框，保证交互无卡顿、绝无阻塞
     this.closeAddRobotModal();
-    if (typeof showToast === 'function') {
-      showToast(`成功添加受控机器人 [${cleanId}]`, 'success');
+    if (inputField) inputField.value = '';
+
+    if (isFirstRobot) {
+      // 1. 添加第一台机器人：默认选中，且通知更新目标卡片
+      this.selectedTargets = new Set([cleanId]);
+      this.renderTargetCards();
+      if (typeof showToast === 'function') {
+        showToast(`成功添加受控机器人 [${cleanId}]`, 'success');
+      }
+      this.logTerminal('system', `[FLEET] 成功添加首台受控机器人: [${cleanId}] (已缓存至本地)`);
+      this.logSelectionChange();
+
+      // 仅在串口已连接时立即下发拉取动作；若离线则直接呈现离线状态，绝不阻塞界面
+      if (this.isConnected) {
+        if (this._danceSyncDebounceTimer) {
+          clearTimeout(this._danceSyncDebounceTimer);
+          this._danceSyncDebounceTimer = null;
+        }
+        this.fetchAndRenderDanceList(true, cleanId);
+      } else {
+        this.renderDisconnectedState();
+      }
+    } else {
+      // 2. 已有机器人时：再添加时不应该默认被选中，保持原有选中状态不变
+      if (this.selectedTargets.has('ALL')) {
+        const oldRobots = this.activeRobots.filter(r => r !== cleanId);
+        this.selectedTargets = new Set(oldRobots);
+      }
+      this.renderTargetCards();
+      if (typeof showToast === 'function') {
+        showToast(`成功添加受控机器人 [${cleanId}] (未选中)`, 'success');
+      }
+      this.logTerminal('system', `[FLEET] 成功添加受控机器人: [${cleanId}] (当前共 ${this.activeRobots.length} 台，已缓存至本地)`);
     }
-    this.logTerminal('system', `[FLEET] 成功添加受控机器人: [${cleanId}] (当前共 ${this.activeRobots.length} 台)`);
   },
 
   getNextSuggestedId() {
@@ -379,6 +465,7 @@ const RobotControl = {
 
     this.renderTargetCards();
     this.logTerminal('system', `[FLEET] 已移除机器人: [${robotId}] (当前共 ${this.activeRobots.length} 台)`);
+    this.logSelectionChange();
   },
 
   // --- 核心：获取当前实际生效的选中机器人列表 ---
@@ -462,9 +549,35 @@ const RobotControl = {
     this.logSelectionChange();
   },
 
+  _danceSyncDebounceTimer: null,
+
   logSelectionChange() {
     const summary = this.getSelectionSummaryText();
     this.logTerminal('system', `[TARGET] 控制目标已切换: ${summary}`);
+    this.onTargetSelectionChanged();
+  },
+
+  // 选中机器人后自动发送 获取对应机器人的舞蹈列表 (支持单机与多机共有动作交集)
+  onTargetSelectionChanged() {
+    if (this._danceSyncDebounceTimer) {
+      clearTimeout(this._danceSyncDebounceTimer);
+    }
+
+    this._danceSyncDebounceTimer = setTimeout(() => {
+      const effective = this.getEffectiveSelectedRobots();
+      if (effective.length === 0) {
+        this.renderUnselectedTargetState();
+        return;
+      }
+      const targetStr = effective.join(',');
+      if (!this.isConnected) {
+        this.currentDanceGroups = [];
+        this.renderDisconnectedState();
+        return;
+      }
+      this.logTerminal('system', `[DANCE AUTO] 已选择目标 [${targetStr}]，正在自动发送 ${targetStr}|GETDANCELIST 同步动作列表...`);
+      this.fetchAndRenderDanceList(true, targetStr);
+    }, 250);
   },
 
   getSelectionSummaryText() {
@@ -696,7 +809,12 @@ const RobotControl = {
 
         this.logTerminal('system', `[SERIAL AUTO] 成功自动识别并连接串口: ${this.activePort} (${this.activeDesc}) @ ${this.activeBaud} Baud`);
         // 首次连接成功后后台已触发一次同步，前端读取缓存渲染，避免二次发送 GETDANCELIST
-        this.fetchAndRenderDanceList(false);
+        const effectiveRobots = this.getEffectiveSelectedRobots();
+        if (effectiveRobots.length > 0) {
+          this.fetchAndRenderDanceList(false, effectiveRobots.join(','));
+        } else {
+          this.renderUnselectedTargetState();
+        }
       } else {
         this.isConnected = false;
         if (statusBadge) statusBadge.className = 'status-badge disconnected';
@@ -777,7 +895,12 @@ const RobotControl = {
 
         this.logTerminal('system', `[SERIAL SUCCESS] 成功连接串口: ${portName}`);
         await this.refreshPortList();
-        this.fetchAndRenderDanceList(false);
+        const currentRobots = this.getEffectiveSelectedRobots();
+        if (currentRobots.length > 0) {
+          this.fetchAndRenderDanceList(false, currentRobots.join(','));
+        } else {
+          this.renderUnselectedTargetState();
+        }
       } else {
         if (statusBadge) statusBadge.className = 'status-badge disconnected';
         if (statusText) statusText.textContent = '未连接';
@@ -1109,23 +1232,39 @@ const RobotControl = {
   async syncDanceListFromCache() {
     if (!this.isConnected) return;
     try {
-      const res = await API.getSerialDanceList(false);
+      const effective = this.getEffectiveSelectedRobots();
+      if (effective.length === 0) return;
+      const targetStr = effective.join(',');
+      const res = await API.getSerialDanceList(false, targetStr);
       if (res && res.success && Array.isArray(res.groups) && res.groups.length > 0) {
         const total = res.total_count || res.groups.reduce((acc, g) => acc + (g.items ? g.items.length : 0), 0);
         if (total !== this._lastRenderedDanceCount || this.currentDanceGroups.length === 0) {
           this._lastRenderedDanceCount = total;
           this.currentDanceGroups = res.groups;
-          this.renderDanceGroups(res.groups);
+          this.renderDanceGroups(res.groups, targetStr, total, res.per_robot_counts);
         }
       }
     } catch (_) { }
   },
 
-  // --- 动态串口舞蹈列表状态与渲染逻辑 (严格由串口 ALL|GETDANCELIST 驱动，绝不硬编码) ---
+  // --- 动态串口舞蹈列表状态与渲染逻辑 (严格由串口 {target}|GETDANCELIST 驱动，绝不硬编码) ---
+  _danceRequestId: 0,
   currentDanceGroups: [],
+  currentTargetRobots: '',
 
-  async fetchAndRenderDanceList(isForceRefresh = false) {
+  async fetchAndRenderDanceList(isForceRefresh = false, targetStr = null) {
     const countTag = document.getElementById('ctrl-dance-count-tag');
+
+    if (!targetStr) {
+      const effective = this.getEffectiveSelectedRobots();
+      if (effective.length === 0) {
+        this.currentDanceGroups = [];
+        this.renderUnselectedTargetState();
+        return;
+      }
+      targetStr = effective.join(',');
+    }
+    this.currentTargetRobots = targetStr;
 
     // 1. 若串口未连接，直接渲染未连接状态
     if (!this.isConnected) {
@@ -1134,32 +1273,54 @@ const RobotControl = {
       return;
     }
 
+    // 递增请求序列号，保证异步刷新不阻塞，且旧请求返回时不会覆盖新请求
+    const currentReqId = ++this._danceRequestId;
+
     // 2. 串口已连接，展示同步等待态
-    this.renderLoadingState(isForceRefresh);
-    if (countTag) countTag.textContent = isForceRefresh ? '正在下发 ALL|GETDANCELIST...' : '正在同步动作列表...';
+    this.renderLoadingState(isForceRefresh, targetStr);
+    if (countTag) {
+      countTag.textContent = isForceRefresh ? `正在下发 ${targetStr}|GETDANCELIST...` : `正在同步动作列表 [${targetStr}]...`;
+    }
 
     try {
       let res;
       if (isForceRefresh) {
-        res = await API.refreshSerialDanceList(5.5);
+        res = await API.refreshSerialDanceList(5.5, targetStr);
       } else {
-        res = await API.getSerialDanceList(false);
+        res = await API.getSerialDanceList(false, targetStr);
+      }
+
+      // 如果在等待过程中有新的刷新请求，则丢弃当前旧响应
+      if (currentReqId !== this._danceRequestId) {
+        return;
       }
 
       if (res && res.success && res.groups && res.groups.length > 0) {
         this.currentDanceGroups = res.groups;
-        this.renderDanceGroups(res.groups);
         const total = res.total_count || res.groups.reduce((acc, g) => acc + (g.items ? g.items.length : 0), 0);
-        this.logTerminal('system', `[DANCE SYNC] 成功从串口接收并动态解析 ${total} 支机载动作 (来源: ALL|GETDANCELIST)`);
+        this.renderDanceGroups(res.groups, targetStr, total, res.per_robot_counts);
+        const isMulti = targetStr.includes(',');
+        const modeDesc = isMulti ? '多机共有' : `单机 [${targetStr}]`;
+        this.logTerminal('system', `[DANCE SYNC] 成功从串口接收并动态解析 ${total} 支${modeDesc}动作 (来源: ${targetStr}|GETDANCELIST)`);
         return;
+      } else if (res && res.success && (!res.groups || res.groups.length === 0)) {
+        // 多机编队目标但无共有动作
+        const isMulti = targetStr.includes(',');
+        if (isMulti) {
+          this.currentDanceGroups = [];
+          this.renderNoCommonDancesState(targetStr, res.per_robot_counts);
+          return;
+        }
       }
     } catch (e) {
+      if (currentReqId !== this._danceRequestId) return;
       console.warn('获取串口舞蹈列表失败:', e);
       this.logTerminal('error', `[DANCE ERROR] 串口动作列表同步异常: ${e.message || e}`);
     }
 
+    if (currentReqId !== this._danceRequestId) return;
     // 3. 串口已连接但机载端暂无响应或未返回 dance_map
-    this.renderNoDataState();
+    this.renderNoDataState(targetStr);
   },
 
   renderDisconnectedState() {
@@ -1174,54 +1335,92 @@ const RobotControl = {
         <div class="dance-status-title">LoRa 串口通信未连接</div>
         <div class="dance-status-desc">
           动作与特技列表完全由目标机器人机载主控动态提供。<br>
-          请插入 USB LoRa 串口发射器 (CH340/CH341) 并连接，系统将自动下发 <code>ALL|GETDANCELIST</code> 实时拉取机载动作映射表。
+          请插入 USB LoRa 串口发射器 (CH340/CH341) 并连接，系统将自动向所选机器人下发 <code>GETDANCELIST</code> 实时拉取机载动作映射表。
         </div>
       </div>
     `;
   },
 
-  renderLoadingState(isForce = false) {
+  renderLoadingState(isForce = false, targetStr = 'ALL') {
     const container = document.getElementById('ctrl-dance-scroll-container');
     if (!container) return;
 
     container.innerHTML = `
       <div class="dance-status-card">
         <div class="dance-loading-spinner"></div>
-        <div class="dance-status-title">正在通过串口同步机载动作列表...</div>
+        <div class="dance-status-title">正在同步 [${targetStr}] 机载动作列表...</div>
         <div class="dance-status-desc">
-          正在向机器人发送 <code>ALL|GETDANCELIST</code>，等待机载端 <code>lora_recv_group</code> 返回 <code>dance_map</code> YAML 映射...
+          正在向机器人发送 <code>${targetStr}|GETDANCELIST</code>，等待机载端 <code>lora_recv_group</code> 回传 <code>dance_map</code> 并计算动作交集...
         </div>
       </div>
     `;
   },
 
-  renderNoDataState() {
+  renderNoCommonDancesState(targetStr, perRobotCounts = null) {
     const container = document.getElementById('ctrl-dance-scroll-container');
     const countTag = document.getElementById('ctrl-dance-count-tag');
-    if (countTag) countTag.textContent = '⚠️ 暂未获取到机载动作';
+    if (countTag) countTag.textContent = `⚠️ [${targetStr}] 无共有动作`;
+    if (!container) return;
+
+    let perInfo = '';
+    if (perRobotCounts) {
+      const parts = Object.entries(perRobotCounts).filter(([k]) => targetStr.split(',').includes(k)).map(([k, v]) => `<b>Robot ${k}</b>: ${v} 首`);
+      if (parts.length > 0) perInfo = `<div style="margin-top: 8px; font-size: 0.82rem; color: var(--accent-cyan);">${parts.join('  |  ')}</div>`;
+    }
+
+    container.innerHTML = `
+      <div class="dance-status-card">
+        <div class="dance-status-icon">🤝</div>
+        <div class="dance-status-title">多机编队 [${targetStr}] 无共有动作</div>
+        <div class="dance-status-desc">
+          已成功拉取编队中各机器人的动作列表，但未发现各机均支持的共同动作别名 (alias)。${perInfo}
+          <br>请单独选择单台机器人控制，或更新各机动作配置包保持一致。
+        </div>
+      </div>
+    `;
+  },
+
+  renderUnselectedTargetState() {
+    const container = document.getElementById('ctrl-dance-scroll-container');
+    const countTag = document.getElementById('ctrl-dance-count-tag');
+    if (countTag) countTag.textContent = '🎯 请先选择受控目标';
+    if (!container) return;
+
+    container.innerHTML = `
+      <div class="dance-status-card">
+        <div class="dance-status-icon">🎯</div>
+        <div class="dance-status-title">未选择受控机器人</div>
+        <div class="dance-status-desc">
+          请在上方「控制目标选择与多机编队」中点击勾选单台机器人（如 A）或多选编队（如 A、B），系统将自动下发 <code>GETDANCELIST</code> 获取动作映射。
+        </div>
+      </div>
+    `;
+  },
+
+  renderNoDataState(targetStr = 'ALL') {
+    const container = document.getElementById('ctrl-dance-scroll-container');
+    const countTag = document.getElementById('ctrl-dance-count-tag');
+    if (countTag) countTag.textContent = `⚠️ 暂未获取到 [${targetStr}] 动作`;
     if (!container) return;
 
     container.innerHTML = `
       <div class="dance-status-card">
         <div class="dance-status-icon">📡</div>
-        <div class="dance-status-title">暂未收到机载响应</div>
+        <div class="dance-status-title">暂未收到 [${targetStr}] 机载响应</div>
         <div class="dance-status-desc">
-          串口已连接，但机载主控暂未返回有效的动作配置。<br>
-          请确认机器人机载程序处于正常运行状态且 LoRa 频段一致。
+          串口已连接，但目标机器人 [${targetStr}] 暂未返回有效的动作配置。<br>
+          请确认对应机器人机载程序处于正常运行状态且 LoRa 频段一致。
         </div>
-        <button class="btn btn-primary btn-xs" style="margin-top: 10px; padding: 4px 14px; font-size: 0.8rem;" onclick="RobotControl.fetchAndRenderDanceList(true)">
-          🔄 重新获取列表
-        </button>
       </div>
     `;
   },
 
-  renderDanceGroups(groups) {
+  renderDanceGroups(groups, targetStr = 'ALL', totalCount = 0, perRobotCounts = null) {
     const container = document.getElementById('ctrl-dance-scroll-container');
     if (!container) return;
 
     container.innerHTML = '';
-    let totalCount = 0;
+    let count = 0;
 
     groups.forEach(group => {
       const catDiv = document.createElement('div');
@@ -1236,13 +1435,13 @@ const RobotControl = {
       gridDiv.className = 'dance-grid';
 
       (group.items || []).forEach(item => {
-        totalCount++;
+        count++;
         const btn = document.createElement('button');
         btn.className = 'btn-cmd btn-dance';
         btn.setAttribute('data-cmd', item.cmd || `DANCE,${item.alias}`);
 
         const keyInfo = (item.keys && item.keys.length > 0) ? ` [${item.keys.join(', ')}]` : '';
-        btn.title = `${item.name} (${item.alias})${keyInfo}`;
+        btn.title = `${item.name} (${item.alias})${keyInfo} - 目标: ${targetStr}`;
 
         const titleSpan = document.createElement('span');
         titleSpan.className = 'dance-title';
@@ -1255,7 +1454,7 @@ const RobotControl = {
         btn.appendChild(titleSpan);
         btn.appendChild(codeSpan);
 
-        // 绑定点击发送与高亮反馈
+        // 绑定点击发送与高亮反馈 (通过 sendCommand 自动采用当前选中的目标 A 或 A,B 下发)
         btn.addEventListener('click', () => {
           const cmd = btn.getAttribute('data-cmd');
           if (cmd) {
@@ -1274,7 +1473,17 @@ const RobotControl = {
 
     const countTag = document.getElementById('ctrl-dance-count-tag');
     if (countTag) {
-      countTag.textContent = `🟢 串口实时同步 (共 ${totalCount} 项动作)`;
+      const isMulti = targetStr && targetStr.includes(',');
+      if (isMulti) {
+        let perCountsStr = '';
+        if (perRobotCounts && Object.keys(perRobotCounts).length > 0) {
+          const parts = Object.entries(perRobotCounts).filter(([k]) => targetStr.split(',').includes(k)).map(([k, v]) => `${k}:${v}`);
+          if (parts.length > 0) perCountsStr = ` (${parts.join(', ')})`;
+        }
+        countTag.textContent = `🟢 多机共有 (${count} 项动作${perCountsStr})`;
+      } else {
+        countTag.textContent = `🟢 [${targetStr}] 动作 (共 ${count} 项)`;
+      }
     }
   }
 };

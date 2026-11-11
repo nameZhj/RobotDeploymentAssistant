@@ -111,7 +111,7 @@ web/
   - **udev 规则与权限**：`UDEV_RULES_PATH`, `UDEV_RULES_CONTENT`, `UDEV_RELOAD_CMD`, `USER_GROUPS_CMD`, `CHMOD_DEV_NODES_CMD`
   - **YAML 配置加固**：`YAML_DISABLE_USB_RESET_CMD`
   - **C++ 多端口自适应热补丁**：`LORA_SERIAL_SRC_REMOTE_PATH`, `BULLETPROOF_SERIAL_CPP_PATCH`, `LORA_SERIAL_RECOMPILE_CMD`
-  - **开机与保活守护脚本**：`RUN_BG_REMOTE_PATH`, `RUN_BG_SCRIPT_TEMPLATE`, `RUN_BG_SYNC_AND_CHMOD_CMD`, `START_LORA_DAEMON_CONTAINER_CMD`
+  - **开机与自启钩子配置**：`RUN_BG_REMOTE_PATH`, `CUSTOM_STARTUP_REMOTE_PATH`, `CUSTOM_STARTUP_SCRIPT_TEMPLATE`, `RUN_BG_SYNC_AND_CHMOD_CMD`, `START_LORA_DAEMON_CONTAINER_CMD`（严格保护机器人原始 `run_bg.sh`，绝不篡改原文件）
   - **Windows 驱动文件名**：`WINDOWS_DRIVER_FILENAMES`
 - `backend/drivers/ch341_manager.py`（单例 `ch341_manager`）：
   - `find_windows_driver_path()` / `check_windows_driver()` / `install_windows_driver()`

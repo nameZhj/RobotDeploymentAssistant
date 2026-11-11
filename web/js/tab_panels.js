@@ -14,15 +14,21 @@ const TabNetwork = {
   },
 
   async autoConnect() {
+    const select = document.getElementById('tp-nic-select');
+    const nicName = select ? select.value : '';
     showToast('⚡ 正在执行断网自愈与自动连接...', 'info', 3000);
     try {
-      const res = await API.autoConnect(true);
+      const res = await API.autoConnect(true, nicName);
       if (res.connected) {
         showToast(res.msg, 'success', 3500);
         App.updateStatus();
         this.loadNics();
       } else {
-        showToast(res.msg || '未探测到在线机器人', 'warning', 3500);
+        if (res.msg && (res.msg.includes('管理员') || res.msg.includes('权限'))) {
+          showToast(res.msg, 'error', 6000);
+        } else {
+          showToast(res.msg || '未探测到在线机器人', 'warning', 3500);
+        }
       }
     } catch (err) {
       showToast(`自愈连接异常: ${err.message}`, 'error');
@@ -218,14 +224,11 @@ const TabPrecheck = {
       }
       container.innerHTML = html || '<div style="color: var(--text-muted); padding: 20px;">没有预检数据</div>';
 
-      // 控制顶部快速修复按钮：仅在驱动缺失且可修复时显示，已就绪则隐藏
+      // 控制顶部下位机驱动修复按钮：始终可见并高亮
       const btnHeaderFix = document.getElementById('btn-tp-fix-ch341');
       if (btnHeaderFix) {
-        if (items.serial_ch341 && items.serial_ch341.can_fix) {
-          btnHeaderFix.style.display = 'inline-block';
-        } else {
-          btnHeaderFix.style.display = 'none';
-        }
+        btnHeaderFix.style.display = 'inline-block';
+        btnHeaderFix.innerHTML = '🤖 安装下位机 LoRa 驱动';
       }
 
       if (res.data.all_passed) {
@@ -773,30 +776,32 @@ const TabImage = {
           this.appendLog(line, isErr);
 
           const text = String(line || '');
-          if (text.includes('[STEP 1/3]')) {
-            setProgress(20, '🔍 步骤 1/3: 检查镜像包格式与磁盘...', '检测 GZIP / TAR 压缩状态与 NVMe 剩余空间');
-          } else if (text.includes('[STEP 2/3]') || text.includes('解压') || text.includes('pigz') || text.includes('gzip')) {
-            setProgress(45, '📦 步骤 2/3: 正在物理完整解压镜像 TAR 归档...', '利用多核 pigz/gzip 高速解压缩 (预计 30~60 秒)');
+          if (text.includes('[STEP 1/')) {
+            setProgress(15, '🔍 步骤 1/5: 检查镜像包格式与磁盘...', '检测 GZIP / TAR 压缩状态与 NVMe 剩余空间');
+          } else if (text.includes('[STEP 2/') || text.includes('解压') || text.includes('pigz') || text.includes('gzip')) {
+            setProgress(35, '📦 步骤 2/5: 正在物理完整解压镜像 TAR 归档...', '利用多核 pigz/gzip 高速解压缩 (预计 30~60 秒)');
           } else if (text.includes('解压完成')) {
-            setProgress(65, '✅ TAR 归档解压完成，准备导入 Docker 引擎...', '已落盘，正在调用 docker load 引擎');
-          } else if (text.includes('[STEP 3/3]') || text.includes('docker load')) {
-            setProgress(75, '⚡ 步骤 3/3: 正在向 Docker 引擎加载镜像层...', '写入 Layer 分层数据与 OCI 格式元数据');
-          } else if (text.includes('Loaded image') || text.includes('ctr') || text.includes('skopeo')) {
-            setProgress(90, '🎉 镜像层加载成功，正在巡检环境权限...', '执行权限配置与开机环境适配');
+            setProgress(50, '✅ TAR 归档解压完成，准备导入 Docker 引擎...', '已落盘，正在调用 docker load 引擎');
+          } else if (text.includes('[STEP 3/') || text.includes('docker load')) {
+            setProgress(65, '⚡ 步骤 3/5: 正在向 Docker 引擎加载镜像层...', '写入 Layer 分层数据与 OCI 格式元数据');
+          } else if (text.includes('[STEP 4/') || text.includes('准备固化启动容器') || text.includes('以固化参数启动容器') || text.includes('正在自动固化启动容器')) {
+            setProgress(80, '🚀 步骤 4/5: 镜像导入成功，正在自动固化启动容器 vsis_g1...', '配置宿主网络、共享内存与硬件直通');
+          } else if (text.includes('[STEP 5/') || text.includes('自动编译') || text.includes('正在进入 vsis_g1 容器编译') || text.includes('正在自动执行机载程序编译')) {
+            setProgress(90, '⚙️ 步骤 5/5: 容器已启动，正在自动编译运控与通信程序...', '执行 make.sh / cmake 原生编译生成 aarch64 二进制');
           } else if (text.includes('[SUCCESS]') || text.includes('🎉')) {
-            setProgress(100, '✅ Docker 镜像导入与环境适配全部完成！', '镜像已成功注册至 Docker，可选择镜像并固化启动');
+            setProgress(100, '✅ 镜像导入、编译与启动全部完成！', 'vsis_g1 容器已成功启动并就绪');
           }
         }, async (ok) => {
           if (ticker) clearInterval(ticker);
           if (btnLoad) {
             btnLoad.disabled = false;
             btnLoad.classList.remove('loading');
-            btnLoad.textContent = '⚡ 执行 docker load';
+            btnLoad.textContent = '⚡ 执行 docker load (导入并启动)';
           }
           if (ok) {
-            setProgress(100, '✅ Docker 镜像安装与导入成功！', '已成功加载至宿主机，请在下方选择镜像固化启动。');
-            this.appendLog('✅ Docker 镜像导入成功！请在左侧选择镜像并点击【固化启动容器】。', false);
-            showToast('✅ Docker 镜像导入成功！', 'success');
+            setProgress(100, '✅ 镜像导入、自动编译与容器启动成功！', 'vsis_g1 容器已处于运行就绪状态。');
+            this.appendLog('✅ 镜像导入成功，已自动完成程序编译并成功启动 vsis_g1 容器！', false);
+            showToast('✅ 镜像导入、编译与启动容器成功！', 'success', 3500);
             await this.loadImages();
             await this.checkAndFixEnvironment();
           } else {
@@ -810,7 +815,7 @@ const TabImage = {
         if (btnLoad) {
           btnLoad.disabled = false;
           btnLoad.classList.remove('loading');
-          btnLoad.textContent = '⚡ 执行 docker load';
+          btnLoad.textContent = '⚡ 执行 docker load (导入并启动)';
         }
         showToast(`启动失败: ${res?.msg || '未知错误'}`, 'error');
       }
@@ -819,7 +824,7 @@ const TabImage = {
       if (btnLoad) {
         btnLoad.disabled = false;
         btnLoad.classList.remove('loading');
-        btnLoad.textContent = '⚡ 执行 docker load';
+        btnLoad.textContent = '⚡ 执行 docker load (导入并启动)';
       }
       showToast(`执行异常: ${err.message}`, 'error');
       this.appendLog(`执行异常: ${err.message}`, true);
@@ -863,8 +868,8 @@ const TabImage = {
       this.appendLog(`✅ Robot ID [${robotId}] 与开机自启动钩子写入成功！`, false);
 
       // 步骤 2 (然后): 固化启动容器 vsis_g1 (不自动执行 run_bg.sh)
-      this.appendLog(`【步骤 2/2 然后执行】正在固化启动容器 vsis_g1 (镜像: ${imgName})...`, false, '🚀');
-      const res = await API.startContainer(imgName);
+      this.appendLog(`【步骤 2/2 然后执行】正在固化启动容器 vsis_g1 (镜像: ${imageName})...`, false, '🚀');
+      const res = await API.startContainer(imageName);
       if (res.success && res.task_id) {
         API.listenStream(res.task_id, (line, isErr) => {
           this.appendLog(line, isErr);
