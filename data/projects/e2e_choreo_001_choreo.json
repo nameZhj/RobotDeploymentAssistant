@@ -1,0 +1,168 @@
+{
+  "scene_id": "e2e_choreo_001",
+  "name": "E2E全链路舞台编排场景",
+  "map_id": "sample_stage",
+  "music_path": "",
+  "music_title": "未配置音乐",
+  "music_duration_s": 120.0,
+  "tracks": [
+    {
+      "robot_id": "A",
+      "name": "机器人 A",
+      "is_group": false
+    },
+    {
+      "robot_id": "B",
+      "name": "机器人 B",
+      "is_group": false
+    },
+    {
+      "robot_id": "group_1",
+      "name": "群组 1",
+      "is_group": true,
+      "members": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ]
+    }
+  ],
+  "init_points": [],
+  "trajectories": [],
+  "track_state": [
+    {
+      "id": "c1",
+      "scene_id": "e2e_choreo_001",
+      "robot_id": 1,
+      "group_id": 0,
+      "no": 0,
+      "type": "action",
+      "name": "站立(FixStand)",
+      "time": 0.0,
+      "start_time": 0.0,
+      "end_time": 3.0,
+      "content": {
+        "clip_id": "c1",
+        "track_id": "track_A",
+        "robot_id": "A",
+        "layer": "active",
+        "asset_id": "act_STAND",
+        "asset_type": "action",
+        "name": "站立(FixStand)",
+        "cmd": "STAND",
+        "start_time": 0.0,
+        "duration": 3.0
+      }
+    },
+    {
+      "id": "c2",
+      "scene_id": "e2e_choreo_001",
+      "robot_id": 2,
+      "group_id": 0,
+      "no": 1,
+      "type": "trajectory",
+      "name": "群体S型机动轨迹",
+      "time": 1.0,
+      "start_time": 1.0,
+      "end_time": 7.5,
+      "content": {
+        "clip_id": "c2",
+        "track_id": "track_group_1",
+        "robot_id": "group_1",
+        "layer": "trajectory",
+        "asset_id": "traj_e2e_swarm",
+        "asset_type": "trajectory",
+        "name": "群体S型机动轨迹",
+        "cmd": "traj_e2e_swarm",
+        "formation_id": "form_e2e_grid",
+        "start_time": 1.0,
+        "duration": 6.5
+      }
+    },
+    {
+      "id": "c3",
+      "scene_id": "e2e_choreo_001",
+      "robot_id": 3,
+      "group_id": 0,
+      "no": 2,
+      "type": "dance",
+      "name": "抖音舞蹈1",
+      "time": 3.5,
+      "start_time": 3.5,
+      "end_time": 8.5,
+      "content": {
+        "clip_id": "c3",
+        "track_id": "track_group_1",
+        "robot_id": "group_1",
+        "layer": "active",
+        "asset_id": "dance_G1_TIKTOK",
+        "asset_type": "dance",
+        "name": "抖音舞蹈1",
+        "cmd": "DANCE,G1_TIKTOK",
+        "start_time": 3.5,
+        "duration": 5.0
+      }
+    }
+  ],
+  "fragments": [
+    {
+      "fragment_id": "c1",
+      "scene_id": "e2e_choreo_001",
+      "name": "站立(FixStand)",
+      "start_time": 0.0,
+      "duration": 3.0,
+      "content_json": {
+        "clip_id": "c1",
+        "track_id": "track_A",
+        "robot_id": "A",
+        "layer": "active",
+        "asset_id": "act_STAND",
+        "asset_type": "action",
+        "name": "站立(FixStand)",
+        "cmd": "STAND",
+        "start_time": 0.0,
+        "duration": 3.0
+      }
+    },
+    {
+      "fragment_id": "c2",
+      "scene_id": "e2e_choreo_001",
+      "name": "群体S型机动轨迹",
+      "start_time": 1.0,
+      "duration": 6.5,
+      "content_json": {
+        "clip_id": "c2",
+        "track_id": "track_group_1",
+        "robot_id": "group_1",
+        "layer": "trajectory",
+        "asset_id": "traj_e2e_swarm",
+        "asset_type": "trajectory",
+        "name": "群体S型机动轨迹",
+        "cmd": "traj_e2e_swarm",
+        "formation_id": "form_e2e_grid",
+        "start_time": 1.0,
+        "duration": 6.5
+      }
+    },
+    {
+      "fragment_id": "c3",
+      "scene_id": "e2e_choreo_001",
+      "name": "抖音舞蹈1",
+      "start_time": 3.5,
+      "duration": 5.0,
+      "content_json": {
+        "clip_id": "c3",
+        "track_id": "track_group_1",
+        "robot_id": "group_1",
+        "layer": "active",
+        "asset_id": "dance_G1_TIKTOK",
+        "asset_type": "dance",
+        "name": "抖音舞蹈1",
+        "cmd": "DANCE,G1_TIKTOK",
+        "start_time": 3.5,
+        "duration": 5.0
+      }
+    }
+  ]
+}

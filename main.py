@@ -67,6 +67,8 @@ class StudioWindowManager:
         from PySide6.QtCore import QObject, Signal
         from src.ui.windows.main_studio_window import MainStudioWindow
 
+        app_inst.setQuitOnLastWindowClosed(False)
+
         class _LauncherBridge(QObject):
             request_show = Signal(object, object, object)
 
@@ -75,7 +77,16 @@ class StudioWindowManager:
 
         def _handle_show(s_mgr: Any, d_upd: Any, s_chan: Any) -> None:
             try:
-                if self._window is None:
+                is_alive = False
+                if self._window is not None:
+                    try:
+                        _ = self._window.isVisible()
+                        is_alive = True
+                    except (RuntimeError, AttributeError):
+                        is_alive = False
+                        self._window = None
+
+                if not is_alive:
                     self._window = MainStudioWindow(
                         serial_manager=s_mgr,
                         dance_updater=d_upd,
@@ -94,9 +105,10 @@ class StudioWindowManager:
 
     def _run_qt_event_loop(self) -> None:
         from PySide6.QtWidgets import QApplication
-        from src.ui.theme.fusion_dark_theme import apply_fusion_dark_theme
+        from src.ui.theme.uniuni_inspired_theme import apply_uniuni_theme
         self._app = QApplication.instance() or QApplication(sys.argv)
-        apply_fusion_dark_theme(self._app)
+        self._app.setQuitOnLastWindowClosed(False)
+        apply_uniuni_theme(self._app)
         self._init_bridge(self._app)
         self._app.exec()
 

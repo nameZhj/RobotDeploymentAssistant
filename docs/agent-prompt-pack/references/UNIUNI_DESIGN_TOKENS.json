@@ -1,0 +1,57 @@
+{
+  "source": ".agent_workspace/out_src/out/renderer/assets/index-BLeFS3an.css",
+  "verified": true,
+  "colors": {
+    "base": "#0b0c0f",
+    "canvas": "#060708",
+    "panel": "#101114",
+    "card": "#15161a",
+    "control": "#191a20",
+    "control_hover": "#20222a",
+    "text_1": "#e4e6ea",
+    "text_2": "#9ba0aa",
+    "text_3": "#6a6f78",
+    "accent": "#2e7bf7",
+    "accent_hover": "#4a8df9",
+    "accent_active": "#2268db",
+    "accent_bright": "#6fa3ff",
+    "ok": "#2bb673",
+    "warn": "#f0a228",
+    "danger": "#ee4d5a",
+    "line": "rgba(236,239,243,0.1)",
+    "line_strong": "rgba(236,239,243,0.18)"
+  },
+  "dimensions_px": {
+    "titlebar_height": 40,
+    "statusbar_height": 24,
+    "toolbar_height": 40,
+    "button_height": 32,
+    "button_small_height": 28,
+    "button_xsmall_height": 24,
+    "map_nav_width": 220,
+    "trajectory_robot_panel_width": 260,
+    "trajectory_task_panel_width": 310,
+    "motion_crop_toolbar_width": 90,
+    "trajectory_body_gap": 8,
+    "task_panel_header_height": 40
+  },
+  "spacing_px": [
+    4,
+    8,
+    12,
+    16,
+    24,
+    32
+  ],
+  "radius_px": {
+    "control": 4,
+    "button": 6,
+    "card": 8
+  },
+  "font_sizes_px": {
+    "xs": 11,
+    "sm": 12,
+    "md": 13,
+    "lg": 15
+  }
+}

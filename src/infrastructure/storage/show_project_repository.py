@@ -16,7 +16,7 @@ from src.domain.project.show_project import (
 )
 
 logger = logging.getLogger("ShowProjectRepository")
-DEFAULT_DB_PATH = os.path.join("runtime", "shows", "studio_data.db")
+DEFAULT_DB_PATH = os.path.join("data", "choreo_database.db")
 
 DDL_INIT_SCRIPT = """
 CREATE TABLE IF NOT EXISTS show_projects (

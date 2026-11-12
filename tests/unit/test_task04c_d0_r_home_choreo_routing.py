@@ -15,7 +15,10 @@ from main import _studio_manager, launch_studio_window
 from src.ui.choreo_page.group_trajectory_workspace import GroupTrajectoryWorkspace
 from src.ui.choreo_page.stage_canvas_2d import StageCanvas2D
 from src.ui.windows.main_studio_window import MainStudioWindow
-from src.ui.windows.studio_main_window import StudioMainWindow
+try:
+    from src.ui.windows.studio_main_window import StudioMainWindow
+except ImportError:
+    StudioMainWindow = None
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -71,7 +74,9 @@ def test_04_opened_window_is_not_historical_error_page(qapp):
     _studio_manager.ensure_qt_running()
     launch_studio_window()
     win = _studio_manager._window
-    assert not isinstance(win, StudioMainWindow)
+    if StudioMainWindow is not None:
+        assert not isinstance(win, StudioMainWindow)
+    assert win.__class__.__name__ != "StudioMainWindow"
     assert not hasattr(win, "page_monitor")
     assert not hasattr(win, "page_map")
 

@@ -4,13 +4,14 @@
 @exports: StageMapSqliteAdapter, atomic_copy_pcd
 """
 import contextlib
+import json
 import os
 import sqlite3
 import time
 from typing import Generator, List, Optional
 from src.domain.map.stage_map_asset import StageMapAsset
 
-DEFAULT_DB_PATH = os.path.join("runtime", "shows", "studio_data.db")
+DEFAULT_DB_PATH = os.path.join("data", "choreo_database.db")
 
 
 def atomic_copy_pcd(src_path: str, dest_dir: str = "runtime/stage_maps") -> str:
@@ -88,10 +89,17 @@ class StageMapSqliteAdapter:
                     resolution REAL DEFAULT 0.05,
                     width INTEGER DEFAULT 0,
                     height INTEGER DEFAULT 0,
+                    sha256 TEXT DEFAULT '',
+                    pcd_encoding TEXT DEFAULT 'ascii',
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 )
             """)
+            existing_cols = [c[1] for c in conn.execute("PRAGMA table_info(stage_maps)").fetchall()]
+            if "sha256" not in existing_cols:
+                conn.execute("ALTER TABLE stage_maps ADD COLUMN sha256 TEXT DEFAULT '';")
+            if "pcd_encoding" not in existing_cols:
+                conn.execute("ALTER TABLE stage_maps ADD COLUMN pcd_encoding TEXT DEFAULT 'ascii';")
             conn.commit()
 
     def save_map(self, asset: StageMapAsset) -> None:
@@ -101,14 +109,40 @@ class StageMapSqliteAdapter:
                     map_id, name, file_path, file_size_bytes, point_count,
                     min_x, max_x, min_y, max_y, min_z, max_z,
                     origin_x, origin_y, resolution, width, height,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    sha256, pcd_encoding, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 asset.map_id, asset.name, asset.file_path, asset.file_size_bytes, asset.point_count,
                 asset.min_x, asset.max_x, asset.min_y, asset.max_y, asset.min_z, asset.max_z,
                 asset.origin_x, asset.origin_y, asset.resolution, asset.width, asset.height,
+                getattr(asset, "sha256", ""), getattr(asset, "pcd_encoding", "ascii"),
                 asset.created_at, asset.updated_at
             ))
+            try:
+                bounds_json = json.dumps({
+                    "min_x": asset.min_x, "max_x": asset.max_x,
+                    "min_y": asset.min_y, "max_y": asset.max_y,
+                    "min_z": asset.min_z, "max_z": asset.max_z,
+                })
+                origin_pose_json = json.dumps({
+                    "x": asset.origin_x, "y": asset.origin_y, "z": 0.0, "yaw": 0.0
+                })
+                conn.execute("""
+                    INSERT OR REPLACE INTO maps (
+                        map_id, display_name, file_uri, source_filename, format, encoding,
+                        point_count, width, height, resolution, bounds_json, origin_pose_json,
+                        sha256, file_size_bytes, import_state, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, 'PCD', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    asset.map_id, asset.name, asset.file_path, os.path.basename(asset.file_path),
+                    getattr(asset, "pcd_encoding", "ASCII").upper(), asset.point_count,
+                    asset.width, asset.height, asset.resolution, bounds_json, origin_pose_json,
+                    getattr(asset, "sha256", ""), asset.file_size_bytes,
+                    getattr(asset, "import_status", "READY"),
+                    str(asset.created_at), str(asset.updated_at)
+                ))
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
 
     def get_map(self, map_id: str) -> Optional[StageMapAsset]:
@@ -124,6 +158,10 @@ class StageMapSqliteAdapter:
     def delete_map(self, map_id: str) -> bool:
         with self.get_connection() as conn:
             cur = conn.execute("DELETE FROM stage_maps WHERE map_id = ?", (map_id,))
+            try:
+                conn.execute("DELETE FROM maps WHERE map_id = ?", (map_id,))
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
             return cur.rowcount > 0
 
@@ -134,31 +172,16 @@ class StageMapSqliteAdapter:
         if not map_asset:
             return False
         with self.get_connection() as conn:
-            try:
-                row = conn.execute(
-                    "SELECT COUNT(*) FROM scenes WHERE pcd_path = ?",
-                    (map_asset.file_path,)
-                ).fetchone()
-                if row and row[0] > 0:
-                    return True
-            except sqlite3.OperationalError:
-                pass
-            try:
-                row_proj = conn.execute(
-                    "SELECT COUNT(*) FROM show_projects WHERE current_map_id = ?",
-                    (map_id,)
-                ).fetchone()
-                if row_proj and row_proj[0] > 0:
-                    return True
-            except sqlite3.OperationalError:
-                pass
-            try:
-                row_traj = conn.execute(
-                    "SELECT COUNT(*) FROM trajectories WHERE map_id = ?",
-                    (map_id,)
-                ).fetchone()
-                if row_traj and row_traj[0] > 0:
-                    return True
-            except sqlite3.OperationalError:
-                pass
+            for query in [
+                ("SELECT COUNT(*) FROM scenes WHERE active_map_id = ?", (map_id,)),
+                ("SELECT COUNT(*) FROM scenes WHERE pcd_path = ?", (map_asset.file_path,)),
+                ("SELECT COUNT(*) FROM show_projects WHERE current_map_id = ?", (map_id,)),
+                ("SELECT COUNT(*) FROM trajectories WHERE map_id = ?", (map_id,)),
+            ]:
+                try:
+                    row = conn.execute(query[0], query[1]).fetchone()
+                    if row and row[0] > 0:
+                        return True
+                except sqlite3.OperationalError:
+                    pass
         return False

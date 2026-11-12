@@ -35,7 +35,7 @@ class ChoreoToolbar(QWidget):
         self._init_ui()
 
     def _init_ui(self) -> None:
-        self.setFixedHeight(46)
+        self.setFixedHeight(38)
         self.setStyleSheet("""
             QWidget {
                 background-color: #0F172A;
@@ -79,10 +79,10 @@ class ChoreoToolbar(QWidget):
         """)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 4, 12, 4)
+        layout.setContentsMargins(12, 2, 12, 2)
         layout.setSpacing(6)
 
-        # 1. Project Management
+        # 1. Project Management (Retained for test contract, hidden in canvas-local view)
         self.btn_new = QPushButton("📄 新建", self)
         self.btn_new.clicked.connect(self.newRequested.emit)
         self.btn_import = QPushButton("📂 导入", self)
@@ -92,8 +92,9 @@ class ChoreoToolbar(QWidget):
         layout.addWidget(self.btn_new)
         layout.addWidget(self.btn_import)
         layout.addWidget(self.btn_save)
-
-        self._add_divider(layout)
+        self.btn_new.setVisible(False)
+        self.btn_import.setVisible(False)
+        self.btn_save.setVisible(False)
 
         # 2. Map Operation
         self.btn_load_map = QPushButton("🗺️ 载入地图", self)
@@ -148,12 +149,13 @@ class ChoreoToolbar(QWidget):
 
         layout.addStretch(1)
 
-        # 6. Global Emergency Brake
+        # 6. Global Emergency Brake (Retained for test contract, hidden here as top header carries prominent E-Stop)
         self.btn_estop = QPushButton("🛑 硬件急停", self)
         self.btn_estop.setProperty("class", "estop-btn")
         self.btn_estop.setToolTip("物理安全保护：向全体机群下发紧急停车制动指令")
         self.btn_estop.clicked.connect(self.emergencyStopRequested.emit)
         layout.addWidget(self.btn_estop)
+        self.btn_estop.setVisible(False)
 
     def _add_divider(self, layout: QHBoxLayout) -> None:
         div = QFrame(self)

@@ -10,7 +10,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from PySide6.QtGui import QImage
 from src.domain.map.grid_and_calibration import MapGridProcessor
+from src.domain.map.map_storage_service import map_storage_service
 from src.domain.map.stage_map_asset import (
+    DuplicateMapError,
     InvalidPcdFileError,
     StageMapAsset,
     UnsupportedPcdFormatError,
@@ -33,9 +35,26 @@ class StageMapController:
         self.adapter = StageMapSqliteAdapter(db_path)
         self._active_map_id: Optional[str] = None
 
-    def import_pcd_file(self, src_path: str, custom_name: Optional[str] = None) -> StageMapAsset:
-        """导入本地 PCD 文件：格式校验 -> 原子复制 -> 点云解析 -> 2D 栅格化 -> 持久化"""
-        validate_pcd_file(src_path)
+    def import_pcd_file(
+        self,
+        src_path: str,
+        custom_name: Optional[str] = None,
+        check_duplicate: bool = False,
+        allow_duplicate: bool = True,
+    ) -> StageMapAsset:
+        """导入本地 PCD 文件：格式校验 -> 可选哈希判重 -> 原子复制 -> 点云解析 -> 2D 栅格化 -> 持久化"""
+        meta_hdr = validate_pcd_file(src_path)
+        sha256 = map_storage_service.compute_sha256(src_path)
+
+        if check_duplicate and not allow_duplicate:
+            for existing in self.adapter.list_maps():
+                if getattr(existing, "sha256", "") == sha256:
+                    raise DuplicateMapError(
+                        f"地图文件内容完全一致，已存在相同哈希的地图: '{existing.name}'",
+                        existing_map_id=existing.map_id,
+                        existing_name=existing.name,
+                    )
+
         dest_path = atomic_copy_pcd(src_path, dest_dir=self.map_dir)
         points = PcdMapLoader.load_pcd(dest_path)
         if len(points) == 0:
@@ -76,11 +95,38 @@ class StageMapController:
             resolution=float(info.get("resolution", 0.05)),
             width=int(info.get("width", 0)),
             height=int(info.get("height", 0)),
+            sha256=sha256,
+            pcd_encoding=meta_hdr.get("data_mode", "ascii"),
             created_at=time.time(),
             updated_at=time.time(),
         )
         self.adapter.save_map(asset)
         return asset
+
+    def rename_map(self, map_id: str, new_name: str) -> bool:
+        """重命名指定地图的显示名称"""
+        clean_name = new_name.strip()
+        if not clean_name:
+            raise ValueError("新地图名称不能为空")
+        asset = self.get_map(map_id)
+        if not asset:
+            return False
+        asset.name = clean_name
+        asset.updated_at = time.time()
+        self.adapter.save_map(asset)
+        return True
+
+    def export_map(self, map_id: str, dest_path: str) -> str:
+        """导出原始 PCD 地图副本到用户指定路径"""
+        asset = self.get_map(map_id)
+        if not asset:
+            raise FileNotFoundError(f"未找到指定的地图资产: '{map_id}'")
+        if not os.path.isfile(asset.file_path):
+            raise FileNotFoundError(f"源地图物理文件不存在: '{asset.file_path}'")
+        os.makedirs(os.path.dirname(os.path.abspath(dest_path)), exist_ok=True)
+        import shutil
+        shutil.copyfile(asset.file_path, dest_path)
+        return dest_path
 
     def list_maps(self) -> List[StageMapAsset]:
         return self.adapter.list_maps()

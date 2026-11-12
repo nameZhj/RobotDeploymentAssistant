@@ -1,0 +1,46 @@
+{
+  "formation_id": "form_e2e_grid",
+  "name": "2x2 网格阵型",
+  "type": "grid",
+  "center": {
+    "x": 0.0,
+    "y": 0.0,
+    "yaw": 0.0
+  },
+  "params": {
+    "spacing": 1.2,
+    "rows": 2,
+    "cols": 2,
+    "radius": 1.5
+  },
+  "members": [
+    {
+      "robot_id": "A",
+      "seq": 0,
+      "offset_x": 0.6,
+      "offset_y": -0.6,
+      "offset_yaw": 0.0
+    },
+    {
+      "robot_id": "B",
+      "seq": 1,
+      "offset_x": 0.6,
+      "offset_y": 0.6,
+      "offset_yaw": 0.0
+    },
+    {
+      "robot_id": "C",
+      "seq": 2,
+      "offset_x": -0.6,
+      "offset_y": -0.6,
+      "offset_yaw": 0.0
+    },
+    {
+      "robot_id": "D",
+      "seq": 3,
+      "offset_x": -0.6,
+      "offset_y": 0.6,
+      "offset_yaw": 0.0
+    }
+  ]
+}

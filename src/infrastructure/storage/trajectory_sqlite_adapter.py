@@ -167,16 +167,16 @@ class TrajectorySqliteAdapter:
         keys = row.keys() if hasattr(row, "keys") else [d[0] for d in row.description]
         raw_json = row["asset_json"] if "asset_json" in keys else None
 
+        tid = str(row["trajectory_id"] if "trajectory_id" in keys else row["traj_id"])
         if raw_json and isinstance(raw_json, str) and raw_json.strip():
             try:
                 data = json.loads(raw_json)
                 if isinstance(data, dict):
                     return TrajectoryAsset.from_dict(data)
             except Exception as e:
-                raise ValueError(f"轨迹 '{row['traj_id']}' 的 asset_json 数据已损坏: {e}")
+                raise ValueError(f"轨迹 '{tid}' 的 asset_json 数据已损坏: {e}")
 
         # 历史记录兼容路径（旧字段: waypoints_json, duration, name）
-        tid = str(row["traj_id"])
         name = str(row["name"])
         wps_raw = str(row["waypoints_json"] if "waypoints_json" in keys else "[]")
         ctrl_pts = cls._parse_legacy_control_points(wps_raw)
@@ -237,7 +237,9 @@ class TrajectorySqliteAdapter:
                 try:
                     assets.append(cls.row_to_asset(r))
                 except Exception as e:
-                    logger.warning(f"跳过损坏轨迹 {r['traj_id']}: {e}")
+                    r_keys = r.keys() if hasattr(r, "keys") else []
+                    tid = r["trajectory_id"] if "trajectory_id" in r_keys else (r["traj_id"] if "traj_id" in r_keys else "unknown")
+                    logger.warning(f"跳过损坏轨迹 {tid}: {e}")
             return assets
 
     @classmethod

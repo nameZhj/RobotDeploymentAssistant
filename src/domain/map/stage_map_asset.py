@@ -1,7 +1,7 @@
 """
 @file: src/domain/map/stage_map_asset.py
 @brief: 本地 PCD 舞台地图素材资产领域模型、格式校验异常与解析校验器
-@exports: StageMapAsset, UnsupportedPcdFormatError, InvalidPcdFileError, validate_pcd_file
+@exports: StageMapAsset, UnsupportedPcdFormatError, InvalidPcdFileError, DuplicateMapError, validate_pcd_file
 """
 from dataclasses import dataclass, field
 import os
@@ -17,6 +17,14 @@ class UnsupportedPcdFormatError(ValueError):
 class InvalidPcdFileError(ValueError):
     """PCD 文件无效、损坏、空文件或非 PCD 格式"""
     pass
+
+
+class DuplicateMapError(ValueError):
+    """PCD 地图文件哈希重复已存在"""
+    def __init__(self, message: str, existing_map_id: str, existing_name: str) -> None:
+        super().__init__(message)
+        self.existing_map_id = existing_map_id
+        self.existing_name = existing_name
 
 
 @dataclass

@@ -20,6 +20,8 @@ def qapp():
 @pytest.fixture
 def canvas(qapp):
     widget = StageCanvas2D()
+    widget.set_robots([{"id": "A", "pos": (-2.0, 0.0)}, {"id": "B", "pos": (2.0, 0.0)}])
+    widget.select_robot("A")
     widget.resize(800, 600)
     return widget
 

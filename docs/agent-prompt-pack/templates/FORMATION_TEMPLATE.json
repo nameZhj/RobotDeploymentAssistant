@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "formation_id": "example-formation",
+  "scene_id": "example-scene",
+  "name": "Example formation",
+  "layout_type": "LINE",
+  "coordinate_frame_id": "map",
+  "distance_unit": "m",
+  "angle_unit": "rad",
+  "anchor_pose": {
+    "x": 0.0,
+    "y": 0.0,
+    "yaw": 0.0
+  },
+  "parameters": {
+    "spacing_m": 1.0,
+    "centered": true
+  },
+  "member_order": [
+    "robot-1",
+    "robot-2"
+  ],
+  "member_offsets": {
+    "robot-1": {
+      "slot_id": "slot-1",
+      "x": -0.5,
+      "y": 0.0,
+      "yaw": 0.0
+    },
+    "robot-2": {
+      "slot_id": "slot-2",
+      "x": 0.5,
+      "y": 0.0,
+      "yaw": 0.0
+    }
+  },
+  "revision": 1
+}

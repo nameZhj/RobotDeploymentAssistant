@@ -80,11 +80,11 @@ class StageDockLeftPanel(QWidget):
         vbox_scene = QVBoxLayout(grp_scene)
         vbox_scene.setSpacing(4)
         self.lbl_scene_name = self._make_row(vbox_scene, "场景名称:", "默认演播舞台")
-        self.lbl_map_file = self._make_row(vbox_scene, "地图文件:", "default_stage.pcd")
+        self.lbl_map_file = self._make_row(vbox_scene, "地图文件:", "未载入")
         self.lbl_dimensions = self._make_row(vbox_scene, "场景尺寸:", "20.0m × 20.0m")
         self.lbl_resolution = self._make_row(vbox_scene, "栅格精度:", "0.05m")
         self.lbl_origin = self._make_row(vbox_scene, "舞台原点:", "(0.0, 0.0)")
-        self.lbl_status = self._make_row(vbox_scene, "地图状态:", "就绪 (Ready)")
+        self.lbl_status = self._make_row(vbox_scene, "地图状态:", "未载入 (等待导入PCD)")
         layout.addWidget(grp_scene)
 
         # 2. Area B: 机器人站位列表 (Robot Spawns)
@@ -104,8 +104,7 @@ class StageDockLeftPanel(QWidget):
         self.lbl_pose_x = self._make_row(vbox_pose, "站位 X:", "0.00 m")
         self.lbl_pose_y = self._make_row(vbox_pose, "站位 Y:", "0.00 m")
         self.lbl_pose_yaw = self._make_row(vbox_pose, "朝向 Yaw:", "0.00°")
-
-        lbl_lock = QLabel("🔒 Phase 03: 只读监视 (待事务层就绪)", grp_pose)
+        lbl_lock = QLabel("🔒 初始位姿：只读监视", grp_pose)
         lbl_lock.setStyleSheet("color: #F59E0B; font-size: 10px; font-weight: 600; padding-top: 4px;")
         vbox_pose.addWidget(lbl_lock)
         layout.addWidget(grp_pose)

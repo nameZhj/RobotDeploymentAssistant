@@ -9,7 +9,7 @@ import sqlite3
 from typing import Any, Dict, Generator, List, Optional
 from src.domain.timeline.timeline_clip_asset import TimelineClipAsset
 
-DEFAULT_DB_PATH = os.path.join("runtime", "shows", "studio_data.db")
+DEFAULT_DB_PATH = os.path.join("data", "choreo_database.db")
 
 
 class TimelineClipSqliteAdapter:

@@ -6,10 +6,10 @@
 from dataclasses import dataclass, field
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
-    QDragEnterEvent, QDragMoveEvent, QDropEvent, QPainter,
+    QColor, QDragEnterEvent, QDragMoveEvent, QDropEvent, QPainter,
 )
 from PySide6.QtWidgets import QWidget
 from src.application.stage_director.timeline_choreo_controller import (
@@ -65,14 +65,9 @@ class DualLayerTimelineCanvas(QWidget):
         self._current_time_ms = 0
         self._track_height = 56
         self._ruler_height = 28
-        self._tracks = [
-            {"id": "1", "name": "🤖 Robot_1 (A)"},
-            {"id": "2", "name": "🤖 Robot_2 (B)"},
-            {"id": "GROUP", "name": "👥 群组编队 (Group)"},
-        ]
-
+        self._tracks: List[Dict[str, Any]] = []
         self._blocks: List[TimelineBlock] = []
-        self._barriers: List[BarrierMarker] = [BarrierMarker("BARRIER_9001", 5000, ["1", "2"])]
+        self._barriers: List[BarrierMarker] = []
         self._is_dragging_cursor = False
         self._dragged_block: Optional[TimelineBlock] = None
         self._resizing_block: Optional[TimelineBlock] = None
@@ -107,15 +102,17 @@ class DualLayerTimelineCanvas(QWidget):
         self._px_per_sec = 80.0 * (max(50, min(300, percent)) / 100.0)
         self.update()
 
-    def set_current_time_ms(self, time_ms: int, notify: bool = True) -> None:
-        self._current_time_ms = max(0, time_ms)
-        if notify:
-            self.cursorMoved.emit(self._current_time_ms)
+    def set_tracks(self, tracks: Sequence[Dict[str, Any]]) -> None:
+        self._tracks = [dict(t) for t in tracks]
+        self.update()
+
+    def set_barriers(self, barriers: Sequence[BarrierMarker]) -> None:
+        self._barriers = list(barriers)
         self.update()
 
     # --- 拖放接收机制 (Drag & Drop) ---
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        if event.mimeData().hasFormat("application/x-choreo-asset") or event.mimeData().hasText():
+        if event.mimeData().hasFormat("application/x-choreo-asset") or event.mimeData().hasFormat("application/x-robo-choreo-asset") or event.mimeData().hasText():
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -125,12 +122,14 @@ class DualLayerTimelineCanvas(QWidget):
 
     def dropEvent(self, event: QDropEvent) -> None:
         asset_dict: Dict[str, Any] = {}
-        if event.mimeData().hasFormat("application/x-choreo-asset"):
-            try:
-                raw = bytes(event.mimeData().data("application/x-choreo-asset"))
-                asset_dict = json.loads(raw.decode("utf-8"))
-            except Exception:
-                pass
+        for m_type in ("application/x-robo-choreo-asset", "application/x-choreo-asset"):
+            if event.mimeData().hasFormat(m_type):
+                try:
+                    raw = bytes(event.mimeData().data(m_type))
+                    asset_dict = json.loads(raw.decode("utf-8"))
+                    break
+                except Exception:
+                    pass
         if not asset_dict and event.mimeData().hasText():
             txt = event.mimeData().text()
             parts = txt.split(":")
@@ -176,6 +175,11 @@ class DualLayerTimelineCanvas(QWidget):
         TimelineCanvasRenderer.draw_barriers(p, self._barriers, self._ruler_height, self._px_per_sec, h)
         TimelineCanvasRenderer.draw_ruler(p, self._ruler_height, self._px_per_sec, w)
         TimelineCanvasRenderer.draw_cursor(p, self._current_time_ms, self._px_per_sec, h)
+        if not self._tracks:
+            p.save(); p.setPen(QColor("#475569"))
+            f = p.font(); f.setPointSize(11); f.setBold(True); p.setFont(f)
+            p.drawText(self.rect(), Qt.AlignCenter, "暂无编排轨道 (等待载入工程或添加机器人)")
+            p.restore()
 
     # --- 鼠标与键盘交互 (选择 / 移动 / 时长拉伸 / 删除 / 撤销) ---
     def mousePressEvent(self, event) -> None:

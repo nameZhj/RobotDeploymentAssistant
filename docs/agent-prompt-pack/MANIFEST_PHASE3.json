@@ -1,0 +1,78 @@
+{
+  "name": "RDA Prompt Pack Phase 3",
+  "version": "3.0.0-phase3",
+  "root": "docs/agent-prompt-pack/",
+  "scope": "Prompts 00-06; prompts 07-12 are not yet rewritten",
+  "files": [
+    {
+      "path": "docs/agent-prompt-pack/PHASE3_CHANGELOG.md",
+      "size_bytes": 402,
+      "sha256": "814f1b859de2b2086ef5c189c93c7d194f5daecff97ed110fdabf755d3992e75"
+    },
+    {
+      "path": "docs/agent-prompt-pack/PROMPT_INDEX_阶段3更新.md",
+      "size_bytes": 3302,
+      "sha256": "59f3a817cd861621acccc10d40eb5f63dc50ab86ff5e75aa710e6794a4048144"
+    },
+    {
+      "path": "docs/agent-prompt-pack/prompts/00_BOOTSTRAP_AND_AUDIT.md",
+      "size_bytes": 27125,
+      "sha256": "36973f578838b0d8226bf6874ce240b3703a9ac815e8feafc2a81452b2edce58"
+    },
+    {
+      "path": "docs/agent-prompt-pack/prompts/01_GIT_COMPATIBILITY_AND_SAFE_CLEANUP.md",
+      "size_bytes": 9940,
+      "sha256": "3ae5c86a2c7bfd29506e7c1665e52adf64c52eb71ca59bdeb5bf204fa2e0f677"
+    },
+    {
+      "path": "docs/agent-prompt-pack/prompts/02_ARCHITECTURE_AND_TECH_DECISIONS.md",
+      "size_bytes": 10209,
+      "sha256": "65eb04732322a4eef2d5651c579de08461212370da4dc7d8fbc9c2081ec66215"
+    },
+    {
+      "path": "docs/agent-prompt-pack/prompts/03_UX_DESIGN_SYSTEM_AND_APP_SHELL.md",
+      "size_bytes": 17136,
+      "sha256": "a3eed4f2d7981406593734f35b5a9b831352323b3a2540f1321d0229c3bc7dde"
+    },
+    {
+      "path": "docs/agent-prompt-pack/prompts/04_DOMAIN_MODELS_SQLITE_PERSISTENCE.md",
+      "size_bytes": 15356,
+      "sha256": "2d72ec5fc1dace817cf504334352ae023b76ae8e9e3c1a6bd2cf16bfee81d6a5"
+    },
+    {
+      "path": "docs/agent-prompt-pack/prompts/05_MAP_MANAGEMENT_PCD_IMPORT_AND_RENDERING.md",
+      "size_bytes": 13357,
+      "sha256": "6aa69084f6ba4f8cb3cd83f518f8a769f1cb6e021f1d14e76571d20c9b09182c"
+    },
+    {
+      "path": "docs/agent-prompt-pack/prompts/06_2D_TRAJECTORY_EDITOR_AND_PERSISTENCE.md",
+      "size_bytes": 14159,
+      "sha256": "80a411de83408bbb35a73591845621d63159c5ee1164cdcde44d441d2d51017b"
+    },
+    {
+      "path": "docs/agent-prompt-pack/references/RDA_舞台编导现状代码审计.md",
+      "size_bytes": 11778,
+      "sha256": "50147da608f106f3781355c994bc375469beb8518fbb372d417d93aeeabb278f"
+    },
+    {
+      "path": "docs/agent-prompt-pack/references/UNIUNI_1.0.2_界面与交互逆向分析.md",
+      "size_bytes": 19581,
+      "sha256": "72a5400da5d358bd3cf0e9afca16dee1d9eda41290f2a66a2070bb6519e83eee"
+    },
+    {
+      "path": "docs/agent-prompt-pack/references/UNIUNI_DESIGN_TOKENS.json",
+      "size_bytes": 1242,
+      "sha256": "6255001926eed7d63e5c17cf537e943808b518ad70629d9397e054cf2b085347"
+    },
+    {
+      "path": "docs/agent-prompt-pack/templates/DATA_MODEL_FIELD_MATRIX.csv",
+      "size_bytes": 622,
+      "sha256": "eed05acb726457d8a48de12b763333248ab29d6e79910d44db8626618a110d82"
+    },
+    {
+      "path": "docs/agent-prompt-pack/templates/trajectory-v1.example.json",
+      "size_bytes": 766,
+      "sha256": "2918bc38addb6c2c45e3063f1e134bcff7c6bf1f6418e885a39f166333a8642a"
+    }
+  ]
+}

@@ -13,20 +13,9 @@ from src.domain.trajectory.trajectory_asset import TrajectoryAsset
 from src.infrastructure.storage.trajectory_sqlite_adapter import TrajectorySqliteAdapter
 
 
-DEFAULT_DB_PATH = os.path.join("runtime", "shows", "studio_data.db")
+DEFAULT_DB_PATH = os.path.join("data", "choreo_database.db")
 
-DEFAULT_ACTIONS = [
-    ("550502", "POPPING1", "A2-W", 38.62, "assets/motions/550502_popping1.npz"),
-    ("550503", "POPPING2", "A2-W", 25.82, "assets/motions/550503_popping2.npz"),
-    ("550504", "POPPING3", "A2-W", 30.02, "assets/motions/550504_popping3.npz"),
-    ("550506", "芭蕾", "A2-W", 32.02, "assets/motions/550506_ballet.npz"),
-    ("act_g1_kungfu", "G1_太极抱拳", "Unitree_G1", 6.00, "preview/G1_KUNG_FU.npz"),
-    ("act_g1_moonwalk", "G1_太空漫步", "Unitree_G1", 6.00, "preview/G1_MOONWALK.npz"),
-    ("act_g1_tiktok", "G1_流行手势舞", "Unitree_G1", 6.00, "preview/G1_TIKTOK.npz"),
-    ("act_g1_turnjump", "G1_旋转跳跃", "Unitree_G1", 5.00, "preview/G1_TURN_JUMP.npz"),
-    ("act_g2_wave", "G2_机械电流波浪", "Unitree_G1", 5.00, "preview/G2_WAVE.npz"),
-    ("act_g3_cyber", "G3_赛博重节拍", "Unitree_G1", 5.50, "preview/G3_CYBER.npz"),
-]
+DEFAULT_ACTIONS: List[Any] = []
 
 
 class ChoreoSqliteStore:
@@ -34,7 +23,6 @@ class ChoreoSqliteStore:
         self.db_path = db_path or DEFAULT_DB_PATH
         os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
         self._init_tables()
-        self._seed_default_actions()
 
     @contextlib.contextmanager
     def get_connection(self) -> Generator[sqlite3.Connection, None, None]:

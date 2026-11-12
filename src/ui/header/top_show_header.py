@@ -67,10 +67,19 @@ class TopShowHeader(QWidget):
 
         # 1. Project Management (New, Import, Save/Export)
         self.btn_new = QPushButton("📄 新建", self)
+        self.btn_new.setShortcut("Ctrl+N")
+        self.btn_new.setToolTip("新建空编排工程 (Ctrl+N)")
         self.btn_new.clicked.connect(self.newProjectRequested.emit)
+
         self.btn_import = QPushButton("📂 导入", self)
+        self.btn_import.setShortcut("Ctrl+O")
+        self.btn_import.setToolTip("导入工程或轨迹文件 (Ctrl+O)")
         self.btn_import.clicked.connect(self.importProjectRequested.emit)
+
         self.btn_save = QPushButton("💾 保存", self)
+        self.btn_save.setShortcut("Ctrl+S")
+        self.btn_save.setToolTip("保存当前编排工程 (Ctrl+S)")
+        self.btn_save.setProperty("class", "btn-primary")
         self.btn_save.clicked.connect(self.saveProjectRequested.emit)
 
         layout.addWidget(self.btn_new)
@@ -94,28 +103,28 @@ class TopShowHeader(QWidget):
         layout.addStretch(1)
 
         # 3. Global Clock Quality Indicator
-        self.lbl_clock_status = QLabel("⏱️ CLOCK: 质量优 (<20ms)", self)
+        self.lbl_clock_status = QLabel("⏱️ 时钟: 未同步", self)
         self.lbl_clock_status.setStyleSheet("""
             QLabel {
-                color: #34d399;
-                background: rgba(16, 185, 129, 0.15);
-                border: 1px solid #10b981;
+                color: #94a3b8;
+                background: rgba(148, 163, 184, 0.1);
+                border: 1px solid #334155;
                 border-radius: 4px;
                 padding: 4px 10px;
                 font-size: 11px;
-                font-weight: 700;
+                font-weight: 600;
             }
         """)
         layout.addWidget(self.lbl_clock_status)
 
         # 4. T0 Countdown Timer
-        self.lbl_countdown = QLabel("T0: 就绪", self)
+        self.lbl_countdown = QLabel("T0: 待触发", self)
         self.lbl_countdown.setStyleSheet("""
             QLabel {
-                color: #fbbf24;
+                color: #94a3b8;
                 font-family: monospace;
-                font-size: 13px;
-                font-weight: 800;
+                font-size: 12px;
+                font-weight: 700;
                 padding: 4px 8px;
             }
         """)

@@ -15,23 +15,13 @@ from src.ui.choreo_page.map_canvas_renderer import MapCanvasRenderer
 
 logger = logging.getLogger("StageCanvas2D")
 
-DEFAULT_SPAWNS: List[Dict[str, Any]] = [
-    {"id": "A", "name": "Robot_1", "model": "G1", "pos": (-2.0, 0.0), "yaw_deg": 0.0, "color": "#EF4444"},
-    {"id": "B", "name": "Robot_2", "model": "G1", "pos": (2.0, 0.0), "yaw_deg": 180.0, "color": "#10B981"}]
-
 
 class StageCanvas2D(QWidget):
     """2D 舞台平面交互视口，支持向心样条拟合、控制点拖拽编辑、持久化与多机选择"""
 
-    trajectoryFinished = Signal(dict)
-    trajectoryCancelled = Signal()
-    trajectorySelected = Signal(str)
-    trajectoryDeleted = Signal(str)
-    trajectorySaved = Signal(dict)
-    validationFailed = Signal(str)
-    pointAdded = Signal(float, float)
-    robotSelected = Signal(str)
-    mapLoaded = Signal(dict)
+    trajectoryFinished = Signal(dict); trajectoryCancelled = Signal(); trajectorySelected = Signal(str)
+    trajectoryDeleted = Signal(str); trajectorySaved = Signal(dict); validationFailed = Signal(str)
+    pointAdded = Signal(float, float); robotSelected = Signal(str); mapLoaded = Signal(dict)
 
     def __init__(self, parent: Optional[QWidget] = None, controller: Optional[Any] = None, store: Optional[Any] = None) -> None:
         super().__init__(parent)
@@ -47,13 +37,11 @@ class StageCanvas2D(QWidget):
         self._live_spline_points: List[Tuple[float, float]] = []
         self._hover_stage_pos: Optional[Tuple[float, float]] = None
         self._completed_trajectories: List[Dict[str, Any]] = []
-
         self._selected_trajectory_id: Optional[str] = None
         self._backup_trajectory: Optional[Dict[str, Any]] = None
         self._dragging_point_idx: Optional[int] = None
-
-        self._selected_robot_id: Optional[str] = "A"
-        self._robot_spawns: List[Dict[str, Any]] = copy.deepcopy(DEFAULT_SPAWNS)
+        self._selected_robot_id: Optional[str] = None
+        self._robot_spawns: List[Dict[str, Any]] = []
         self._current_poses: Dict[Any, Any] = {}
         self._status_message: Optional[Tuple[str, str, float]] = None
         self._grid_image: Optional[QImage] = None
@@ -77,13 +65,23 @@ class StageCanvas2D(QWidget):
     def stage_to_screen(self, x: float, y: float) -> QPointF:
         return QPointF(self.width() / 2.0 + self._offset_x + x * self._scale, self.height() / 2.0 + self._offset_y - y * self._scale)
 
+    def world_to_screen(self, x: float, y: float) -> QPointF: return self.stage_to_screen(x, y)
+    def screen_to_world(self, px: float, py: float) -> Tuple[float, float]: return self.screen_to_stage((px, py))
+
     def set_draw_mode(self, mode: str) -> None:
         self._draw_mode, self._hover_stage_pos = mode.upper(), None
         self._update_cursor_for_mode(); self.update()
 
+    def set_active_formation(self, form_data: Optional[Dict[str, Any]]) -> None:
+        self._active_formation = form_data; self.update()
     def reset_view(self) -> None:
         self._offset_x, self._offset_y, self._scale = 0.0, 0.0, 20.0; self.update()
-
+    def set_robots(self, robots: Sequence[Dict[str, Any]]) -> None:
+        self._robot_spawns = [dict(r) for r in robots]
+        valid_ids = [str(r.get("id")) for r in self._robot_spawns]
+        if self._selected_robot_id not in valid_ids:
+            self._selected_robot_id = valid_ids[0] if valid_ids else None
+        self.update()
     def select_robot(self, robot_id: str) -> None:
         self._selected_robot_id = str(robot_id); self.robotSelected.emit(str(robot_id)); self.update()
 
@@ -117,8 +115,7 @@ class StageCanvas2D(QWidget):
 
     def delete_waypoint_from_trajectory(self, traj_id: str, index: int) -> bool:
         ok, err = TrajectoryDraftValidator.delete_and_refresh(self._completed_trajectories, traj_id, index)
-        if not ok:
-            self._status_message = (err, "error", time.time()); self.validationFailed.emit(err)
+        if not ok: self._status_message = (err, "error", time.time()); self.validationFailed.emit(err)
         self.update(); return ok
 
     def finish_trajectory(self) -> bool:
@@ -139,8 +136,7 @@ class StageCanvas2D(QWidget):
         self._status_message = (msg, "info" if ok else "error", time.time())
         if ok and item:
             self._backup_trajectory = copy.deepcopy(item); self.trajectorySaved.emit(item)
-        elif not ok:
-            self.validationFailed.emit(msg)
+        elif not ok: self.validationFailed.emit(msg)
         self.update(); return ok
 
     def delete_trajectory(self, traj_id: str) -> bool:
@@ -210,7 +206,13 @@ class StageCanvas2D(QWidget):
         cx, cy = w / 2.0 + self._offset_x, h / 2.0 + self._offset_y
         MapCanvasRenderer.draw_grid_and_axes(p, w, h, cx, cy, self._scale)
         MapCanvasRenderer.draw_occupancy_grid(p, self._grid_image, self._grid_info, cx, cy, self._scale)
-        MapCanvasRenderer.draw_robot_spawns(p, self._robot_spawns, self._selected_robot_id, cx, cy, self._scale, self._current_poses)
+        if self._robot_spawns:
+            MapCanvasRenderer.draw_robot_spawns(p, self._robot_spawns, self._selected_robot_id, cx, cy, self._scale, self._current_poses)
+        elif not self._completed_trajectories and not self._active_waypoints:
+            p.save(); p.setPen(QColor("#475569"))
+            f = p.font(); f.setPointSize(11); f.setBold(True); p.setFont(f)
+            p.drawText(self.rect(), Qt.AlignCenter, "舞台就绪 · 无机器人站位 (等待载入工程或添加机器人)")
+            p.restore()
         for item in self._completed_trajectories:
             is_sel = (self._selected_trajectory_id == str(item.get("id")))
             drag_pt = self._dragging_point_idx if is_sel else None
@@ -276,13 +278,11 @@ class StageCanvas2D(QWidget):
         super().mouseMoveEvent(event)
 
     def leaveEvent(self, event) -> None:
-        if self._hover_stage_pos is not None:
-            self._hover_stage_pos = None; self.update()
+        if self._hover_stage_pos is not None: self._hover_stage_pos = None; self.update()
         super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
-        if event.button() in (Qt.LeftButton, Qt.MiddleButton):
-            self._is_panning, self._dragging_point_idx = False, None
+        if event.button() in (Qt.LeftButton, Qt.MiddleButton): self._is_panning, self._dragging_point_idx = False, None
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event: QWheelEvent) -> None:

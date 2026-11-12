@@ -120,7 +120,7 @@ class TimelineLeftToolbar(QFrame):
         top_layout.addWidget(self.btn_save)
 
         self.combo_task = QComboBox(top_bar)
-        self.combo_task.addItems(["默认任务1", "迎宾编舞-A", "矩阵变换-B"])
+        self.combo_task.addItems(["主舞台编排 (Default)"])
         self.combo_task.currentIndexChanged.connect(lambda: self.taskChanged.emit(self.combo_task.currentText()))
         top_layout.addWidget(self.combo_task)
 
@@ -193,13 +193,31 @@ class TimelineLeftToolbar(QFrame):
         self.track_header_layout.setContentsMargins(0, 0, 0, 0)
         self.track_header_layout.setSpacing(0)
 
-        # Default track headers: ID: 1 A2-W 蓝点, ID: 2 A2-W 绿点
-        self.track_header_layout.addWidget(TrackHeaderItem(1, "A2-W Robot_1", "#38BDF8", self.track_header_container))
-        self.track_header_layout.addWidget(TrackHeaderItem(2, "A2-W Robot_2", "#10B981", self.track_header_container))
+        # Track header stack: zero-mock initial state
+        self.lbl_empty_tracks = QLabel("暂无轨道", self.track_header_container)
+        self.lbl_empty_tracks.setStyleSheet("color: #64748B; font-size: 11px; padding: 12px 8px;")
+        self.track_header_layout.addWidget(self.lbl_empty_tracks)
         self.track_header_layout.addStretch(1)
 
         body_layout.addWidget(self.track_header_container)
         root_layout.addWidget(body, 1)
+
+    def set_tracks(self, tracks: Any) -> None:
+        while self.track_header_layout.count():
+            item = self.track_header_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        if not tracks:
+            self.lbl_empty_tracks = QLabel("暂无轨道", self.track_header_container)
+            self.lbl_empty_tracks.setStyleSheet("color: #64748B; font-size: 11px; padding: 12px 8px;")
+            self.track_header_layout.addWidget(self.lbl_empty_tracks)
+        else:
+            palette = ["#38BDF8", "#10B981", "#F59E0B", "#EC4899", "#8B5CF6"]
+            for idx, trk in enumerate(tracks):
+                color = palette[idx % len(palette)]
+                name = trk.get("name", f"Track {idx + 1}")
+                self.track_header_layout.addWidget(TrackHeaderItem(idx + 1, name, color, self.track_header_container))
+        self.track_header_layout.addStretch(1)
 
     def _on_play_toggled(self, checked: bool) -> None:
         self.btn_play.setText("⏸ 暂停" if checked else "▷ 播放")

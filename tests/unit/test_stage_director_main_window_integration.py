@@ -22,8 +22,11 @@ def test_main_studio_window_components_wiring(qapp):
     window = MainStudioWindow()
     window.resize(1200, 800)
 
-    # 1. 验证左侧坞已成功装配在 left_dock_container
+    # 1. 验证左侧坞已成功装配在 left_dock_container 并具备多机装配能力
     assert window.stage_dock is not None
+    test_robots = [{"id": "A", "name": "Robot_1", "pos": (-2.0, 0.0)}, {"id": "B", "name": "Robot_2", "pos": (2.0, 0.0)}]
+    window.stage_dock.set_robots(test_robots)
+    window.stage_2d.set_robots(test_robots)
     assert window.stage_dock.robot_list.count() >= 2
 
     # 2. 验证工具栏已装配

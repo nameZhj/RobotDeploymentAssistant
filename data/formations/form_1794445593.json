@@ -1,0 +1,47 @@
+{
+  "formation_id": "form_1794445593",
+  "name": "4机菱形阵",
+  "type": "line_col",
+  "center": {
+    "x": 0.0,
+    "y": 0.0,
+    "yaw": 0.0
+  },
+  "params": {
+    "spacing": 0.3,
+    "rows": 2,
+    "cols": 2,
+    "radius": 1.5,
+    "facing": "forward"
+  },
+  "members": [
+    {
+      "robot_id": "A",
+      "seq": 0,
+      "offset_x": 3.5,
+      "offset_y": 0.0,
+      "offset_yaw": 0.0
+    },
+    {
+      "robot_id": "B",
+      "seq": 1,
+      "offset_x": 0.15,
+      "offset_y": 0.0,
+      "offset_yaw": 0.0
+    },
+    {
+      "robot_id": "C",
+      "seq": 2,
+      "offset_x": -0.15,
+      "offset_y": 0.0,
+      "offset_yaw": 0.0
+    },
+    {
+      "robot_id": "D",
+      "seq": 3,
+      "offset_x": -0.45,
+      "offset_y": 0.0,
+      "offset_yaw": 0.0
+    }
+  ]
+}

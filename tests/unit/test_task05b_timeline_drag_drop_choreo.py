@@ -262,8 +262,15 @@ def test_11_dual_layer_timeline_canvas_drag_drop(temp_db):
 
 
 def test_12_lib_panels_controller_metadata(temp_db):
+    store = ChoreoSqliteStore(temp_db)
+    with store.get_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO actions (action_id, name, model_type, duration, anim_path) VALUES (?, ?, ?, ?, ?)",
+            ("550502", "POPPING1", "A2-W", 38.62, "assets/motions/550502_popping1.npz"),
+        )
+        conn.commit()
     panel = LibPanelsController(None)
-    panel.store = ChoreoSqliteStore(temp_db)
+    panel.store = store
     panel.refresh_trajectories()
     panel.refresh_actions()
 

@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "trajectory_id": "traj_20261111_001",
+  "name": "1号机主舞台走位",
+  "scene_id": "scene_001",
+  "map_id": "map_001",
+  "target_type": "single | swarm",
+  "target_id": "R01 | group_1",
+  "formation_id": "form_001",
+  "interpolation": "linear | catmull_rom",
+  "max_velocity": 1.2,
+  "control_points": [
+    {"seq": 0, "x": 0.0, "y": 0.0, "yaw": 0.0, "t": 0.0},
+    {"seq": 1, "x": 1.5, "y": 2.0, "yaw": 0.52, "t": 2.5}
+  ],
+  "sampled_points": [
+    {"seq": 0, "x": 0.0, "y": 0.0, "yaw": 0.0, "t": 0.0, "vx": 0.6, "vy": 0.8, "wz": 0.2}
+  ]
+}

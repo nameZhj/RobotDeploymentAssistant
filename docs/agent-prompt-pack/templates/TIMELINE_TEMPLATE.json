@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "timeline_id": "example-timeline",
+  "scene_id": "example-scene",
+  "name": "Example timeline",
+  "duration_ms": 5000,
+  "tracks": [
+    {
+      "track_id": "track-robot-1",
+      "track_type": "ROBOT_TRAJECTORY",
+      "robot_id": "robot-1",
+      "display_order": 0,
+      "muted": false,
+      "locked": false,
+      "clips": [
+        {
+          "clip_id": "clip-trajectory-1",
+          "source_type": "TRAJECTORY",
+          "source_id": "trajectory-1",
+          "start_ms": 0,
+          "duration_ms": 5000,
+          "offset_ms": 0,
+          "playback_rate": 1.0,
+          "enabled": true
+        }
+      ]
+    }
+  ]
+}
