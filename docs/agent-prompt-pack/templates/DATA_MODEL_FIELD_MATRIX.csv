@@ -1,9 +1,0 @@
-entity,field,type,required,unit_or_format,validation,notes
-Scene,scene_id,string,yes,stable-id,unique,Primary key
-Scene,name,string,yes,UTF-8,trimmed non-empty,Display name
-MapAsset,map_id,string,yes,stable-id,unique,Primary key
-MapAsset,file_uri,string,yes,managed-relative-uri,inside-managed-root,No arbitrary absolute path
-MapAsset,sha256,string,yes,hex-64,valid SHA-256,File integrity
-Trajectory,trajectory_id,string,yes,stable-id,unique,Primary key
-Trajectory,waypoints_json,string,yes,versioned-json,domain validator,World coordinates only
-TimelineClip,start_ms,integer,yes,milliseconds,>=0,Timeline-relative offset

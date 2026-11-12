@@ -1,4 +1,0 @@
-"""
-UI layer package definition.
-"""
-

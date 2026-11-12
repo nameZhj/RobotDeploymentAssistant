@@ -1,4 +1,0 @@
-"""
-Core layer package definition.
-"""
-
