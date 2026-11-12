@@ -59,7 +59,7 @@ docs/
 - Skill 的唯一仓库路径是 `.agent_workspace/skills/robot-deployment-assistant/SKILL.md`，注意是单数目录 `.agent_workspace`，不是 `.agents`。
 - 当前 Prompt 包的唯一根目录是 `docs/RDA_ClientStudio_PromptPack_V2/`。
 - 阶段 Prompt 的唯一目录是 `docs/RDA_ClientStudio_PromptPack_V2/prompts/`。
-- 工程状态、审计证据和 ADR 分别放在本 Prompt 包根目录下的 `state/`、`audit/`、`adr/`，不得另行创建旧目录 `docs/RDA_ClientStudio_PromptPack_V2/`。
+- 工程状态、审计证据和 ADR 分别放在本 Prompt 包根目录下的 `state/`、`audit/`、`adr/`；不得另行创建旧目录 `docs/agent-prompt-pack/`，也不得禁止或另建当前 Prompt Pack 的正式根目录。
 - Prompt 包内文件相互引用时，执行 Agent 必须以仓库根目录为基准解析上述路径；不得依赖 IDE 当前工作目录或终端当前目录碰巧位于 Prompt 包内部。
 - 不要在仓库根目录、`docs/` 根目录或另一个 Prompt Pack 目录中复制出互相冲突的状态文件。
 - `state/`、`audit/`、`adr/` 是本 Skill/Prompt Pack 运行时产生的工程记录；目录或文件尚不存在时按阶段 Prompt 创建，不得声称它们原本已经存在。
@@ -225,7 +225,7 @@ UniUni 分析以 `docs/RDA_ClientStudio_PromptPack_V2/references/UNIUNI_DESIGN_T
 执行约束：
 
 1. 一次只执行一个阶段；每阶段必须读取 Prompt Pack 根目录中的全局执行约束和对应 Prompt。
-2. P04/P05 只能在 P03 的机器人与轨迹数据契约稳定后开始；P06 必须等待 P05 的素材契约；P07 必须等待工程、地图、轨迹和时间轴数据源稳定；P08 最后执行。
+2. P04 必须在 P03 完成后执行；P05 必须等待 P04 完成（因为素材库包含阵型资产），不得将 P04/P05 并列执行；P06 必须等待 P05 的素材契约；P07 必须等待工程、地图、轨迹和时间轴数据源稳定；P08 最后执行。
 3. 不得跳过前置数据契约、并行改写共享 Store/Repository，或创建平行舞台窗口。
 4. 本路线只覆盖客户端本地功能。机器人通信、命令派发、远程建图/上传、设备遥测、认证和安全下发均不属于 P00–P08 的验收范围；不得为了这些内容延后或阻断本地功能交付。
 5. 项目原有 Flask/Web 运维页面和其他既有功能属于保护对象。断开舞台编导对通信组件的依赖，不代表可以删除整个项目的通信/运维模块。
