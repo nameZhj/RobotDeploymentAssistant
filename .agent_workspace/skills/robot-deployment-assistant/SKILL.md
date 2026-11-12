@@ -30,6 +30,9 @@ description: 在 RobotDeploymentAssistant 原工程中执行代码审计、维�
 docs/
 └── RDA_ClientStudio_PromptPack_V2/           # 当前舞台编导客户端 Prompt Pack 根目录
     ├── README.md
+    ├── MANIFEST.json
+    ├── PACK_REVIEW_REPORT.md
+    ├── SKILL_UPDATE_NOTES.md
     ├── PROMPT_INDEX.md
     ├── GLOBAL_EXECUTION_CONTRACT.md
     ├── PROJECT_AUDIT_BASELINE.md
