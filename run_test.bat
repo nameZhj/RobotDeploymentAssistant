@@ -1,10 +1,19 @@
 @echo off
-title VSISLAB Robot Deployment Assistant
-echo Starting VSISLAB Robot Deployment Assistant...
-python main.py
+chcp 65001 >nul
+cd /d "%~dp0"
+title ChoreoNexus Verification Suite
+echo Running code hygiene audit...
+python scripts\verify_hygiene.py
 if errorlevel 1 (
-    echo.
-    echo [ERROR] Launch failed. Please check Python environment and dependencies: pip install -r requirements.txt
-    echo.
+    echo [ERROR] Code hygiene audit failed.
     pause
+    exit /b 1
 )
+echo Running pytest suite...
+python -m pytest -v
+if errorlevel 1 (
+    echo [ERROR] Some tests failed.
+    pause
+    exit /b 1
+)
+echo [PASS] All checks and tests passed.

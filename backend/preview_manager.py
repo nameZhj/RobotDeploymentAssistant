@@ -13,8 +13,6 @@ logger = logging.getLogger("PreviewManager")
 from backend.npz_service import (
     G1_30_LINK_NAMES,
     G1_30_BONE_PAIRS,
-    G1_JOINT_NAMES,
-    G1_BONE_PAIRS,
 )
 
 

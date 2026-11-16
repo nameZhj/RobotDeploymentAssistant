@@ -1,8 +1,7 @@
 import json
 import time
-import os
 import logging
-from typing import Dict, Any, Tuple, Optional, List
+from typing import Dict, Any, Optional
 from backend.ssh_client import ssh_manager
 from backend.deployment_core import deployment_core
 

@@ -1,8 +1,7 @@
 import os
-import yaml
 import time
 import logging
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Tuple
 from backend.ssh_client import ssh_manager
 
 logger = logging.getLogger("DanceUpdater")

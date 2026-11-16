@@ -175,6 +175,131 @@ const TabNetwork = {
     if (el) {
       el.innerHTML = '<div class="log-info">控制台已清空。就绪。</div>';
     }
+  },
+
+  appendWifiLog(msg, level = 'info') {
+    const el = document.getElementById('tp-license-result');
+    if (!el) return;
+    const row = document.createElement('div');
+    row.className = level === 'error' ? 'log-error' : (level === 'success' ? 'log-success' : 'log-info');
+    row.style.whiteSpace = 'pre-wrap';
+    row.textContent = msg;
+    el.appendChild(row);
+    el.scrollTop = el.scrollHeight;
+  },
+
+  _wifiIfname() {
+    const el = document.getElementById('tp-wifi-ifname');
+    return (el && el.value.trim()) ? el.value.trim() : 'wlan0';
+  },
+
+  _updateWifiIpLabel(state) {
+    const el = document.getElementById('tp-wifi-current-ip');
+    if (!el) return;
+    const ip = (state && state.ip_address) ? state.ip_address : '';
+    if (ip) {
+      el.textContent = state.connection ? `${ip} (${state.connection})` : ip;
+      el.dataset.ip = ip;
+    }
+  },
+
+  async probeRobotWifi() {
+    const ifname = this._wifiIfname();
+    this.appendWifiLog(`⏳ 正在探测机器人无线网卡 (${ifname}) ...`);
+    try {
+      const res = await API.wifiProbe(ifname);
+      this.appendWifiLog(res.probe_log || res.message, res.success ? 'success' : 'error');
+      this._updateWifiIpLabel(res.state);
+      showToast(res.message, res.success ? 'success' : 'warning');
+    } catch (err) {
+      this.appendWifiLog(`❌ 网卡探测异常: ${err.message}`, 'error');
+    }
+  },
+
+  async scanRobotWifi() {
+    const ifname = this._wifiIfname();
+    this.appendWifiLog(`📡 正在通过机器人 ${ifname} 扫描周围 Wi-Fi ...`);
+    try {
+      const res = await API.wifiScan(ifname, 'yes');
+      const sel = document.getElementById('tp-wifi-list');
+      if (sel && Array.isArray(res.networks)) {
+        sel.innerHTML = '<option value="">-- 请选择扫描到的 Wi-Fi --</option>';
+        res.networks.forEach((n) => {
+          const opt = document.createElement('option');
+          opt.value = n.ssid;
+          opt.textContent = `${n.in_use ? '* ' : ''}${n.ssid} (${n.signal}%, ${n.security || 'OPEN'}, AP:${n.ap_count})`;
+          sel.appendChild(opt);
+        });
+      }
+      this.appendWifiLog(res.message, res.success ? 'success' : 'error');
+      showToast(res.message, res.success ? 'success' : 'warning');
+    } catch (err) {
+      this.appendWifiLog(`❌ Wi-Fi 扫网异常: ${err.message}`, 'error');
+    }
+  },
+
+  onSelectWifiAp(ssid) {
+    const el = document.getElementById('tp-wifi-ssid');
+    if (el && ssid) el.value = ssid;
+  },
+
+  async connectRobotWifi() {
+    const ssid = (document.getElementById('tp-wifi-ssid')?.value || '').trim();
+    const password = document.getElementById('tp-wifi-password')?.value || '';
+    const ifname = this._wifiIfname();
+    if (!ssid) {
+      showToast('请输入或选择目标 Wi-Fi SSID', 'warning');
+      return;
+    }
+    this.appendWifiLog(`🔗 正在连接机器人 Wi-Fi: ${ssid} (${ifname}) ...`);
+    try {
+      const res = await API.wifiConnect(ssid, password, ifname);
+      this._updateWifiIpLabel(res.state);
+      this.appendWifiLog(res.raw_output || res.message, res.success ? 'success' : 'error');
+      showToast(res.message, res.success ? 'success' : 'error');
+    } catch (err) {
+      this.appendWifiLog(`❌ 连接 Wi-Fi 异常: ${err.message}`, 'error');
+    }
+  },
+
+  async setRobotWifiIpv4() {
+    const ifname = this._wifiIfname();
+    const method = document.getElementById('tp-wifi-ipv4-mode')?.value || 'manual';
+    const address = (document.getElementById('tp-wifi-static-ip')?.value || '').trim();
+    const netmask = (document.getElementById('tp-wifi-netmask')?.value || '').trim();
+    const gateway = (document.getElementById('tp-wifi-gateway')?.value || '').trim();
+    const dns = (document.getElementById('tp-wifi-dns')?.value || '').trim();
+    this.appendWifiLog(`⚙️ 正在设置 ${ifname} IPv4 (${method}) ...`);
+    try {
+      const res = await API.wifiSetIpv4({ ifname, method, address, netmask, gateway, dns });
+      this._updateWifiIpLabel(res.state);
+      this.appendWifiLog(res.raw_output || res.message, res.success ? 'success' : 'error');
+      showToast(res.message, res.success ? 'success' : 'error');
+    } catch (err) {
+      this.appendWifiLog(`❌ IPv4 配置异常: ${err.message}`, 'error');
+    }
+  },
+
+  async switchSshToWifiIp() {
+    const el = document.getElementById('tp-wifi-current-ip');
+    const ip = (el && el.dataset && el.dataset.ip) ? el.dataset.ip : '';
+    if (!ip) {
+      showToast('尚未获取到机器人无线 IP，请先连接 Wi-Fi 或执行网卡探测', 'warning');
+      return;
+    }
+    const hostInput = document.getElementById('ssh-host');
+    if (hostInput) hostInput.value = ip;
+    try {
+      const res = await API.connect({ host: ip });
+      if (res.success) {
+        showToast(`✅ 已切换至无线 SSH: ${ip}`, 'success');
+        if (typeof App !== 'undefined' && App.updateStatus) App.updateStatus();
+      } else {
+        showToast(`切换连接失败: ${res.msg || '未知原因'}`, 'error');
+      }
+    } catch (err) {
+      showToast(`切换无线 SSH 异常: ${err.message}`, 'error');
+    }
   }
 };
 

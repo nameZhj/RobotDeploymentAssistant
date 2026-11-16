@@ -1,52 +1,52 @@
+# UniUni v3 Stage Choreography & Swarm Control Settings
 app_info:
-  app_title: "ChoreoNexus - 机器人集群编排与虚拟演播工作台"
-  version: "1.0.0"
+  app_title: "UniSwarm Studio - Unitree 舞台编导与群控工作台"
+  version: "3.2.0"
   target_os: ["Windows 10", "Windows 11"]
 
 paths:
   workspace_dir: ".agent_workspace"
-  docs_dir: "docs"
-  assets_dir: "assets"
-  cache_dir: "runtime/cache"
-  logs_dir: "runtime/logs"
-  projects_dir: "runtime/choreo_projects"
+  runtime_dir: ".agent_workspace/runtime"
+  db_path: ".agent_workspace/runtime/uniuni_studio.db"
+  pcd_cache_dir: ".agent_workspace/runtime/pcd_cache"
+  http_uploads_dir: ".agent_workspace/runtime/http_uploads"
+  logs_dir: ".agent_workspace/runtime/logs"
+  exports_dir: ".agent_workspace/runtime/exports"
+  fragments_dir: ".agent_workspace/runtime/fragments"
+  maps_dir: "data/maps"
+  g1_urdf_dir: "backend/models/g1_29dof_rubber_hand"
+  motions_dir: "assets/motions"
+  preview_dir: "preview"
 
 ui_layout:
   default_width: 1440
   default_height: 900
   min_width: 1200
-  min_height: 720
-  timeline_fps: 30
-  log_max_visible_lines: 500
+  min_height: 760
+  header_height_px: 32
+  statusbar_height_px: 28
+  right_lib_width_px: 330
+  opbar_width_px: 40
+  track_head_width_px: 168
 
-graphics_3d:
-  auto_detect_gpu: true
-  default_fallback_profile: "eco"
-  stage_grid_size_meters: 10.0
-  stage_grid_step_meters: 0.5
-  collision_warning_radius_m: 0.65
+stage_defaults:
+  stage_width_m: 12.0
+  stage_height_m: 8.0
+  safety_margin_m: 0.5
+  grid_step_m: 1.0
+  subgrid_step_m: 0.2
+  export_fps: 50
+  collision_check_dt_s: 0.05
+  safety_distance_m: 0.60
+  default_max_acc: 1.5
+  default_max_speed: 3.0
+  default_run_mode: 504
+  default_bpm: 120.0
+  default_time_signature: "4/4"
 
-  profiles:
-    eco:
-      description: "无独显办公本兼容模式（核显/集显优化）"
-      opengl_version: "3.3"
-      use_angle_dx11_fallback: true
-      target_fps: 60
-      msaa_samples: 0
-      enable_shadows: false
-      enable_bloom_postprocess: false
-      avatar_lod: "low_poly_primitive"
-      trajectory_style: "simple_polyline"
-      max_instanced_avatars: 20
-
-    pro:
-      description: "独立显卡高画质演播模式"
-      opengl_version: "4.3"
-      use_angle_dx11_fallback: false
-      target_fps: 60
-      msaa_samples: 4
-      enable_shadows: true
-      enable_bloom_postprocess: true
-      avatar_lod: "high_detail_urdf_mesh"
-      trajectory_style: "glowing_ribbon_spline"
-      max_instanced_avatars: 50
+virtual_interfaces:
+  http_upload_virtual_fallback: true
+  http_upload_timeout_s: 5.0
+  http_default_port: 8090
+  slam_stream_virtual_fallback: true
+  slam_stream_default_port: 8091

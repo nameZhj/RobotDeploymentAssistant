@@ -2,7 +2,7 @@ import os
 import math
 import numpy as np
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
 logger = logging.getLogger("NPZService")
 

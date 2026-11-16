@@ -1,72 +1,51 @@
-import datetime
+# @file: src/core/logger.py
+# @brief: Isolated logging configurator directing Studio logs strictly under .agent_workspace/runtime/logs/.
+# @exports: get_studio_logger, configure_studio_logging
+
+from __future__ import annotations
+
 import logging
-from pathlib import Path
-from typing import Any
-from src.core.config_loader import config_loader
+from logging.handlers import RotatingFileHandler
+from typing import Optional
+
+from src.core.paths import get_paths
+
+_LOG_MAX_BYTES = 2 * 1024 * 1024
+_LOG_BACKUP_COUNT = 3
+_CONFIGURED = False
 
 
-def _get_log_dir() -> Path:
-    log_dir = config_loader.resolve_path("logs_dir", "runtime/logs")
-    log_dir.mkdir(parents=True, exist_ok=True)
-    return log_dir
+def configure_studio_logging(level: int = logging.INFO) -> None:
+    """Attach rotating file and console handlers for the UniSwarm logger hierarchy."""
+    global _CONFIGURED
+    if _CONFIGURED:
+        return
+    paths = get_paths()
+    paths.ensure_runtime_dirs()
+    log_file = paths.logs_dir / "uniswarm_studio.log"
 
-
-def setup_system_logging(level: int = logging.INFO) -> None:
-    log_dir = _get_log_dir()
-    log_file = log_dir / "system.log"
-
-    formatter = logging.Formatter(
-        "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    root_logger = logging.getLogger()
+    root_logger = logging.getLogger("uniswarm")
     root_logger.setLevel(level)
+    root_logger.propagate = False
 
-    if not any(isinstance(h, logging.FileHandler) for h in root_logger.handlers):
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
-        file_handler.setFormatter(formatter)
-        root_logger.addHandler(file_handler)
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] [%(name)s] %(message)s")
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=_LOG_MAX_BYTES,
+        backupCount=_LOG_BACKUP_COUNT,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(fmt)
+    root_logger.addHandler(file_handler)
 
-    if not any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers):
-        stream_handler = logging.StreamHandler()
-        stream_handler.setFormatter(formatter)
-        root_logger.addHandler(stream_handler)
-
-
-def get_logger(name: str) -> logging.Logger:
-    setup_system_logging()
-    return logging.getLogger(name)
-
-
-class CommFrameLogger:
-    """
-    Dedicated protocol frame logger enforcing SRC_ID presence in compliance with LRMP V1.0-R3.
-    """
-
-    def __init__(self) -> None:
-        self._comm_log_path = _get_log_dir() / "comm_frames.log"
-
-    def log_frame(
-        self,
-        src_id: str,
-        dst_id: str,
-        frame_type: str,
-        payload: str,
-        status: str = "SENT",
-        seq: int = 0,
-    ) -> None:
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        record = (
-            f"[{timestamp}] [{status}] SRC={src_id} -> DST={dst_id} | "
-            f"TYPE={frame_type} SEQ={seq} | PAYLOAD={payload}\n"
-        )
-        try:
-            with open(self._comm_log_path, "a", encoding="utf-8") as f:
-                f.write(record)
-        except Exception as e:
-            get_logger("CommLogger").error(f"Failed to append comm log: {e}")
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(fmt)
+    root_logger.addHandler(stream_handler)
+    _CONFIGURED = True
 
 
-comm_logger = CommFrameLogger()
-
+def get_studio_logger(name: Optional[str] = None) -> logging.Logger:
+    """Return a child logger under the configured uniswarm namespace."""
+    configure_studio_logging()
+    full_name = f"uniswarm.{name}" if name else "uniswarm"
+    return logging.getLogger(full_name)

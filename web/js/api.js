@@ -83,6 +83,34 @@ const API = {
     });
   },
 
+  wifiProbe(ifname = 'wlan0') {
+    return this.request('/api/wifi/probe', {
+      method: 'POST',
+      body: JSON.stringify({ ifname })
+    });
+  },
+
+  wifiScan(ifname = 'wlan0', rescan = 'yes') {
+    return this.request('/api/wifi/scan', {
+      method: 'POST',
+      body: JSON.stringify({ ifname, rescan })
+    });
+  },
+
+  wifiConnect(ssid, password = '', ifname = 'wlan0') {
+    return this.request('/api/wifi/connect', {
+      method: 'POST',
+      body: JSON.stringify({ ssid, password, ifname })
+    });
+  },
+
+  wifiSetIpv4(payload) {
+    return this.request('/api/wifi/ipv4', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
   // 3. 环境预检与修复
   getPrecheck() {
     return this.request('/api/precheck');

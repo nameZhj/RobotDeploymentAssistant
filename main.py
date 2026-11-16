@@ -70,12 +70,12 @@ class StudioWindowManager:
         app_inst.setQuitOnLastWindowClosed(False)
 
         class _LauncherBridge(QObject):
-            request_show = Signal(object, object, object)
+            request_show = Signal(object, object, object, str)
 
         self._app = app_inst
         self._bridge = _LauncherBridge()
 
-        def _handle_show(s_mgr: Any, d_upd: Any, s_chan: Any) -> None:
+        def _handle_show(s_mgr: Any, d_upd: Any, s_chan: Any, initial_page: str = "choreography") -> None:
             try:
                 is_alive = False
                 if self._window is not None:
@@ -91,7 +91,10 @@ class StudioWindowManager:
                         serial_manager=s_mgr,
                         dance_updater=d_upd,
                         ssh_channel=s_chan,
+                        initial_page=initial_page,
                     )
+                elif hasattr(self._window, "switch_page"):
+                    self._window.switch_page(initial_page)
                 if os.environ.get("QT_QPA_PLATFORM") != "offscreen":
                     self._window.show()
                     self._window.raise_()
@@ -112,11 +115,17 @@ class StudioWindowManager:
         self._init_bridge(self._app)
         self._app.exec()
 
-    def show_studio(self, s_mgr: Any = None, d_upd: Any = None, s_chan: Any = None) -> Tuple[bool, str]:
+    def show_studio(
+        self,
+        s_mgr: Any = None,
+        d_upd: Any = None,
+        s_chan: Any = None,
+        initial_page: str = "choreography",
+    ) -> Tuple[bool, str]:
         try:
             self.ensure_qt_running()
             if self._bridge is not None:
-                self._bridge.request_show.emit(s_mgr, d_upd, s_chan)
+                self._bridge.request_show.emit(s_mgr, d_upd, s_chan, initial_page)
                 from PySide6.QtWidgets import QApplication
                 app_inst = QApplication.instance()
                 if app_inst is not None:
@@ -131,13 +140,14 @@ class StudioWindowManager:
 _studio_manager = StudioWindowManager()
 
 
-def launch_studio_window() -> Tuple[bool, str]:
+def launch_studio_window(initial_page: str = "choreography") -> Tuple[bool, str]:
     """供 Flask 接口调用的全局窗口唤起方法，注入全局 serial_manager, dance_updater, ssh_channel"""
     ssh_chan = getattr(ssh_manager, "client", ssh_manager)
     return _studio_manager.show_studio(
         s_mgr=serial_manager,
         d_upd=dance_updater,
         s_chan=ssh_chan,
+        initial_page=initial_page,
     )
 
 

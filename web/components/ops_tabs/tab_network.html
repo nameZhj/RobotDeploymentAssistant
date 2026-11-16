@@ -125,6 +125,61 @@
                 🚀 部署 License 至机器人
               </button>
             </div>
+
+            <!-- 卡片 4: 📶 G1 机器人 Wi-Fi 无线连接与静态 IP 配置 (基于 g1_wifi_setup 规范) -->
+            <div class="card"
+              style="padding: 8px 10px; margin-bottom: 0; background: rgba(16, 185, 129, 0.04); border: 1px solid rgba(52, 211, 153, 0.25);">
+              <div class="card-header" style="margin-bottom: 5px; padding-bottom: 3px; display: flex; justify-content: space-between; align-items: center;">
+                <div class="card-title" style="font-size: 0.8rem; color: #34d399; display: flex; align-items: center; gap: 5px;">
+                  <span>📶 G1 无线 Wi-Fi 远程连接配置</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                  <input id="tp-wifi-ifname" class="form-input" value="wlan0"
+                    style="width: 62px; padding: 2px 5px; font-size: 0.7rem;" title="无线网卡接口名">
+                  <button id="tp-btn-wifi-probe" class="btn btn-secondary btn-xs" onclick="TabNetwork.probeRobotWifi()"
+                    style="padding: 2px 6px; font-size: 0.7rem; white-space: nowrap;">🔍 探测</button>
+                  <button id="tp-btn-wifi-scan" class="btn btn-primary btn-xs" onclick="TabNetwork.scanRobotWifi()"
+                    style="padding: 2px 6px; font-size: 0.7rem; white-space: nowrap;">📡 扫网</button>
+                </div>
+              </div>
+              <div style="display: flex; gap: 4px; margin-bottom: 5px;">
+                <select id="tp-wifi-list" class="form-select" onchange="TabNetwork.onSelectWifiAp(this.value)"
+                  style="flex: 1; padding: 3px 6px; font-size: 0.72rem;">
+                  <option value="">-- 点击【📡 扫网】刷新周围 Wi-Fi 列表 --</option>
+                </select>
+              </div>
+              <div style="display: flex; gap: 4px; margin-bottom: 5px; align-items: center;">
+                <input id="tp-wifi-ssid" class="form-input" placeholder="目标 Wi-Fi SSID"
+                  style="flex: 1; padding: 3px 6px; font-size: 0.72rem;">
+                <input id="tp-wifi-password" type="password" class="form-input" placeholder="Wi-Fi 密码(开放可空)"
+                  style="flex: 1; padding: 3px 6px; font-size: 0.72rem;">
+                <button id="tp-btn-wifi-connect" class="btn btn-success btn-xs" onclick="TabNetwork.connectRobotWifi()"
+                  style="padding: 3px 8px; font-size: 0.72rem; white-space: nowrap;">🔗 连接</button>
+              </div>
+              <div style="display: grid; grid-template-columns: 78px 1fr 1fr; gap: 4px; margin-bottom: 4px;">
+                <select id="tp-wifi-ipv4-mode" class="form-select" style="padding: 3px 4px; font-size: 0.7rem;">
+                  <option value="manual">静态 IP</option>
+                  <option value="auto">DHCP 自动</option>
+                </select>
+                <input id="tp-wifi-static-ip" class="form-input" placeholder="Wi-Fi IP 如 192.168.1.88"
+                  style="padding: 3px 6px; font-size: 0.7rem;" title="禁止与 192.168.123.0/24 有线管理段重叠">
+                <input id="tp-wifi-netmask" class="form-input" value="255.255.255.0" placeholder="掩码 255.255.255.0"
+                  style="padding: 3px 6px; font-size: 0.7rem;">
+              </div>
+              <div style="display: flex; gap: 4px; align-items: center;">
+                <input id="tp-wifi-gateway" class="form-input" placeholder="网关 (可选)"
+                  style="flex: 1; padding: 3px 6px; font-size: 0.7rem;">
+                <input id="tp-wifi-dns" class="form-input" placeholder="DNS (如 223.5.5.5)"
+                  style="flex: 1; padding: 3px 6px; font-size: 0.7rem;">
+                <button id="tp-btn-wifi-ipv4" class="btn btn-primary btn-xs" onclick="TabNetwork.setRobotWifiIpv4()"
+                  style="padding: 3px 8px; font-size: 0.7rem; white-space: nowrap;">⚙️ 应用IPv4</button>
+              </div>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 5px; font-size: 0.7rem; color: var(--text-muted);">
+                <span>当前无线 IP: <strong id="tp-wifi-current-ip" style="color: #6ee7b7;">未知</strong></span>
+                <button id="tp-btn-switch-wifi-ssh" class="btn btn-secondary btn-xs" onclick="TabNetwork.switchSshToWifiIp()"
+                  style="padding: 2px 6px; font-size: 0.68rem;">🔌 改用无线 IP 连 SSH</button>
+              </div>
+            </div>
           </div>
 
           <!-- 右侧：设备扫描看板与统一执行/授权控制台 -->

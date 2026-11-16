@@ -1,4 +1,0 @@
-"""
-Application layer package definition.
-"""
-

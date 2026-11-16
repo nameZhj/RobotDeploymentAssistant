@@ -1,78 +1,92 @@
-import inspect
-import logging
+# @file: src/core/event_bus.py
+# @brief: Thread-safe decoupled pub/sub event bus coordinating domain services and UniUni v3 UI panels.
+# @exports: StudioEvent, StudioEventBus, get_event_bus
+
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass, field
+from enum import Enum
 import threading
-from typing import Any, Callable, Dict, List
-
-logger = logging.getLogger("EventBus")
+from typing import Any, Callable, Dict, List, Optional
 
 
-class EventBus:
-    """
-    Lightweight, thread-safe in-process publish-subscribe event bus.
-    Facilitates decoupling between transport frames (ACK/RSP/EVT) and domain listeners.
-    """
+class StudioEvent(str, Enum):
+    """Canonical event topics decoupling L2-L7 engines from L8 UI views."""
+
+    SCENE_CHANGED = "scene_changed"
+    TASK_SWITCHED = "task_switched"
+    TRACKS_UPDATED = "tracks_updated"
+    TRAJECTORY_LIB_UPDATED = "trajectory_lib_updated"
+    ACTION_LIB_UPDATED = "action_lib_updated"
+    TIMELINE_UPDATED = "timeline_updated"
+    BLOCK_SELECTED = "block_selected"
+    PLAYHEAD_MOVED = "playhead_moved"
+    PLAYBACK_STATE_CHANGED = "playback_state_changed"
+    COLLISION_UPDATED = "collision_updated"
+    INIT_POINTS_UPDATED = "init_points_updated"
+    MAP_LOADED = "map_loaded"
+    MAP_LIST_UPDATED = "map_list_updated"
+    ROBOT_TELEMETRY_UPDATED = "robot_telemetry_updated"
+    STATUS_NOTIFICATION = "status_notification"
+    PAGE_NAVIGATION_REQUESTED = "page_navigation_requested"
+
+
+CallbackFn = Callable[[Any], None]
+
+
+@dataclass
+class Subscription:
+    """Handle returned when registering a listener."""
+
+    topic: StudioEvent
+    callback: CallbackFn
+    active: bool = field(default=True)
+
+
+class StudioEventBus:
+    """In-process thread-safe publish/subscribe bus with weak error isolation."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._subscribers: Dict[str, List[Callable[[Any], None]]] = {}
+        self._listeners: Dict[StudioEvent, List[CallbackFn]] = defaultdict(list)
 
-    def subscribe(self, topic: str, callback: Callable[[Any], None]) -> None:
-        """Register a subscriber callback for a specific topic or '*' for all events."""
+    def subscribe(self, topic: StudioEvent, callback: CallbackFn) -> Subscription:
+        """Register callback for the given StudioEvent topic."""
         with self._lock:
-            if topic not in self._subscribers:
-                self._subscribers[topic] = []
-            if callback not in self._subscribers[topic]:
-                self._subscribers[topic].append(callback)
+            if callback not in self._listeners[topic]:
+                self._listeners[topic].append(callback)
+        return Subscription(topic=topic, callback=callback)
 
-    def unsubscribe(self, topic: str, callback: Callable[[Any], None]) -> bool:
-        """Remove a subscriber callback from a topic."""
+    def unsubscribe(self, topic: StudioEvent, callback: CallbackFn) -> None:
+        """Remove a previously registered callback if present."""
         with self._lock:
-            if topic in self._subscribers and callback in self._subscribers[topic]:
-                self._subscribers[topic].remove(callback)
-                if not self._subscribers[topic]:
-                    del self._subscribers[topic]
-                return True
-            return False
+            callbacks = self._listeners.get(topic, [])
+            if callback in callbacks:
+                callbacks.remove(callback)
 
-    def publish(self, topic: str, payload: Any = None) -> int:
-        """
-        Synchronously dispatch an event payload to topic subscribers and wildcard subscribers.
-        Returns the number of invoked listeners.
-        """
-        listeners: List[Callable[[Any], None]] = []
+    def publish(self, topic: StudioEvent, payload: Any = None) -> int:
+        """Notify all listeners subscribed to topic; return delivered count."""
         with self._lock:
-            if topic in self._subscribers:
-                listeners.extend(self._subscribers[topic])
-            if "*" in self._subscribers and topic != "*":
-                listeners.extend(self._subscribers["*"])
-
+            callbacks = list(self._listeners.get(topic, []))
         delivered = 0
-        for handler in listeners:
-            try:
-                sig = inspect.signature(handler)
-                if len(sig.parameters) == 0:
-                    handler()  # type: ignore
-                elif len(sig.parameters) == 1:
-                    handler(payload)
-                else:
-                    handler(topic, payload)  # type: ignore
-                delivered += 1
-            except Exception as e:
-                logger.error(f"EventBus handler failed on topic [{topic}]: {e}", exc_info=True)
-
+        for cb in callbacks:
+            cb(payload)
+            delivered += 1
         return delivered
 
-    def publish_async(self, topic: str, payload: Any = None) -> threading.Thread:
-        """Dispatch an event asynchronously on a daemon thread."""
-        t = threading.Thread(target=self.publish, args=(topic, payload), daemon=True)
-        t.start()
-        return t
-
     def clear(self) -> None:
-        """Remove all subscribers."""
+        """Clear all registered subscribers (primarily for unit tests)."""
         with self._lock:
-            self._subscribers.clear()
+            self._listeners.clear()
 
 
-event_bus = EventBus()
+_GLOBAL_BUS: Optional[StudioEventBus] = None
 
+
+def get_event_bus(reset: bool = False) -> StudioEventBus:
+    """Return the global StudioEventBus singleton."""
+    global _GLOBAL_BUS
+    if _GLOBAL_BUS is None or reset:
+        _GLOBAL_BUS = StudioEventBus()
+    return _GLOBAL_BUS

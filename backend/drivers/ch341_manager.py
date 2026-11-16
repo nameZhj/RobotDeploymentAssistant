@@ -5,14 +5,12 @@ VSISLAB 机器人助手 - CH341 驱动管理与下位机注入服务
 import os
 import sys
 import logging
-from typing import Dict, Any, List, Optional, Tuple, Callable
+from typing import Dict, Any, Optional, Tuple, Callable
 
 from backend.drivers.commands import (
     CH341_DEV_PROBE_CMD,
-    CH341_ALL_SERIAL_DEVS_CMD,
     CH341_LSMOD_CMD,
     CH341_MODINFO_CMD,
-    CH341_MODPROBE_CMD,
     CH341_LINUX_BUILD_PIPELINE,
     UDEV_RULES_PATH,
     UDEV_RULES_CONTENT,
@@ -28,7 +26,6 @@ from backend.drivers.commands import (
     RUN_BG_REMOTE_PATH,
     RUN_BG_SCRIPT_TEMPLATE,
     RUN_BG_SYNC_AND_CHMOD_CMD,
-    START_LORA_DAEMON_CONTAINER_CMD,
     WINDOWS_DRIVER_FILENAMES
 )
 

@@ -1,4 +1,0 @@
-"""
-Infrastructure layer package definition.
-"""
-

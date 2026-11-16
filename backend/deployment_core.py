@@ -3,7 +3,7 @@ import re
 import time
 import logging
 import threading
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Tuple
 from backend.ssh_client import ssh_manager
 from backend.drivers import ch341_manager
 from backend.drivers.commands import (

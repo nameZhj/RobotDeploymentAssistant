@@ -188,6 +188,14 @@ const App = {
       });
     }
 
+    const btnNetworkMgr = document.getElementById('btn-open-network-mgr');
+    if (btnNetworkMgr) {
+      btnNetworkMgr.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.openOpsModal('tab-network');
+      });
+    }
+
     if (btnClose) {
       btnClose.addEventListener('click', () => {
         this.closeOpsModal();

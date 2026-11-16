@@ -14,10 +14,10 @@ from backend.network_manager import network_manager
 from backend.deployment_core import deployment_core
 from backend.license_service import license_service
 from backend.dance_updater import dance_updater
-from backend.npz_service import npz_service
 from backend.preview_manager import preview_manager
 from backend.log_diagnostics import log_diagnostics
 from backend.serial_manager import serial_manager
+from backend.g1_wifi_service import g1_wifi_service
 
 
 # 禁用 Werkzeug 频繁的 HTTP Access 请求日志输出，避免控制台刷屏
@@ -218,6 +218,48 @@ def scan_network():
     subnet = data.get("subnet", "192.168.123.")
     devices = network_manager.scan_network(target_subnet=subnet)
     return jsonify({"success": True, "devices": devices, "count": len(devices)})
+
+
+@app.route("/api/wifi/probe", methods=["POST"])
+def probe_robot_wifi():
+    data = request.json or {}
+    res = g1_wifi_service.probe_network(ifname=data.get("ifname", "wlan0"))
+    return jsonify({"success": bool(res.get("ok")), **res})
+
+
+@app.route("/api/wifi/scan", methods=["POST"])
+def scan_robot_wifi():
+    data = request.json or {}
+    res = g1_wifi_service.scan_wifi(
+        ifname=data.get("ifname", "wlan0"),
+        rescan=data.get("rescan", "yes"),
+    )
+    return jsonify({"success": bool(res.get("ok")), **res})
+
+
+@app.route("/api/wifi/connect", methods=["POST"])
+def connect_robot_wifi():
+    data = request.json or {}
+    res = g1_wifi_service.connect_wifi(
+        ssid=data.get("ssid", ""),
+        password=data.get("password", ""),
+        ifname=data.get("ifname", "wlan0"),
+    )
+    return jsonify({"success": bool(res.get("ok")), **res})
+
+
+@app.route("/api/wifi/ipv4", methods=["POST"])
+def configure_robot_wifi_ipv4():
+    data = request.json or {}
+    res = g1_wifi_service.configure_ipv4(
+        ifname=data.get("ifname", "wlan0"),
+        method=data.get("method", "manual"),
+        address=data.get("address", ""),
+        netmask=data.get("netmask", ""),
+        gateway=data.get("gateway", ""),
+        dns=data.get("dns", ""),
+    )
+    return jsonify({"success": bool(res.get("ok")), **res})
 
 
 # ==========================================
@@ -1014,7 +1056,9 @@ def stream_events(task_id):
 def open_studio_route():
     try:
         from main import launch_studio_window
-        success, msg = launch_studio_window()
+        payload = request.get_json(silent=True) or {}
+        initial_page = str(payload.get("page", "choreography"))
+        success, msg = launch_studio_window(initial_page=initial_page)
         return jsonify({"success": success, "msg": msg})
     except Exception as e:
         logger.error(f"唤起舞台编导失败: {e}", exc_info=True)
