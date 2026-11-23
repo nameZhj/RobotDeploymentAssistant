@@ -1,0 +1,67 @@
+1. 导航组件版本
+组件	现场版本	用途
+roslaunch、`rosmaster`、`rospy`、`roscpp`、`rosbag`	1.17.4	ROS 运行、通信及录制
+Catkin	0.8.12	工作空间构建
+TF / TF2	1.13.4 / 0.7.10	坐标变换
+RViz	1.14.26	可视化
+livox_ros_driver2	1.0.0	MID360 雷达驱动
+fast_lio	0.0.0	激光惯性里程计、建图
+open3d_loc / Open3D C++ 库	0.0.0 / 0.14.1	点云配准、全局定位
+mid360_to_velodyne	0.0.0	MID360 点云格式转换
+teb_polar	0.0.0	路径规划、速度指令生成
+
+
+0.0.0 是工程内各包的 package.xml 声明值。定位工作空间可用提交 e4234d4e5595 标识，TEB 工程可用提交 ca3258f19a1f 标识。
+2. 工程实际使用的 ROS 启动命令
+用途	命令	使用情况
+ROS Master	roscore -p 11311	正在运行
+MID360 驱动	roslaunch livox_ros_driver2 msg_MID360.launch	正在运行
+FAST-LIO 里程计、Open3D 定位	roslaunch open3d_loc localization_3d_g1.launch	正在运行，内部加载 FAST-LIO
+点云格式转换	roslaunch mid360_to_velodyne mid360_to_velodyne.launch	正在运行
+TEB 规划	roslaunch teb_polar controller_planning.launch	正在运行
+FAST-LIO 建图	roslaunch fast_lio mapping_mid360_g1.launch rviz:=false	建图模式使用
+数据录制	rosbag record -a	MID360 launch 的可选分支，默认关闭
+二维位姿处理	rosrun mid360_to_velodyne 2d_pose_estimate.py	旧脚本引用，当前工作空间未找到该脚本
+
+
+当前还运行了 python3 main.py single，它负责发布 /cad_scan，以及 python3 nav_web_server.py，它负责导航网页和目标点接口。之后由 nav_gait_bridge 将规划速度转发到 DDS rt/navvelocity。
+3. 在机器人上查看 ROS 状态
+登录 G1 的导航容器后，进入工程配置的 ROS 环境：
+sudo /opt/vsis_nav/navctl shell
+# 版本
+rosversion -d
+rosversion roslaunch
+rosparam get /rosversion
+
+# 节点、话题、服务、参数
+rosnode list
+rosnode info /teb_polar_node
+rostopic list -v
+rosservice list
+rosparam list
+
+# 雷达、定位和规划输出
+rostopic hz /livox/lidar
+rostopic echo -n 1 /Odometry_loc
+rostopic echo -n 1 /localization_3d_confidence
+rostopic echo -n 1 /localization_3d_delay_ms
+rostopic hz /cad_scan
+rostopic echo -n 1 /global_planner/path
+rostopic echo /teb_polar_node/cmd_vel
+rostopic echo /local_nav_status
+
+# TF、规划参数、服务接口
+rosrun tf tf_echo map base_link
+rosparam get /teb_polar_node
+rosservice info /teb_polar_node/cancel_planning
+rosservice info /teb_polar_node/set_parameters
+工程里还用 rostopic pub -1 /move_base_simple/goal geometry_msgs/PoseStamped 发送导航目标，用 rosservice call /teb_polar_node/cancel_planning 取消规划。`/initialpose` 接收 geometry_msgs/PoseWithCovarianceStamped，用于设置定位初始位姿。
+4. 工程导航管理命令
+这些命令在 navctl shell 外运行。日常查状态用第一条，切换模式用 restart。
+sudo /opt/vsis_nav/navctl status                  # 查看状态
+sudo /opt/vsis_nav/navctl start localization      # 启动定位导航
+sudo /opt/vsis_nav/navctl restart localization    # 重启或切换到定位导航
+sudo /opt/vsis_nav/navctl start mapping           # 启动建图
+sudo /opt/vsis_nav/navctl restart mapping         # 重启或切换到建图
+sudo /opt/vsis_nav/navctl finish-mapping          # 结束建图并更新地图文件
+sudo /opt/vsis_nav/navctl stop                    # 停止导航

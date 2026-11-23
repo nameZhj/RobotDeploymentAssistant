@@ -35,16 +35,25 @@ $RECYCLE.BIN/
 # Runtime & user-local data (unrelated to tracked source code)
 user_data/
 cache/
+runtime_cache/
+**/runtime_cache/
 temp_uploads/
+**/temp_uploads/
 scratch/
 robot_fleet.json
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 *.sqlite
 *.sqlite3
 *.pcd
 data/
 runtime/
 preview/.initialized
+**/preview/.initialized
+upper_computer/configs/user_settings.yaml
+lower_computer/runtime_cache/
 
 # Large archives
 *.tar.gz
@@ -54,3 +63,5 @@ preview/.initialized
 # Agent runtime outputs & debug screenshots (keep skills & INDEX.md tracked)
 .agent_workspace/runtime/
 .agent_workspace/screenshots/
+**/.agent_workspace/runtime/
+**/.agent_workspace/screenshots/

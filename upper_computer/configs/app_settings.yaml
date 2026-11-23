@@ -1,0 +1,52 @@
+# UniUni v3 Stage Choreography & Swarm Control Settings
+app_info:
+  app_title: "UniSwarm Studio - Unitree 舞台编导与群控工作台"
+  version: "3.2.0"
+  target_os: ["Windows 10", "Windows 11"]
+
+paths:
+  workspace_dir: ".agent_workspace"
+  runtime_dir: ".agent_workspace/runtime"
+  db_path: ".agent_workspace/runtime/uniuni_studio.db"
+  pcd_cache_dir: ".agent_workspace/runtime/pcd_cache"
+  http_uploads_dir: ".agent_workspace/runtime/http_uploads"
+  logs_dir: ".agent_workspace/runtime/logs"
+  exports_dir: ".agent_workspace/runtime/exports"
+  fragments_dir: ".agent_workspace/runtime/fragments"
+  maps_dir: "data/maps"
+  g1_urdf_dir: "backend/models/g1_29dof_rubber_hand"
+  motions_dir: "assets/motions"
+  preview_dir: "preview"
+
+ui_layout:
+  default_width: 1440
+  default_height: 900
+  min_width: 1200
+  min_height: 760
+  header_height_px: 32
+  statusbar_height_px: 28
+  right_lib_width_px: 330
+  opbar_width_px: 40
+  track_head_width_px: 168
+
+stage_defaults:
+  stage_width_m: 12.0
+  stage_height_m: 8.0
+  safety_margin_m: 0.5
+  grid_step_m: 1.0
+  subgrid_step_m: 0.2
+  export_fps: 50
+  collision_check_dt_s: 0.05
+  safety_distance_m: 0.60
+  default_max_acc: 1.5
+  default_max_speed: 3.0
+  default_run_mode: 504
+  default_bpm: 120.0
+  default_time_signature: "4/4"
+
+virtual_interfaces:
+  http_upload_virtual_fallback: false
+  http_upload_timeout_s: 5.0
+  http_default_port: 8090
+  slam_stream_virtual_fallback: false
+  slam_stream_default_port: 8091

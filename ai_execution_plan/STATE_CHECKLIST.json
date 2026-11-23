@@ -1,0 +1,45 @@
+{
+  "project": "RobotDeploymentAssistant Dual-Computer Suite",
+  "target_model": "Hydrogen High",
+  "rules": {
+    "max_lines_per_file": 300,
+    "mandatory_headers": ["@file", "@brief", "@exports"],
+    "zero_fake_callbacks": true,
+    "task_chain_format": "pure_action_names_connected_by_hyphen",
+    "viewport_ratio": "70:30",
+    "wifi_config_transport": "LoRa",
+    "all_other_features_transport": "Wi-Fi HTTP"
+  },
+  "steps": [
+    {
+      "step_id": "STEP_1",
+      "title": "Workspace Three-Folder Split (upper_computer, lower_computer, ai_execution_plan)",
+      "status": "COMPLETED"
+    },
+    {
+      "step_id": "STEP_2",
+      "title": "Lower Computer ROS 1.17.4 Bridge, ControlArbiter, and Command Executor",
+      "status": "COMPLETED"
+    },
+    {
+      "step_id": "STEP_3",
+      "title": "Lower Computer TaskChainExecutor, Real Webhook Callback, and Standard HTTP Server",
+      "status": "COMPLETED"
+    },
+    {
+      "step_id": "STEP_4",
+      "title": "Upper Computer LoRa Wi-Fi Provisioning and Full Wi-Fi HTTP Integration",
+      "status": "COMPLETED"
+    },
+    {
+      "step_id": "STEP_5",
+      "title": "Upper Computer Pure-Name Task Chain UI, 70:30 Viewport Ratio, and Stop-to-Origin",
+      "status": "COMPLETED"
+    },
+    {
+      "step_id": "STEP_6",
+      "title": "8-Layer Deep Closure Audit and Dual-Computer E2E Verification",
+      "status": "COMPLETED"
+    }
+  ]
+}
