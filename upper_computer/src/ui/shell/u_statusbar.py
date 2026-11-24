@@ -1,9 +1,10 @@
 # @file: src/ui/shell/u_statusbar.py
-# @brief: UniUni v3 28px bottom status bar displaying version, scene, init points, music, timecode, IP, and alerts.
+# @brief: UniUni v3 28px bottom status bar displaying version, scene, init points, task status, local LAN IP, and alerts.
 # @exports: UStatusBar
 
 from __future__ import annotations
 
+import socket
 from typing import Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
@@ -20,11 +21,25 @@ from src.ui.design_system.tokens import (
 )
 
 
+def _detect_local_lan_ip() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.168.1.1", 80))
+            ip = s.getsockname()[0]
+            if ip:
+                return ip
+    except OSError:
+        pass
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except OSError:
+        return "127.0.0.1"
+
+
 class UStatusBar(QFrame):
     """Exact 28px bottom global status bar mirroring UniUni LAYOUT.md §2."""
 
     initPointsClicked = Signal()
-    musicClicked = Signal()
 
     def __init__(self, version: str = "3.2.0", parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -36,8 +51,7 @@ class UStatusBar(QFrame):
 
         self.lbl_version = self._meta_label(f"v{version}")
         self.lbl_scene = self._meta_label("场景: 默认舞台")
-        self.btn_init = self._link_button("初始化点: 默认开场站位", self.initPointsClicked.emit)
-        self.btn_music = self._link_button("音乐: 未加载", self.musicClicked.emit)
+        self.btn_init = self._link_button("初始化点: 未添加机器人", self.initPointsClicked.emit)
         self.lbl_timecode = QLabel("任务链: 原点待命", self)
         self.lbl_timecode.setStyleSheet(
             f"font-family: {FONT_MONO}; font-size: 11px; color: {C_ACCENT_BRIGHT}; font-weight: 600;"
@@ -50,18 +64,16 @@ class UStatusBar(QFrame):
             self._sep(),
             self.btn_init,
             self._sep(),
-            self.btn_music,
-            self._sep(),
             self.lbl_timecode,
         ):
             layout.addWidget(widget)
 
         layout.addStretch(1)
 
-        self.lbl_net = QLabel("● 就绪", self)
+        self.lbl_net = QLabel("● Wi-Fi HTTP", self)
         self.lbl_net.setStyleSheet(f"color: {C_OK}; font-size: 11px;")
-        self.lbl_ip = self._meta_label("IP: 127.0.0.1")
-        self.lbl_robots = self._meta_label("机器人: 4 轨道")
+        self.lbl_ip = self._meta_label(f"本机 IP: {_detect_local_lan_ip()}")
+        self.lbl_robots = self._meta_label("机器人: 0 轨道")
         self.lbl_notice = QLabel("系统就绪", self)
         self.lbl_notice.setStyleSheet(f"color: {C_TEXT_2}; font-size: 11px;")
 
@@ -109,9 +121,9 @@ class UStatusBar(QFrame):
     def set_scene_summary(
         self, scene_name: str, track_count: int, music_name: str = "", init_label: str = ""
     ) -> None:
+        _ = music_name
         self.lbl_scene.setText(f"场景: {scene_name}")
         self.lbl_robots.setText(f"机器人: {track_count} 轨道")
-        self.btn_music.setText(f"音乐: {music_name or '未加载'}")
         if init_label:
             self.btn_init.setText(f"初始化点: {init_label}")
         elif track_count == 0:

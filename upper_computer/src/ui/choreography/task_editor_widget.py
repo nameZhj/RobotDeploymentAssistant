@@ -52,7 +52,7 @@ class TaskEditorWidget(QFrame):
             self.lane_view.setFocus()
             self.state.notify("任务链已切换至选择与拖拽排序模式", "info")
         elif action == "stop_origin":
-            self.playback.stop_and_return_origin()
+            self.playback.reset_preview()
         elif action == "delete":
             self.lane_view.delete_selected_block()
         elif action == "split":

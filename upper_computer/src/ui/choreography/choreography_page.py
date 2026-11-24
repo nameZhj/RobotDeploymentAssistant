@@ -17,11 +17,9 @@ from src.ui.choreography.track_lib_panel import TrackLibPanel
 from src.ui.design_system.tokens import W_RIGHT_LIB
 from src.ui.modals import (
     AddTrackDialog,
-    BpmInfoModal,
     FragmentSaveDialog,
     InitPointModal,
     PreDanceCheckModal,
-    RangeExportImportDialog,
     StageSizeModal,
     SwitchTaskModal,
     TaskJsonViewerModal,
@@ -83,15 +81,13 @@ class ChoreographyPage(QWidget):
     def _wire_modals(self) -> None:
         hdr = self.task_editor.header
         hdr.playToggleClicked.connect(self.playback.toggle_play)
-        hdr.stopClicked.connect(self.playback.stop_and_return_origin)
+        hdr.stopClicked.connect(self.playback.reset_preview)
         hdr.saveClicked.connect(self.state.save_project_snapshot)
         self.preview_panel.stageSizeClicked.connect(lambda: StageSizeModal(self.state, self).exec())
         hdr.addTrackClicked.connect(lambda: AddTrackDialog(self.state, self).exec())
         hdr.switchTaskClicked.connect(lambda: SwitchTaskModal(self.state, self).exec())
         hdr.initPointsClicked.connect(lambda: InitPointModal(self.state, self).exec())
         hdr.saveFragmentClicked.connect(lambda: FragmentSaveDialog(self.state, self.state.playhead_s, self).exec())
-        hdr.rangeIoClicked.connect(lambda: RangeExportImportDialog(self.state, self).exec())
-        hdr.bpmClicked.connect(lambda: BpmInfoModal(self.state, self).exec())
         hdr.preCheckClicked.connect(lambda: PreDanceCheckModal(self.state, self, mode="check").exec())
         hdr.jsonViewClicked.connect(lambda: TaskJsonViewerModal(self.state, self).exec())
         hdr.httpDeployClicked.connect(lambda: PreDanceCheckModal(self.state, self, mode="deploy").exec())

@@ -1,5 +1,5 @@
 # @file: src/ui/shell/u_titlebar.py
-# @brief: UniUni v3 32px top navigation header (uniswarm logo, 6 page tabs, global Device/Scene/Help actions).
+# @brief: UniUni v3 32px top navigation header (uniswarm logo, 5 core workspace tabs, global Device/Scene/Help actions).
 # @exports: PAGE_DEFS, UTitlebar
 
 from __future__ import annotations
@@ -13,10 +13,9 @@ from src.ui.design_system.u_buttons import UButton
 
 PAGE_DEFS: Tuple[Tuple[str, str], ...] = (
     ("choreography", "舞蹈编排"),
-    ("formation", "轨迹规划"),
+    ("formation", "队形规划"),
     ("mapping", "导航地图"),
     ("monitoring", "表演监测"),
-    ("radar", "雷达监控"),
     ("network", "系统设置"),
 )
 

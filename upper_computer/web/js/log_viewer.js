@@ -348,7 +348,7 @@ const LogViewer = {
       App.switchTab('tab-precheck');
       TabPrecheck.fixCh341();
     } else if (action === 'goto_license') {
-      App.switchTab('tab-license');
+      App.switchTab('tab-network');
     } else if (action === 'restart_processes') {
       showToast('正在重启控制进程...', 'info');
       Wizard.restartProcesses();

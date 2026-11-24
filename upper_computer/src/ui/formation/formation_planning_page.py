@@ -50,6 +50,7 @@ class FormationPlanningPage(QWidget):
         self.ctrl_dock.generateClicked.connect(self.generate_targets)
         self.ctrl_dock.solveClicked.connect(self.solve_paths)
         self.ctrl_dock.applyToChoreoClicked.connect(self.commit_to_library)
+        self.ctrl_dock.syncTebSpeedRequested.connect(self.sync_teb_max_speed)
         self.ctrl_dock.previewSliderChanged.connect(self._on_preview_slider)
         self.canvas.targetsEdited.connect(self._recompute_2opt_only)
 
@@ -130,6 +131,22 @@ class FormationPlanningPage(QWidget):
     def _on_preview_slider(self, ratio: float) -> None:
         self.canvas.sim_progress = ratio
         self.canvas.update()
+
+    def sync_teb_max_speed(self, max_vel_x: float) -> int:
+        ips = [t.robot_ip.strip() for t in self.state.tracks if t.robot_ip]
+        if not ips:
+            self.state.notify("暂无配置了 Wi-Fi IP 的机器人轨道，无法同步 TEB 限速", "warn")
+            return 0
+        ok_cnt = 0
+        for ip in ips:
+            res = self.state.http_rpc.set_teb_params(ip, {"max_vel_x": round(float(max_vel_x), 2)})
+            if res.ok:
+                ok_cnt += 1
+        self.state.notify(
+            f"已同步 TEB max_vel_x={max_vel_x:.2f}m/s ({ok_cnt}/{len(ips)} 台就绪)",
+            "ok" if ok_cnt == len(ips) else "warn",
+        )
+        return ok_cnt
 
     def commit_to_library(self) -> TrajectoryGroupEntity | None:
         if not self.state.tracks:

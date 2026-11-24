@@ -5,14 +5,16 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import List, Optional, Tuple
 from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen, QPolygonF, QWheelEvent
+from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPen, QPolygonF, QWheelEvent
 from PySide6.QtWidgets import QWidget
 
+from src.core.event_bus import StudioEvent
 from src.domain.track_entities import pick_track_color
 from src.services.studio_state_service import StudioStateService
-from src.ui.choreography.stage_painters import paint_grid_and_stage, screen_to_world, world_to_screen
+from src.ui.choreography.stage_painters import paint_grid_and_stage, paint_occupancy_map, screen_to_world, world_to_screen
 from src.ui.design_system.tokens import C_ACCENT, C_OK, C_WARN
 
 Point2D = Tuple[float, float]
@@ -35,7 +37,17 @@ class FormationPlannerCanvas(QWidget):
         self.sim_progress: float = 1.0
         self._drag_target_idx: Optional[int] = None
         self._pan_last: Optional[QPointF] = None
+        self._grid_img: Optional[QImage] = None
+        self._grid_meta = (0.0, 0.0, 0.05)
         self.setMinimumSize(360, 280)
+        state.bus.subscribe(StudioEvent.MAP_LOADED, lambda _p: (self._sync_active_map(), self.update()))
+        self._sync_active_map()
+
+    def _sync_active_map(self) -> None:
+        m = self.state.active_map
+        p = Path(m.grid_png_path) if m and m.grid_png_path else None
+        self._grid_img = QImage(str(p)) if p and p.exists() else None
+        self._grid_meta = (m.origin_x, m.origin_y, max(0.005, m.resolution)) if m else (0.0, 0.0, 0.05)
 
     def _origin_px(self) -> QPointF:
         return QPointF(self.width() * 0.5 + self.pan_offset.x(), self.height() * 0.5 + self.pan_offset.y())
@@ -49,6 +61,7 @@ class FormationPlannerCanvas(QWidget):
             float(self.state.scene.stage_width or 12.0),
             float(self.state.scene.stage_height or 8.0),
         )
+        paint_occupancy_map(p, self._grid_img, *self._grid_meta, origin, self.ppm)
 
         # Draw planned splines or straight pairing lines
         if self.knots:

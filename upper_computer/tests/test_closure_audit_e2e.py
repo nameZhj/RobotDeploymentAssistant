@@ -76,7 +76,6 @@ def test_zero_demo_startup_and_full_user_track_crud(tmp_path: Path, monkeypatch)
     # 3. Auto-synced downstream pages immediately see real tracks
     assert len(win.formation_page.canvas.sources) == 2
     assert win.network_page.ip_table.rowCount() == 2
-    assert win.radar_page.table.rowCount() == 2
     assert win.monitoring_page.table.rowCount() == 2
     assert win.mapping_page.teleop_dock.target_sel.count() == 2
 
@@ -146,12 +145,10 @@ def test_inline_stage_trajectory_drawing_and_sketch_closure(tmp_path: Path, monk
 
     modal = TrajectoryEditorModal(win.state, traj=None, initial_points=c2d.draft_points, parent=win)
     modal.name_edit.setText("舞台直绘曲线")
-    modal.run_sel.set_current_data(501)
-    modal.hold_chk.setChecked(True)
-    modal.hold_yaw_spin.setValue(0.25)
+    modal.end_yaw_spin.setValue(0.25)
     modal._on_save()
     assert modal.saved_traj is not None
-    assert modal.saved_traj.run_mode == 501
+    assert abs(modal.saved_traj.end_yaw - 0.25) < 1e-4
     assert any(t.name == "舞台直绘曲线" for t in win.state.trajectories.values())
     c2d.clear_draft()
     assert len(c2d.draft_points) == 0
@@ -217,11 +214,11 @@ def test_timeline_undo_fragment_action_formation_map_lrmp_and_settings(tmp_path:
     frag_dlg2._on_delete_selected()
     assert len(frag_dlg2._frags) == 0
 
-    # Custom Action import/filter/delete & BatchChoreoDrawer sync (zero fake seeded actions)
-    custom = ActionEntity(no=9901, name="测试自定义", category="CUSTOM", lrmp_code="CST_TEST", duration=6.0, is_builtin=False)
+    # Action repo filter & BatchChoreoDrawer sync (zero fake seeded actions)
+    custom = ActionEntity(no=9901, name="测试太极", category="G1", lrmp_code="G1_TAIJI", duration=6.0, is_builtin=False)
     win.state.action_repo.upsert_action(custom)
     win.state.bus.publish(StudioEvent.ACTION_LIB_UPDATED, custom.id)
-    win.choreography_page.action_lib.cat_sel.set_current_data("CUSTOM")
+    win.choreography_page.action_lib.cat_sel.set_current_data("G1")
     win.choreography_page.action_lib.refresh()
     assert win.choreography_page.action_lib.list_layout.count() >= 2
     assert win.choreography_page.batch_drawer.act_sel.count() == 1
@@ -252,19 +249,23 @@ def test_timeline_undo_fragment_action_formation_map_lrmp_and_settings(tmp_path:
     win.mapping_page.lib_dock._scan_existing_dir()
     assert all(m.name != "hall_svd" for m in win.state.map_repo.list_maps())
 
-    # LRMP TX on PerformanceMonitorPage + live RadarMonitorPage + Settings persistence
+    # Pure Wi-Fi HTTP PerformanceMonitorPage (zero serial TX!) + live clearance & Settings persistence
     win.monitoring_page._cmd_prep()
     win.monitoring_page._cmd_play()
-    assert any("|PREP" in f for f in sent_frames)
-    assert any("|PLAY" in f for f in sent_frames)
-    assert "串口在线" in win.monitoring_page.table.item(0, 3).text()
+    assert len(sent_frames) == 0  # Pure Wi-Fi HTTP: never sends task-chain cmds over serial!
+    assert "Wi-Fi HTTP" in win.monitoring_page.table.item(0, 3).text()
+    assert "安全" in win.monitoring_page.table.item(0, 2).text()
+
+    # Choreography preview reset must NOT trigger real robot stop_and_return_origin HTTP
     win.playback.seek(5.0)
-    assert "安全" in win.radar_page.table.item(0, 2).text()
+    win.playback.reset_preview()
+    assert abs(win.state.playhead_s) < 1e-6
 
     win.network_page.safety_spin.setValue(0.85)
-    win.network_page.virt_http_chk.setChecked(False)
+    win.network_page.port_spin.setValue(8090)
     assert abs(get_settings(reload=True).stage_defaults.safety_distance_m - 0.85) < 1e-4
     assert get_settings(reload=True).virtual_interfaces.http_upload_virtual_fallback is False
+    assert get_settings(reload=True).virtual_interfaces.http_default_port == 8090
 
     # 3D authentic Unitree G1 multi-material + NPZ 21-joint dance & concurrent action+trajectory playback
     vp3d = win.choreography_page.preview_panel.viewport_3d

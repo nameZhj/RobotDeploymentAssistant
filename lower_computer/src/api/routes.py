@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from src.api.slam_routes import dispatch_slam_route
 from src.api.system_routes import dispatch_system_route
 from src.commands.control_arbiter import ControlArbiter
 from src.commands.lora_wifi_agent import LoraWifiAgent
@@ -16,13 +17,14 @@ from src.commands.system_ops_service import SystemOpsService
 from src.config.robot_config_reader import RobotConfigReader
 from src.config.ros_env_config import ROS_COMPONENTS, ROS_LAUNCH_COMMANDS, ROS_SERVICES, ROS_TOPICS, RosEnvConfig
 from src.ros_bridge.navctl_runner import NavctlRunner
+from src.ros_bridge.ros_live_slam_tap import RosLiveSlamTap
 from src.ros_bridge.ros_topic_service_bridge import RosTopicServiceBridge
 from src.task_chain.task_chain_executor import TaskChainExecutor
 from src.task_chain.webhook_dispatcher import WebhookDispatcher
 
 
 class LowerComputerContext:
-    """Dependency bundle wiring onboard config, ROS bridges, arbiter, motion executor, task chain, and system ops."""
+    """Dependency bundle wiring onboard config, ROS bridges, discovery, SLAM tap, arbiter, motion executor, task chain, and system ops."""
 
     def __init__(
         self,
@@ -35,6 +37,8 @@ class LowerComputerContext:
         self.config_reader = RobotConfigReader(self.cfg)
         self.navctl = navctl or NavctlRunner(navctl_bin=self.cfg.navctl_bin)
         self.ros_bridge = ros_bridge or RosTopicServiceBridge(self.cfg)
+        self.discovery = self.ros_bridge.discovery
+        self.slam_tap = RosLiveSlamTap(self.discovery)
         self.arbiter = ControlArbiter()
         self.motion_exec = MotionCommandExecutor(self.arbiter, self.config_reader, self.ros_bridge)
         self.webhook = webhook or WebhookDispatcher()
@@ -60,8 +64,13 @@ def dispatch_http_request(
     if sys_match is not None:
         return sys_match
 
+    slam_match = dispatch_slam_route(ctx, m, path, query, data)
+    if slam_match is not None:
+        return slam_match
+
     if m == "GET" and path == "/api/v1/health":
         rid = ctx.config_reader.read_robot_id()
+        ctrl_state = ctx.motion_exec.get_state()
         return 200, {
             "ok": True,
             "robot_id": rid["robot_id"],
@@ -69,6 +78,8 @@ def dispatch_http_request(
             "ros_master_reachable": ctx.ros_bridge.is_ros_master_reachable(),
             "navctl_available": ctx.navctl.is_available(),
             "authority": ctx.arbiter.state.value,
+            "motion_state": ctrl_state["motion"]["state"],
+            "active_dance": ctrl_state["motion"].get("active_dance", ""),
             "ros_components": ROS_COMPONENTS,
         }, "application/json"
 
@@ -116,11 +127,52 @@ def dispatch_http_request(
         res = ctx.task_chain.stop_and_return_origin(data.get("origin_pose"), str(data.get("callback_url", "")))
         return res["status_code"], res, "application/json"
 
+    if m == "GET" and path == "/api/v1/control/state":
+        rid = ctx.config_reader.read_robot_id()
+        return 200, {
+            "ok": True,
+            "robot_id": rid["robot_id"],
+            **ctx.motion_exec.get_state(),
+            "task_chain": ctx.task_chain.state.to_dict(),
+        }, "application/json"
+
+    if m == "POST" and path == "/api/v1/control/posture":
+        res = ctx.motion_exec.execute_posture(str(data.get("posture", "")))
+        code = 200 if res.ok else (409 if res.execution_mode == "REJECTED" else 400)
+        return code, res.to_dict(), "application/json"
+
+    if m == "POST" and path == "/api/v1/control/velocity":
+        try:
+            dur = float(data.get("duration", 1.0))
+            vx = float(data["vx"]) if "vx" in data else None
+            vy = float(data["vy"]) if "vy" in data else None
+            vyaw = float(data["vyaw"]) if "vyaw" in data else None
+        except (ValueError, TypeError):
+            return 400, {"ok": False, "message": "速度参数 vx/vy/vyaw/duration 必须为数值"}, "application/json"
+        res = ctx.motion_exec.execute_velocity(str(data.get("direction", "")), dur, vx, vy, vyaw)
+        code = 200 if res.ok else (409 if res.execution_mode == "REJECTED" else 400)
+        return code, res.to_dict(), "application/json"
+
+    if m == "POST" and path == "/api/v1/control/dance":
+        alias = str(data.get("alias", "") or data.get("dance", "")).strip()
+        res = ctx.motion_exec.execute_dance(alias)
+        code = 200 if res.ok else (409 if res.execution_mode == "REJECTED" else 400)
+        return code, res.to_dict(), "application/json"
+
+    if m == "POST" and path == "/api/v1/control/stop":
+        emergency = bool(data.get("emergency", False))
+        ctx.task_chain.abort_running_chain(reason="EMERGENCY" if emergency else "STOP")
+        res = ctx.motion_exec.execute_stop(emergency=emergency)
+        return (200 if res.ok else 409), res.to_dict(), "application/json"
+
     if m == "POST" and path == "/api/v1/control/command":
         cmd = str(data.get("command", "")).strip()
         if not cmd:
             return 400, {"ok": False, "message": "缺少 command 字段"}, "application/json"
         params = [str(p) for p in (data.get("params") or [])]
+        if "," in cmd and not params:
+            parts = [p.strip() for p in cmd.split(",") if p.strip()]
+            cmd, params = (parts[0] if parts else ""), parts[1:]
         cu = cmd.upper()
         if cu in ("STOP", "EMERGENCY"):
             ctx.task_chain.abort_running_chain(reason=cu)
@@ -129,12 +181,21 @@ def dispatch_http_request(
             rel_ms = int(params[2]) if len(params) > 2 and params[2].isdigit() else 0
             ctx.task_chain.release_barrier(params[0], b_id, rel_ms)
         res = ctx.motion_exec.execute(cmd, params)
+        out = res.to_dict()
+        out["local_robot_id"] = ctx.config_reader.read_robot_id()["robot_id"]
         code = 200 if res.ok else (409 if res.execution_mode == "REJECTED" else 400)
-        return code, res.to_dict(), "application/json"
+        return code, out, "application/json"
 
     if m == "POST" and path == "/api/v1/navigation/navctl":
         action = str(data.get("action", "status"))
         res = ctx.navctl.execute(action)
+        if res.ok:
+            low = action.lower()
+            if "stop" in low or "finish" in low:
+                ctx.slam_tap.stop()
+            elif "start" in low or "restart" in low:
+                ctx.discovery.discover_topics(force=True)
+                ctx.slam_tap.start()
         code = 200 if res.ok else (503 if not res.available else 400)
         return code, res.to_dict(), "application/json"
 
@@ -188,15 +249,5 @@ def dispatch_http_request(
             return 503, {"ok": False, "reason": "ROS Master 不可达"}, "application/json"
         res = ctx.ros_bridge.diagnostics.read_cad_scan_summary()
         return (200 if res["ok"] else 503), res, "application/json"
-
-    if m == "GET" and path == "/api/v1/slam/map.pcd":
-        req_path = query.get("path", [""])[0]
-        target = Path(req_path) if req_path else None
-        if target is None or not target.exists():
-            pcds = sorted(ctx.cfg.maps_dir.glob("*.pcd"), key=lambda p: p.stat().st_mtime, reverse=True) if ctx.cfg.maps_dir.exists() else []
-            target = pcds[0] if pcds else None
-        if target is None or not target.exists():
-            return 404, {"ok": False, "message": f"未在 {ctx.cfg.maps_dir} 找到真实建图生成的 .pcd 文件"}, "application/json"
-        return 200, target.read_bytes(), "application/octet-stream"
 
     return 404, {"ok": False, "message": f"未知接口路径: {m} {path}"}, "application/json"

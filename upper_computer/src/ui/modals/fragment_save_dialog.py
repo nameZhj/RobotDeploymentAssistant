@@ -19,7 +19,15 @@ class FragmentSaveDialog(UDialog):
     """Captures active blocks into numbered slots and supports restoring or deleting saved snippets."""
 
     def __init__(self, state: StudioStateService, t_default: float = 0.0, parent: QWidget | None = None) -> None:
-        super().__init__("任务链快捷片段管理 (保存 / 追加 / 删除)", width=600, height=440, confirm_text="保存当前片段", cancel_text="关闭", parent=parent)
+        super().__init__(
+            "快捷片段管理",
+            width=600,
+            height=440,
+            confirm_text="保存当前片段",
+            cancel_text="关闭",
+            parent=parent,
+            help_text="可保存当前时间线片段，或在列表中选中片段载入至当前位置或删除。",
+        )
         self.state = state
         self._t_default = max(0.0, float(t_default))
 
@@ -36,7 +44,7 @@ class FragmentSaveDialog(UDialog):
         form.addRow("结束游标", self.t1_spin)
         self.body_layout.addLayout(form)
 
-        hdr = QLabel("已保存片段库（选中一行可载入到当前任务链位置或删除）:", self)
+        hdr = QLabel("已保存片段库:", self)
         hdr.setStyleSheet(f"color: {C_TEXT_2}; font-size: 11px; margin-top: 6px;")
         self.body_layout.addWidget(hdr)
 

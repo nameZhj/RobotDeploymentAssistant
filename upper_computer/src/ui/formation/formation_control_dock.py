@@ -20,10 +20,16 @@ class FormationControlDock(UPanel):
     generateClicked = Signal()
     solveClicked = Signal()
     applyToChoreoClicked = Signal()
+    syncTebSpeedRequested = Signal(float)
     previewSliderChanged = Signal(float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(title="队形模板与避障规划", header_widgets=[], parent=parent)
+        super().__init__(
+            title="队形规划",
+            header_widgets=[],
+            parent=parent,
+            help_text="1. 生成目标阵型与配对；2. 求解避障轨迹；3. 入库并同步至舞台。",
+        )
         self.setFixedWidth(310)
         self.body_layout.setSpacing(8)
 
@@ -57,11 +63,11 @@ class FormationControlDock(UPanel):
         form.addRow("矩阵列数", self.cols_spin)
         form.addRow("整体朝向", self.rot_spin)
         form.addRow("避障半径", self.safety_spin)
-        form.addRow("规划最大速度", self.speed_spin)
+        form.addRow("导航限速(TEB)", self.speed_spin)
         form.addRow("输出组名", self.group_name_edit)
         self.body_layout.addLayout(form)
 
-        gen_b = UButton("1. 生成目标阵型 & 2-Opt配对", variant="default", size="sm", icon_name="grid", parent=self.body_widget)
+        gen_b = UButton("1. 生成目标阵型", variant="default", size="sm", icon_name="grid", parent=self.body_widget)
         gen_b.clicked.connect(self.generateClicked.emit)
         self.body_layout.addWidget(gen_b)
 
@@ -69,9 +75,13 @@ class FormationControlDock(UPanel):
         ret_b.clicked.connect(lambda: (self.kind_sel.set_current_data("grid"), self.generateClicked.emit()))
         self.body_layout.addWidget(ret_b)
 
-        solve_b = UButton("2. 人工势场无碰撞路径规划", variant="primary", size="sm", icon_name="target", parent=self.body_widget)
+        solve_b = UButton("2. 生成防碰撞中继航点", variant="primary", size="sm", icon_name="target", parent=self.body_widget)
         solve_b.clicked.connect(self.solveClicked.emit)
         self.body_layout.addWidget(solve_b)
+
+        teb_b = UButton("同步限速到机载 TEB 导航", variant="default", size="xs", icon_name="sliders", parent=self.body_widget)
+        teb_b.clicked.connect(lambda: self.syncTebSpeedRequested.emit(self.speed_spin.value()))
+        self.body_layout.addWidget(teb_b)
 
         self.metrics_badge = UBadge("待规划", tone="neutral", parent=self.body_widget)
         self.metrics_lbl = QLabel("最小间距: -- | 规划耗时: --", self.body_widget)
@@ -91,7 +101,7 @@ class FormationControlDock(UPanel):
 
         self.body_layout.addStretch(1)
 
-        apply_b = UButton("3. 入库轨迹并同步至舞台编导", variant="primary", size="md", icon_name="check", parent=self.body_widget)
+        apply_b = UButton("3. 入库并同步舞台", variant="primary", size="md", icon_name="check", parent=self.body_widget)
         apply_b.clicked.connect(self.applyToChoreoClicked.emit)
         self.body_layout.addWidget(apply_b)
 

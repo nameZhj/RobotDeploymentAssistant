@@ -26,7 +26,8 @@ def test_shell_geometry_and_page_routing(qt_app, tmp_path: pathlib.Path, monkeyp
     win = MainStudioWindow()
     assert win.titlebar.height() == 32
     assert win.statusbar.height() == 28
-    assert win.stack.count() == 6
+    assert win.stack.count() == 5
+    assert "本机 IP:" in win.statusbar.lbl_ip.text()
 
     win.switch_page("formation")
     assert win.titlebar._tab_buttons["formation"].isChecked()

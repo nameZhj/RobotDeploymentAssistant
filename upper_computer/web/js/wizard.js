@@ -1798,16 +1798,18 @@ const Wizard = {
   },
 
   async sendTestCmd(target, cmd) {
-    showToast(`正在发送指令: [${target}|${cmd}] ...`, 'info');
+    showToast(`正在通过 Wi-Fi HTTP 发送指令: [${target}|${cmd}] ...`, 'info');
     try {
-      const res = await API.sendSerialCmd(target, cmd);
+      const tmap = (typeof RobotControl !== 'undefined' && typeof RobotControl.getTargetsMap === 'function')
+        ? RobotControl.getTargetsMap() : null;
+      const res = await API.sendHttpCommand(target, cmd, '', null, tmap);
       if (res.success) {
-        showToast(`✅ 指令发送成功: ${res.raw_command || cmd}`, 'success', 2500);
+        showToast(`✅ HTTP 指令发送成功: ${res.command || cmd}`, 'success', 2500);
       } else {
-        showToast(`发送失败: ${res.msg}`, 'warning', 3500);
+        showToast(`HTTP 发送失败: ${res.msg}`, 'warning', 3500);
       }
     } catch (err) {
-      showToast(`发送异常: ${err.message}`, 'error');
+      showToast(`HTTP 发送异常: ${err.message}`, 'error');
     }
   },
 

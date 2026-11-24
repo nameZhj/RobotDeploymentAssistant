@@ -81,10 +81,17 @@ def test_motion_commands_and_reserved_dance_slot(tmp_path: Path) -> None:
     mv = ctx.motion_exec.execute("MOVE", ["0.5", "0", "0", "2"])
     assert mv.ok and abs(mv.details["vx"] - 0.30) < 1e-6
 
-    # Dance maps to authentic RESERVED_SLOT with keys from lora_recv_group.yaml
-    dn = ctx.motion_exec.execute("DANCE", ["G1_TAIJI"])
+    # Dance maps to authentic RESERVED_SLOT with case-insensitive lookup from lora_recv_group.yaml
+    dn = ctx.motion_exec.execute("DANCE", ["g1_taiji"])
     assert dn.ok and dn.execution_mode == "RESERVED_SLOT"
     assert dn.details["mapped_keys"] == ["L1", "LEFT"]
+
+    # Comma-separated command string & DISCOVER work seamlessly
+    dn2 = ctx.motion_exec.execute("DANCE,G1_TAIJI")
+    assert dn2.ok and dn2.params == ["G1_TAIJI"]
+    disc = ctx.motion_exec.execute("DISCOVER")
+    assert disc.ok and disc.details["robot_id"]["robot_id"] == "A"
+    assert ctx.motion_exec.get_state()["motion"]["active_dance"] == "G1_TAIJI"
 
     # Unregistered dance must be rejected
     bad = ctx.motion_exec.execute("DANCE", ["NON_EXISTENT_DANCE"])
@@ -152,7 +159,11 @@ def test_task_chain_arrival_progression_and_stop_to_origin(tmp_path: Path) -> No
             "plan_id": "8001",
             "origin_pose": {"x": -1.0, "y": 0.0, "yaw": 0.0},
             "chain_nodes": [
-                {"node_type": "trajectory", "title": "导航到点1", "target_x": 2.0, "target_y": 0.0, "target_yaw": 0.0},
+                {
+                    "node_type": "trajectory", "title": "导航到点1",
+                    "target_x": 2.0, "target_y": 0.0, "target_yaw": 0.0,
+                    "waypoints": [{"x": 1.0, "y": 0.5, "yaw": 0.0}, {"x": 2.0, "y": 0.0, "yaw": 0.0}],
+                },
                 {"node_type": "action", "title": "太极", "lrmp_code": "G1_TAIJI"},
             ],
         })
@@ -166,6 +177,9 @@ def test_task_chain_arrival_progression_and_stop_to_origin(tmp_path: Path) -> No
 
         ev_names = [e["event"] for e in events]
         assert "STEP_STARTED" in ev_names and "STEP_COMPLETED" in ev_names and "CHAIN_COMPLETED" in ev_names
+        # Multi-waypoint sequential dispatch: intermediate (1.0, 0.5) published before final (2.0, 0.0)
+        assert (1.0, 0.5) in published_goals and (2.0, 0.0) in published_goals
+        assert published_goals.index((1.0, 0.5)) < published_goals.index((2.0, 0.0))
         # Action node 2 only started AFTER navigation node 1 reached target (2.0, 0.0)
         idx_nav_done = next(i for i, e in enumerate(events) if e["event"] == "STEP_COMPLETED" and e.get("title") == "导航到点1")
         idx_act_start = next(i for i, e in enumerate(events) if e["event"] == "STEP_STARTED" and e.get("title") == "太极")
@@ -232,6 +246,23 @@ def test_system_ops_diagnostics_barrier_and_lora_agent(tmp_path: Path) -> None:
         base = f"http://127.0.0.1:{port}"
         c_pre, pre = _http_call(f"{base}/api/v1/system/precheck")
         assert c_pre == 200 and pre["dance_registry_available"] is True and pre["deploy_root_exists"] is True
+        assert "items" in pre and "robot_id" in pre["items"]
+
+        c_post, post_res = _http_call(f"{base}/api/v1/control/posture", "POST", {"posture": "STAND"})
+        assert c_post == 200 and post_res["ok"] is True
+        c_vel, vel_res = _http_call(f"{base}/api/v1/control/velocity", "POST", {"direction": "FORWARD", "duration": 1.5})
+        assert c_vel == 200 and vel_res["ok"] is True
+        c_dan, dan_res = _http_call(f"{base}/api/v1/control/dance", "POST", {"alias": "G1_TAIJI"})
+        assert c_dan == 200 and dan_res["ok"] is True
+        c_st, st_res = _http_call(f"{base}/api/v1/control/state")
+        assert c_st == 200 and st_res["motion"]["active_dance"] == "G1_TAIJI"
+        c_stp, stp_res = _http_call(f"{base}/api/v1/control/stop", "POST", {"emergency": False})
+        assert c_stp == 200 and stp_res["ok"] is True
+        assert _http_call(f"{base}/api/v1/control/posture", "POST", {"posture": "RELEASE"})[0] == 200
+        c_dk, dk_res = _http_call(f"{base}/api/v1/system/docker")
+        assert c_dk == 200 and "containers" in dk_res
+        c_ct, ct_res = _http_call(f"{base}/api/v1/system/container", "POST", {"action": "restart", "container_name": "vsis_g1"})
+        assert c_ct == 200 and ct_res["ok"] is True
 
         c_rid, rid = _http_call(f"{base}/api/v1/system/robot_id", "POST", {"robot_id": "B", "write_autostart": False})
         assert c_rid == 200 and rid["robot_id"] == "B"
@@ -258,6 +289,9 @@ def test_system_ops_diagnostics_barrier_and_lora_agent(tmp_path: Path) -> None:
 
         c_scan, scan = _http_call(f"{base}/api/v1/slam/scan")
         assert c_scan == 200 and scan["ok"] is True and scan["sample_count"] == 3
+
+        c_rlog, rlog = _http_call(f"{base}/api/v1/system/logs?type=ros_nav")
+        assert c_rlog == 200 and rlog["ok"] is True and "navctl status" in rlog["raw_text"]
 
         c_teb, teb = _http_call(f"{base}/api/v1/navigation/teb_params", "POST", {"params": {"max_vel_x": 0.8}})
         assert c_teb == 200 and teb["ok"] is True
@@ -295,5 +329,91 @@ def test_system_ops_diagnostics_barrier_and_lora_agent(tmp_path: Path) -> None:
         g_res = nav_bridge.publish_nav_goal(1.5, -0.5, 0.0)
         assert g_res["ok"] is True and captured and "navctl shell -c" in captured[0]
     finally:
+        srv.stop()
+
+
+def test_dynamic_ros_discovery_sse_stream_binary_cloud_and_maps(tmp_path: Path) -> None:
+    map_dir = tmp_path / "dynamic_maps"
+    map_dir.mkdir(parents=True, exist_ok=True)
+    real_pcd = map_dir / "scans_live.pcd"
+    real_pcd.write_text("# .PCD v0.7\nVERSION 0.7\nFIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\nWIDTH 2\nHEIGHT 1\nPOINTS 2\nDATA ascii\n0.0 0.0 0.5\n1.0 1.0 0.8\n", encoding="utf-8")
+    vel_cmds: List[str] = []
+
+    def _dyn_shell(cmd: str, _t: float):
+        if "rostopic list -v" in cmd:
+            return 0, (
+                "Published topics:\n"
+                " * /Odometry [nav_msgs/Odometry] 1 publisher\n"
+                " * /cloud_registered [sensor_msgs/PointCloud2] 1 publisher\n"
+                " * /global_planner/path [nav_msgs/Path] 1 publisher\n"
+                " * /cad_scan [sensor_msgs/LaserScan] 1 publisher\n"
+                " * /local_nav_status [std_msgs/String] 1 publisher\n\n"
+                "Subscribed topics:\n"
+                " * /cmd_vel [geometry_msgs/Twist] 1 subscriber\n"
+            ), ""
+        if "rosparam list" in cmd:
+            return 0, "/fast_lio/map_save_dir\n", ""
+        if "rosparam get /fast_lio/map_save_dir" in cmd:
+            return 0, str(map_dir), ""
+        if "rostopic echo -n 1 /Odometry" in cmd:
+            return 0, "position:\n  x: 1.25\n  y: -0.75\norientation:\n  x: 0.0\n  y: 0.0\n  z: 0.0\n  w: 1.0", ""
+        if "rostopic echo -n 1 /cad_scan" in cmd:
+            return 0, "angle_min: 0.0\nangle_increment: 1.5708\nranges: [1.5, 2.0]", ""
+        if "rostopic pub -1 /cmd_vel" in cmd:
+            vel_cmds.append(cmd)
+            return 0, "ok", ""
+        return 0, "", ""
+
+    cfg = RosEnvConfig(cache_dir=tmp_path / "cache", maps_dir=tmp_path / "unused_maps")
+    ros_bridge = RosTopicServiceBridge(cfg=cfg, master_checker=lambda: True, shell_runner=_dyn_shell)
+    ctx = LowerComputerContext(cfg=cfg, ros_bridge=ros_bridge)
+    srv = LowerComputerHttpServer(ctx, host="127.0.0.1", port=0)
+    port = srv.start()
+    try:
+        base = f"http://127.0.0.1:{port}"
+        c_d, disc = _http_call(f"{base}/api/v1/navigation/discovery")
+        assert c_d == 200 and disc["endpoints"]["odom_topic"] == "/Odometry"
+        assert disc["endpoints"]["cloud_topic"] == "/cloud_registered"
+        assert disc["endpoints"]["cmd_vel_topic"] == "/cmd_vel"
+        assert disc["maps"]["count"] == 1 and str(real_pcd) in disc["maps"]["maps"][0]["path"]
+
+        vel_res = ros_bridge.publish_cmd_vel(0.4, 0.0, 0.0, duration_s=0.35)
+        assert vel_res["ok"] is True and vel_res["topic"] == "/cmd_vel"
+        time.sleep(0.55)
+        assert len(vel_cmds) >= 3 and "x: 0.0000" in vel_cmds[-1]
+
+        ctx.slam_tap.push_points_list([(0.1, 0.2, 0.3), (1.1, 1.2, 0.5)])
+        opener = urlrequest.build_opener(urlrequest.ProxyHandler({}))
+        with opener.open(f"{base}/api/v1/slam/stream", timeout=2.5) as sse_resp:
+            line = sse_resp.readline().decode("utf-8").strip()
+            assert line.startswith("data:")
+            ev = json.loads(line[5:].strip())
+            assert ev["cloud_seq"] == 1 and ev["point_count"] == 2
+        with opener.open(f"{base}/api/v1/slam/live_cloud?since_seq=0", timeout=2.5) as bin_resp:
+            assert bin_resp.status == 200 and len(bin_resp.read()) == 24
+        with opener.open(f"{base}/api/v1/slam/map.pcd", timeout=2.5) as pcd_resp:
+            assert b"1.0 1.0 0.8" in pcd_resp.read()
+
+        # Verify local .pcd push to robot map directory + bad-header rejection
+        up_bytes = b"# .PCD v0.7\nVERSION 0.7\nFIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\nWIDTH 1\nHEIGHT 1\nPOINTS 1\nDATA ascii\n2.5 3.5 0.4\n"
+        req_up = urlrequest.Request(
+            f"{base}/api/v1/slam/map/upload?filename=user_stage.pcd&restart_localization=0",
+            data=up_bytes, headers={"Content-Type": "application/octet-stream"}, method="POST",
+        )
+        with opener.open(req_up, timeout=2.5) as up_resp:
+            up_data = json.loads(up_resp.read().decode("utf-8"))
+            assert up_resp.status == 200 and up_data["ok"] is True
+            assert (map_dir / "user_stage.pcd").exists()
+        bad_req = urlrequest.Request(
+            f"{base}/api/v1/slam/map/upload?filename=bad.pcd",
+            data=b"not a pcd file", headers={"Content-Type": "application/octet-stream"}, method="POST",
+        )
+        try:
+            opener.open(bad_req, timeout=2.0)
+            assert False, "invalid PCD header must return 400"
+        except urlerror.HTTPError as ex:
+            assert ex.code == 400
+    finally:
+        ros_bridge.stop_cmd_vel()
         srv.stop()
 

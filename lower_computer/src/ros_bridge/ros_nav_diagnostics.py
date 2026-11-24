@@ -10,7 +10,7 @@ import shlex
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.config.ros_env_config import ROS_SERVICES, ROS_TOPICS, RosEnvConfig
-
+from src.ros_bridge.ros_runtime_discovery import RosRuntimeDiscovery
 
 ShellRunner = Callable[[str, float], Tuple[int, str, str]]
 
@@ -18,12 +18,21 @@ ShellRunner = Callable[[str, float], Tuple[int, str, str]]
 class RosNavDiagnostics:
     """Executes authentic ROS 1.17.4 inspection and TEB dynamic reconfigure commands from 下位机ros信息 §3."""
 
-    def __init__(self, cfg: RosEnvConfig, shell_runner: ShellRunner, use_navctl_shell: bool = False) -> None:
+    def __init__(
+        self,
+        cfg: RosEnvConfig,
+        shell_runner: ShellRunner,
+        use_navctl_shell: bool = False,
+        discovery: Optional[RosRuntimeDiscovery] = None,
+    ) -> None:
         self.cfg = cfg
         self._raw_shell = shell_runner
         self.use_navctl_shell = use_navctl_shell
+        self.discovery = discovery
 
     def run_ros_cmd(self, ros_cmd: str, timeout_s: float = 4.0) -> Tuple[int, str, str]:
+        if self.discovery is not None:
+            return self.discovery.run_ros_cmd(ros_cmd, timeout_s)
         if self.use_navctl_shell:
             wrapped = f"sudo -n {shlex.quote(self.cfg.navctl_bin)} shell -c {shlex.quote(ros_cmd)}"
             return self._raw_shell(wrapped, timeout_s)
@@ -56,20 +65,20 @@ class RosNavDiagnostics:
         }
 
     def read_tf_map_to_base_link(self) -> Optional[Tuple[float, float, float]]:
-        """Read single transform from `rosrun tf tf_echo map base_link`."""
-        rc, out, _ = self.run_ros_cmd("rosrun tf tf_echo map base_link 1", 3.0)
-        if rc != 0 or not out:
-            return None
-        mt = re.search(r"Translation:\s*\[\s*([-0-9.eE+]+)\s*,\s*([-0-9.eE+]+)\s*,\s*([-0-9.eE+]+)\s*\]", out)
-        mr = re.search(r"in RPY \(radian\)\s*\[\s*([-0-9.eE+]+)\s*,\s*([-0-9.eE+]+)\s*,\s*([-0-9.eE+]+)\s*\]", out)
-        if not mt:
-            return None
-        x, y = float(mt.group(1)), float(mt.group(2))
-        yaw = float(mr.group(3)) if mr else 0.0
-        return (x, y, yaw)
+        """Read single transform from `rosrun tf tf_echo` across localization and mapping frame pairs."""
+        for parent_f, child_f in (("map", "base_link"), ("camera_init", "body"), ("odom", "base_link")):
+            rc, out, _ = self.run_ros_cmd(f"rosrun tf tf_echo {parent_f} {child_f} 1", 2.5)
+            if rc != 0 or not out:
+                continue
+            mt = re.search(r"Translation:\s*\[\s*([-0-9.eE+]+)\s*,\s*([-0-9.eE+]+)\s*,\s*([-0-9.eE+]+)\s*\]", out)
+            mr = re.search(r"in RPY \(radian\)\s*\[\s*([-0-9.eE+]+)\s*,\s*([-0-9.eE+]+)\s*,\s*([-0-9.eE+]+)\s*\]", out)
+            if mt:
+                return (float(mt.group(1)), float(mt.group(2)), float(mr.group(3)) if mr else 0.0)
+        return None
 
     def read_cmd_vel(self) -> Optional[Tuple[float, float, float]]:
-        rc, out, _ = self.run_ros_cmd(f"rostopic echo -n 1 {ROS_TOPICS['cmd_vel']['topic']}", 2.5)
+        topic = self.discovery.current.cmd_vel_topic if self.discovery else ROS_TOPICS["cmd_vel"]["topic"]
+        rc, out, _ = self.run_ros_cmd(f"rostopic echo -n 1 {topic}", 2.5)
         if rc != 0 or not out:
             return None
         ml = re.search(r"linear:\s*\n\s*x:\s*([-0-9.eE+]+)\s*\n\s*y:\s*([-0-9.eE+]+)", out)
@@ -79,7 +88,8 @@ class RosNavDiagnostics:
         return (float(ml.group(1)), float(ml.group(2)), float(ma.group(1)) if ma else 0.0)
 
     def read_global_path(self) -> List[Dict[str, float]]:
-        rc, out, _ = self.run_ros_cmd(f"rostopic echo -n 1 {ROS_TOPICS['global_path']['topic']}", 3.0)
+        topic = self.discovery.current.global_path_topic if self.discovery else ROS_TOPICS["global_path"]["topic"]
+        rc, out, _ = self.run_ros_cmd(f"rostopic echo -n 1 {topic}", 3.0)
         if rc != 0 or not out:
             return []
         pts: List[Dict[str, float]] = []
@@ -87,26 +97,36 @@ class RosNavDiagnostics:
             pts.append({"x": float(m.group(1)), "y": float(m.group(2))})
         return pts
 
-    def read_cad_scan_summary(self) -> Dict[str, Any]:
-        rc, out, err_s = self.run_ros_cmd(f"rostopic echo -n 1 {ROS_TOPICS['cad_scan']['topic']}", 2.5)
+    def read_cad_scan_summary(self, robot_pose: Optional[Tuple[float, float, float]] = None) -> Dict[str, Any]:
+        topic = self.discovery.current.scan_topic if self.discovery else ROS_TOPICS["cad_scan"]["topic"]
+        rc, out, err_s = self.run_ros_cmd(f"rostopic echo -n 1 {topic}", 2.5)
         if rc != 0 or not out:
-            return {"ok": False, "topic": ROS_TOPICS["cad_scan"]["topic"], "reason": err_s or "无 /cad_scan 数据"}
+            return {"ok": False, "topic": topic, "reason": err_s or f"无 {topic} 数据"}
+        ma = re.search(r"angle_min:\s*([-0-9.eE+]+)", out)
+        mi = re.search(r"angle_increment:\s*([-0-9.eE+]+)", out)
         mr = re.search(r"ranges:\s*\[([^\]]+)\]", out)
+        ang_min = float(ma.group(1)) if ma else -math.pi
+        ang_inc = float(mi.group(1)) if mi else (2.0 * math.pi / 360.0)
+        rx, ry, ryaw = robot_pose or (0.0, 0.0, 0.0)
         ranges: List[float] = []
+        points_xy: List[List[float]] = []
         if mr:
-            for tok in mr.group(1).split(",")[:360]:
+            for idx, tok in enumerate(mr.group(1).split(",")[:360]):
                 try:
                     v = float(tok.strip())
                     if math.isfinite(v) and v > 0.02:
                         ranges.append(round(v, 3))
+                        ang = ryaw + ang_min + idx * ang_inc
+                        points_xy.append([round(rx + v * math.cos(ang), 3), round(ry + v * math.sin(ang), 3)])
                 except ValueError:
                     pass
         return {
             "ok": True,
-            "topic": ROS_TOPICS["cad_scan"]["topic"],
+            "topic": topic,
             "sample_count": len(ranges),
             "min_range_m": min(ranges) if ranges else None,
             "ranges_preview": ranges[:60],
+            "points_xy": points_xy[:180],
         }
 
     def get_teb_parameters(self) -> Dict[str, Any]:

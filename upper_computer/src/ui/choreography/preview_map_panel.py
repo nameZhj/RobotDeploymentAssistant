@@ -13,7 +13,7 @@ from src.services.playback_coordinator import PlaybackCoordinator
 from src.services.studio_state_service import StudioStateService
 from src.ui.choreography.playback_progress_bar import PlaybackProgressBar
 from src.ui.choreography.stage_canvas_2d import StageCanvas2D
-from src.ui.choreography.stage_draw_overlay import StageDrawToolbar, StageHintFooter
+from src.ui.choreography.stage_draw_overlay import StageDrawToolbar
 from src.ui.design_system.u_buttons import UButton, UIconButton, USegmented
 from src.ui.design_system.u_dialog import UFloatBar
 from src.ui.design_system.u_panels import UPanel
@@ -24,9 +24,7 @@ class PreviewMapPanel(UPanel):
     """Upper-left choreography viewport host featuring live 3D G1 preview, inline 2D draw canvas, and scrubber."""
 
     def __init__(self, state: StudioStateService, playback: PlaybackCoordinator, parent=None) -> None:
-        from PySide6.QtCore import Signal
-        _ = Signal
-        super().__init__(title="舞台预览 & 轨迹绘制", header_widgets=[], parent=parent)
+        super().__init__(title="舞台预览", header_widgets=[], parent=parent)
         self.state = state
         self.playback = playback
 
@@ -51,6 +49,7 @@ class PreviewMapPanel(UPanel):
         hdr_lay = self.header_bar.layout()
         for w in (self.stage_pill, self.traj_toggle, self.reset_cam_btn, self.mode_switch):
             hdr_lay.addWidget(w)
+        self.set_help_text("左键点选或绘制路径，右键打开快捷菜单，滚轮缩放视角，Ctrl+Z 撤销。", title="舞台操作")
 
         holder = QWidget(self.body_widget)
         v_lay = QVBoxLayout(holder)
@@ -68,8 +67,7 @@ class PreviewMapPanel(UPanel):
         self.stack.setCurrentIndex(0)
         v_lay.addWidget(self.stack, 1)
 
-        self.hint_footer = StageHintFooter(holder)
-        v_lay.addWidget(self.hint_footer)
+        self.body_layout.addWidget(holder, 1)
 
         float_wrap = UFloatBar(holder)
         float_wrap.setFixedHeight(44)
@@ -124,4 +122,3 @@ class PreviewMapPanel(UPanel):
     def _on_mode_changed(self, mode: str) -> None:
         self.stack.setCurrentIndex(1 if mode == "3D" else 0)
         self.draw_toolbar.setVisible(mode == "2D")
-        self.hint_footer.setVisible(mode == "2D")

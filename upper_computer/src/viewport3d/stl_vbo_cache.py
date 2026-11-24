@@ -1,6 +1,6 @@
 # @file: src/viewport3d/stl_vbo_cache.py
-# @brief: Fast vectorized binary/ASCII STL loader and G1 multi-material color mapper for OpenGL.
-# @exports: StlMeshData, StlVboCache, g1_link_material_rgb
+# @brief: Fast vectorized binary/ASCII STL loader, GPU point-cloud VBO manager, and G1 material color mapper.
+# @exports: StlMeshData, StlVboCache, PointCloudVbo, g1_link_material_rgb
 
 from __future__ import annotations
 
@@ -112,3 +112,64 @@ def g1_link_material_rgb(
         r, g, b = track_rgb
         return (0.14 + 0.16 * r, 0.16 + 0.16 * g, 0.21 + 0.16 * b)
     return (0.78, 0.82, 0.87)
+
+
+class PointCloudVbo:
+    """GPU VBO owner for dynamic SLAM/PCD clouds with explicit buffer release to avoid VRAM leaks."""
+
+    def __init__(self) -> None:
+        self._vbo_xyz: int = 0
+        self._vbo_rgb: int = 0
+        self._dirty: bool = False
+        self._count: int = 0
+
+    def mark_dirty(self, count: int) -> None:
+        self._count = count
+        self._dirty = True
+
+    def release(self, gl_mod) -> None:
+        ids = [b for b in (self._vbo_xyz, self._vbo_rgb) if b]
+        self._vbo_xyz = self._vbo_rgb = 0
+        if ids and hasattr(gl_mod, "glDeleteBuffers"):
+            try:
+                gl_mod.glDeleteBuffers(len(ids), ids)
+            except Exception:
+                pass
+
+    def draw(self, gl_mod, xyz: np.ndarray, rgb: Optional[np.ndarray]) -> None:
+        use_vbo = bool(hasattr(gl_mod, "glGenBuffers") and bool(getattr(gl_mod, "glBufferData", None)))
+        if not use_vbo:
+            gl_mod.glVertexPointer(3, gl_mod.GL_FLOAT, 0, xyz)
+            if rgb is not None:
+                gl_mod.glEnableClientState(gl_mod.GL_COLOR_ARRAY)
+                gl_mod.glColorPointer(3, gl_mod.GL_FLOAT, 0, rgb)
+            else:
+                gl_mod.glColor3f(0.35, 0.65, 0.78)
+            gl_mod.glDrawArrays(gl_mod.GL_POINTS, 0, len(xyz))
+            if rgb is not None:
+                gl_mod.glDisableClientState(gl_mod.GL_COLOR_ARRAY)
+            return
+
+        if self._dirty:
+            self.release(gl_mod)
+            self._vbo_xyz = int(gl_mod.glGenBuffers(1))
+            gl_mod.glBindBuffer(gl_mod.GL_ARRAY_BUFFER, self._vbo_xyz)
+            gl_mod.glBufferData(gl_mod.GL_ARRAY_BUFFER, xyz.nbytes, xyz, gl_mod.GL_DYNAMIC_DRAW)
+            if rgb is not None:
+                self._vbo_rgb = int(gl_mod.glGenBuffers(1))
+                gl_mod.glBindBuffer(gl_mod.GL_ARRAY_BUFFER, self._vbo_rgb)
+                gl_mod.glBufferData(gl_mod.GL_ARRAY_BUFFER, rgb.nbytes, rgb, gl_mod.GL_DYNAMIC_DRAW)
+            self._dirty = False
+
+        gl_mod.glBindBuffer(gl_mod.GL_ARRAY_BUFFER, self._vbo_xyz)
+        gl_mod.glVertexPointer(3, gl_mod.GL_FLOAT, 0, None)
+        if self._vbo_rgb and rgb is not None:
+            gl_mod.glEnableClientState(gl_mod.GL_COLOR_ARRAY)
+            gl_mod.glBindBuffer(gl_mod.GL_ARRAY_BUFFER, self._vbo_rgb)
+            gl_mod.glColorPointer(3, gl_mod.GL_FLOAT, 0, None)
+        else:
+            gl_mod.glColor3f(0.35, 0.65, 0.78)
+        gl_mod.glDrawArrays(gl_mod.GL_POINTS, 0, self._count)
+        gl_mod.glBindBuffer(gl_mod.GL_ARRAY_BUFFER, 0)
+        if self._vbo_rgb and rgb is not None:
+            gl_mod.glDisableClientState(gl_mod.GL_COLOR_ARRAY)

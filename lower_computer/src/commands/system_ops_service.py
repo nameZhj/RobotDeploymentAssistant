@@ -47,15 +47,44 @@ class SystemOpsService:
         reg = self.reader.read_dance_registry()
         mid = self.reader.read_machine_id_digest()
         ch341_exists = Path("/dev/ttyCH341USB0").exists()
+        deploy_ok = self.cfg.deploy_root.exists()
+        items = {
+            "robot_id": {
+                "name": "机器人唯一 ID", "status": "ok" if rid["configured"] else "warning",
+                "version": rid["robot_id"], "msg": f"来源: {rid['source']}", "can_fix": False,
+            },
+            "license": {
+                "name": "商业授权 License", "status": "ok" if lic["present"] else "warning",
+                "version": f"{len(lic.get('dances', []))} 项动作" if lic["present"] else "未部署",
+                "msg": lic.get("customer") or lic.get("reason", ""), "can_fix": False,
+            },
+            "dance_registry": {
+                "name": "机载动作映射表", "status": "ok" if reg["available"] else "warning",
+                "version": f"{reg['total_count']} 项", "msg": reg.get("source", ""), "can_fix": False,
+            },
+            "serial_ch341": {
+                "name": "机载 LoRa 配网串口", "status": "ok" if ch341_exists else "warning",
+                "version": "/dev/ttyCH341USB0" if ch341_exists else "未检测到",
+                "msg": "仅用于无线 Wi-Fi 配网通道" if ch341_exists else "未挂载 ttyCH341USB0（不影响 Wi-Fi HTTP 控制）",
+                "can_fix": not ch341_exists,
+            },
+            "deploy_root": {
+                "name": "机载部署根目录", "status": "ok" if deploy_ok else "error",
+                "version": str(self.cfg.deploy_root),
+                "msg": "部署目录就绪" if deploy_ok else "未找到机载部署目录", "can_fix": False,
+            },
+        }
         return {
             "ok": True,
+            "all_passed": all(v["status"] == "ok" for v in items.values()),
+            "items": items,
             "robot_id": rid,
             "license": lic,
             "dance_registry_available": reg["available"],
             "dance_count": reg["total_count"],
             "machine_id": mid,
             "tty_ch341_present": ch341_exists,
-            "deploy_root_exists": self.cfg.deploy_root.exists(),
+            "deploy_root_exists": deploy_ok,
         }
 
     def configure_robot_id_and_autostart(self, robot_id: str, write_autostart: bool = True) -> Dict[str, Any]:
@@ -160,7 +189,54 @@ class SystemOpsService:
         rc, out, _ = self._shell("ps -ef", 3.0)
         for name in targets:
             status_map[name] = (rc == 0 and name in out)
-        return {"ok": True, "processes": status_map}
+        g1_on = status_map["g1_ctrl_vsis"]
+        lora_on = status_map["lora_recv_group"]
+        return {
+            "ok": True,
+            "processes": status_map,
+            "g1_ctrl_running": g1_on,
+            "lora_recv_running": lora_on,
+            "all_running": g1_on and lora_on,
+        }
+
+    def get_docker_status(self) -> Dict[str, Any]:
+        rc_c, out_c, _ = self._shell("docker ps -a --format '{{.Names}}|{{.Image}}|{{.Status}}'", 4.0)
+        containers: List[Dict[str, str]] = []
+        if rc_c == 0 and out_c:
+            for ln in out_c.splitlines():
+                parts = ln.split("|")
+                if len(parts) >= 3:
+                    containers.append({"name": parts[0].strip(), "image": parts[1].strip(), "status": parts[2].strip()})
+        rc_i, out_i, _ = self._shell("docker images --format '{{.Repository}}:{{.Tag}}|{{.ID}}|{{.Size}}'", 4.0)
+        images: List[Dict[str, str]] = []
+        if rc_i == 0 and out_i:
+            for ln in out_i.splitlines():
+                parts = ln.split("|")
+                if len(parts) >= 3:
+                    images.append({"name": parts[0].strip(), "id": parts[1].strip(), "size": parts[2].strip()})
+        running = [c for c in containers if c["status"].lower().startswith("up")]
+        return {
+            "ok": rc_c == 0 or rc_i == 0,
+            "containers": containers,
+            "running_containers": running,
+            "images": images,
+            "is_container_running": bool(running),
+            "autostart_configured": Path("/docker_config/custom_startup.sh").exists(),
+        }
+
+    def control_container(self, action: str, container_name: str = "vsis_g1") -> Dict[str, Any]:
+        act = (action or "").strip().lower()
+        name = (container_name or "vsis_g1").strip()
+        if act not in ("start", "stop", "restart"):
+            return {"ok": False, "message": f"不支持的容器操作: {action}"}
+        if any(c in name for c in " ;|&$`'\""):
+            return {"ok": False, "message": f"非法容器名: {container_name}"}
+        rc, out, err_s = self._shell(f"docker {act} {name}", 15.0)
+        return {
+            "ok": rc == 0, "action": act, "container": name,
+            "stdout": out, "stderr": err_s,
+            "message": f"容器 {name} 执行 {act} 成功" if rc == 0 else (err_s or f"容器 {act} 失败"),
+        }
 
     def control_processes(self, action: str) -> Dict[str, Any]:
         act = (action or "").strip().lower()
@@ -178,17 +254,40 @@ class SystemOpsService:
             return self.control_processes("start")
         return {"ok": False, "message": f"不支持的进程操作: {action}"}
 
-    def fetch_logs(self, log_type: str = "sec_run", lines: int = 200) -> Dict[str, Any]:
+    def fetch_logs(self, log_type: str = "sec_run", lines: int = 200, container: str = "vsis_g1") -> Dict[str, Any]:
         n = max(10, min(2000, int(lines)))
+        lt = (log_type or "sec_run").strip().lower()
+        if lt == "container":
+            cname = (container or "vsis_g1").strip()
+            rc, out, err_s = self._shell(f"docker logs --tail {n} {cname} 2>&1", 6.0)
+            text = out or err_s
+            return {"ok": rc == 0, "log_type": lt, "target_container": cname, "lines": text.splitlines(), "raw_text": text, "message": "" if rc == 0 else err_s}
+        if lt == "dmesg":
+            rc, out, err_s = self._shell(f"dmesg -T 2>/dev/null | tail -n {n}", 4.0)
+            text = out or err_s
+            return {"ok": rc == 0, "log_type": lt, "lines": text.splitlines(), "raw_text": text, "message": "" if rc == 0 else err_s}
+        if lt in ("ros_nav", "navctl"):
+            sections = []
+            for label, cmd in (
+                ("navctl status", f"sudo -n {self.cfg.navctl_bin} status 2>&1"),
+                ("rosnode list", "rosnode list 2>&1"),
+                ("rostopic list", "rostopic list 2>&1"),
+                ("local_nav_status", "rostopic echo -n 1 /local_nav_status 2>&1"),
+            ):
+                _rc, so, se = self._shell(cmd, 3.0)
+                sections.append(f"=== [{label}] ===\n{so or se or '(无输出)'}")
+            text = "\n\n".join(sections)
+            return {"ok": True, "log_type": lt, "lines": text.splitlines()[-n:], "raw_text": text}
         log_map = {
             "sec_run": self.cfg.deploy_root / "log" / "sec_run.log",
+            "g1_ctrl": self.cfg.deploy_root / "log" / "sec_run.log",
             "lora_recv": self.cfg.deploy_root / "log" / "lora_recv.log",
         }
-        path = log_map.get(log_type, log_map["sec_run"])
+        path = log_map.get(lt, log_map["sec_run"])
         if not path.exists():
-            return {"ok": False, "log_type": log_type, "path": str(path), "lines": [], "message": f"日志文件不存在: {path}"}
-        all_lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-        return {"ok": True, "log_type": log_type, "path": str(path), "lines": all_lines[-n:]}
+            return {"ok": False, "log_type": lt, "path": str(path), "lines": [], "raw_text": "", "message": f"日志文件不存在: {path}"}
+        all_lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()[-n:]
+        return {"ok": True, "log_type": lt, "path": str(path), "lines": all_lines, "raw_text": "\n".join(all_lines)}
 
     def clock_status(self) -> Dict[str, Any]:
         now_ms = int(time.time() * 1000)

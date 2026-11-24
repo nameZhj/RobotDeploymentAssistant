@@ -40,6 +40,9 @@ def main(argv: list[str] | None = None) -> int:
     auto_navctl = args.use_navctl_shell or (shutil.which("rostopic") is None and Path(cfg.navctl_bin).exists())
     ros_bridge = RosTopicServiceBridge(cfg=cfg, use_navctl_shell=auto_navctl)
     ctx = LowerComputerContext(cfg=cfg, ros_bridge=ros_bridge)
+    if ctx.ros_bridge.is_ros_master_reachable():
+        ctx.discovery.discover_topics(force=True)
+        ctx.slam_tap.start()
     lora_daemon = None
     if args.lora_serial_port:
         lora_daemon = LoraSerialWifiDaemon(ctx.lora_wifi, ctx.config_reader, args.lora_serial_port, args.lora_baud)

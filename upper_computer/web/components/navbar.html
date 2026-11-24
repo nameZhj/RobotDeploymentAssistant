@@ -9,10 +9,10 @@
     </div>
 
     <div class="nav-connection-panel">
-      <!-- LoRa 串口通信状态指示器 -->
-      <div class="status-badge disconnected" id="ctrl-serial-status-badge" title="LoRa 串口通信状态">
+      <!-- Wi-Fi 局域网 HTTP 通信状态指示器 -->
+      <div class="status-badge disconnected" id="ctrl-serial-status-badge" title="Wi-Fi 局域网 HTTP 通信状态（仅修改 Wi-Fi 配网使用 LoRa）">
         <span class="status-dot"></span>
-        <span id="ctrl-serial-status-text">未连接</span>
+        <span id="ctrl-serial-status-text">HTTP 待添加</span>
       </div>
 
       <button class="btn-nav-action" id="btn-open-wizard"
@@ -21,12 +21,7 @@
 
       <button class="btn-nav-action" id="btn-open-studio-window"
         style="background: linear-gradient(135deg, rgba(30, 111, 255, 0.35), rgba(147, 51, 234, 0.35)); border: 1px solid rgba(96, 165, 250, 0.8); color: #93c5fd; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 0 14px rgba(59, 130, 246, 0.35);"
-        title="打开舞台编导与集群演播控制台 (ChoreoNexus Studio 桌面窗口)">🎬 舞台编导</button>
-
-      <button class="btn-nav-action" id="btn-open-dance-preview"
-        style="background: linear-gradient(135deg, rgba(236, 72, 153, 0.2), rgba(168, 85, 247, 0.2)); border: 1px solid rgba(236, 72, 153, 0.4); color: #f472b6; font-weight: 600; display: inline-flex; align-items: center; gap: 5px;"
-        title="打开 3D 舞蹈预览与动作库 (新窗口)">💃
-        舞蹈预览</button>
+        title="打开 UniSwarm Studio 桌面工作台（含 3D 预览、建图导航、队形与任务链编排）">🎬 舞台编导 Studio</button>
 
       <button class="btn-nav-action" id="btn-open-network-mgr"
         style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.22), rgba(6, 182, 212, 0.22)); border: 1px solid rgba(52, 211, 153, 0.5); color: #6ee7b7; font-weight: 600; display: inline-flex; align-items: center; gap: 5px;"
@@ -39,19 +34,19 @@
           style="background: var(--bg-hover); border: 1px solid var(--border-color); padding: 6px 14px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 6px;">⚙️
           设置 ▼</button>
         <div id="settings-menu-content" class="settings-menu-content" style="display: none;">
-          <!-- 1. 机器人连接与 IP 状态区块 (UI仅在此展示) -->
+          <!-- 1. 机器人连接与 IP 状态区块 -->
           <div class="settings-status-card">
             <div class="settings-status-row">
-              <span class="settings-status-label">🔌 机器人连接状态</span>
+              <span class="settings-status-label">🌐 Wi-Fi HTTP 主通道</span>
               <div class="conn-status-indicator">
                 <span class="status-dot" id="status-dot"></span>
-                <span id="status-text">未连接</span>
+                <span id="status-text">未绑定</span>
               </div>
             </div>
             <div class="settings-ip-row">
               <div class="settings-ip-info">
-                <span style="font-size: 0.75rem; color: var(--text-muted);">地址:</span>
-                <span class="conn-info-text" id="conn-info-display">192.168.123.164:22</span>
+                <span style="font-size: 0.75rem; color: var(--text-muted);">目标地址:</span>
+                <span class="conn-info-text" id="conn-info-display">未绑定</span>
               </div>
               <button id="btn-global-disconnect" style="display: none;"></button>
             </div>

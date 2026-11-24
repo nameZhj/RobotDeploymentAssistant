@@ -1884,6 +1884,16 @@ body {
   transform: rotate(45deg);
 }
 
+.help-tooltip-wrapper.align-right .help-tooltip-bubble {
+  left: auto;
+  right: 0;
+}
+
+.help-tooltip-wrapper.align-right .help-tooltip-bubble::before {
+  left: auto;
+  right: 8px;
+}
+
 .help-tooltip-wrapper:hover .help-tooltip-bubble,
 .help-tooltip-wrapper:focus-within .help-tooltip-bubble {
   opacity: 1;

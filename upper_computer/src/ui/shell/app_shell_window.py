@@ -112,7 +112,6 @@ class UniUniAppShell(QMainWindow):
         self.titlebar.sceneMenuClicked.connect(lambda: self._invoke_hook("stage_size"))
         self.titlebar.helpMenuClicked.connect(self._show_help_dialog)
         self.statusbar.initPointsClicked.connect(lambda: self._invoke_hook("init_points"))
-        self.statusbar.musicClicked.connect(lambda: self._invoke_hook("bpm_music"))
 
         from src.services.task_chain_normalizer import active_chain_node_label
         self.playback.timeChanged.connect(
@@ -170,9 +169,9 @@ class UniUniAppShell(QMainWindow):
         QMessageBox.information(
             self,
             "UniSwarm Studio 快捷键与操作指南",
-            "【通用快捷键】Space: 播放/暂停 | Ctrl+S: 保存工程 | Ctrl+Z/Y: 撤销/重做 | Ctrl+1..6: 切换工作区\n"
+            "【通用快捷键】Space: 本地预览播放/暂停 | Ctrl+S: 保存工程 | Ctrl+Z/Y: 撤销/重做 | Ctrl+1..5: 切换 5 大工作区\n"
             "【主舞台轨迹绘制】点击『轨迹绘制』后左键落点、右键完成并保存、Alt+左键平移动画布、Ctrl+Z 撤回点。\n"
-            "【任务链编排】点击『+ 轨道』添加真实机器人，按顺序衔接任务链节点，点击『停止回原点』立即终止并复位。",
+            "【真机任务链演出】在『舞蹈编排/队形规划』编排节点，在『表演监测』点击 PREP/PLAY/STOP 回原点（纯 Wi-Fi HTTP）。",
         )
 
     def closeEvent(self, event) -> None:

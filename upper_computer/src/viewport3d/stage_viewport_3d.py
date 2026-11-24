@@ -17,7 +17,7 @@ from src.services.studio_state_service import StudioStateService
 from src.viewport3d.dance_motion_player import DanceMotionPlayer, procedural_gait_angles
 from src.viewport3d.g1_kinematics_chain import get_g1_kinematics
 from src.viewport3d.orbit_camera import OrbitCamera
-from src.viewport3d.stl_vbo_cache import StlVboCache, g1_link_material_rgb
+from src.viewport3d.stl_vbo_cache import PointCloudVbo, StlVboCache, g1_link_material_rgb
 
 try:
     from OpenGL import GL, GLU
@@ -44,15 +44,13 @@ class StageViewport3D(QOpenGLWidget):
         self._last_pos: Optional[QPoint] = None
         self._pcd_xyz: Optional[np.ndarray] = None
         self._pcd_rgb: Optional[np.ndarray] = None
+        self._live_pose: Optional[Tuple[float, float, float]] = None
+        self._live_path: list = []
+        self._live_robot_poses: Dict[str, Tuple[float, float, float]] = {}
+        self._cloud_vbo = PointCloudVbo()
         self._gl_vbos: Dict[str, Tuple[int, int]] = {}
         self.setMinimumSize(240, 180)
-        for ev in (
-            StudioEvent.PLAYHEAD_MOVED,
-            StudioEvent.SCENE_CHANGED,
-            StudioEvent.TIMELINE_UPDATED,
-            StudioEvent.TRACKS_UPDATED,
-            StudioEvent.TRAJECTORY_LIB_UPDATED,
-        ):
+        for ev in (StudioEvent.PLAYHEAD_MOVED, StudioEvent.SCENE_CHANGED, StudioEvent.TIMELINE_UPDATED, StudioEvent.TRACKS_UPDATED, StudioEvent.TRAJECTORY_LIB_UPDATED):
             state.bus.subscribe(ev, lambda _p: self.update())
         state.bus.subscribe(StudioEvent.MAP_LOADED, lambda _p: self.sync_active_map_cloud())
         self.sync_active_map_cloud()
@@ -82,28 +80,40 @@ class StageViewport3D(QOpenGLWidget):
         self.camera.reset_preset(preset)
         self.update()
 
-    def set_point_cloud(self, points_xyz: Optional[np.ndarray], colors_rgb: Optional[np.ndarray] = None) -> None:
+    def set_point_cloud(
+        self, points_xyz: Optional[np.ndarray], colors_rgb: Optional[np.ndarray] = None, repaint: bool = True
+    ) -> None:
         if points_xyz is None or len(points_xyz) == 0:
             self._pcd_xyz, self._pcd_rgb = None, None
+            self._cloud_vbo.mark_dirty(0)
         else:
-            self._pcd_xyz = np.ascontiguousarray(points_xyz[:, :3], dtype=np.float32)
+            step = max(1, len(points_xyz) // 100000)
+            pts = points_xyz[::step]
+            self._pcd_xyz = np.ascontiguousarray(pts[:, :3], dtype=np.float32)
             self._pcd_rgb = (
-                np.ascontiguousarray(colors_rgb[:, :3], dtype=np.float32)
-                if colors_rgb is not None and len(colors_rgb) == len(points_xyz)
-                else None
+                np.ascontiguousarray(colors_rgb[::step, :3], dtype=np.float32)
+                if colors_rgb is not None and len(colors_rgb) == len(points_xyz) else None
             )
+            self._cloud_vbo.mark_dirty(len(self._pcd_xyz))
+        if repaint:
+            self.update()
+
+    def set_live_nav_pose(self, pose: Optional[Tuple[float, float, float]], global_path=None) -> None:
+        self._live_pose = pose
+        if global_path is not None:
+            self._live_path = [(float(pt[0]), float(pt[1])) for pt in global_path if len(pt) >= 2]
+        self.update()
+
+    def set_live_robot_poses(self, poses: Dict[str, Tuple[float, float, float]]) -> None:
+        self._live_robot_poses = {k.upper(): v for k, v in poses.items()}
         self.update()
 
     def initializeGL(self) -> None:
         if not _HAS_GL:
             return
         GL.glClearColor(0.024, 0.027, 0.031, 1.0)
-        GL.glEnable(GL.GL_DEPTH_TEST)
-        GL.glEnable(GL.GL_NORMALIZE)
-        GL.glEnable(GL.GL_LIGHTING)
-        GL.glEnable(GL.GL_LIGHT0)
-        GL.glEnable(GL.GL_LIGHT1)
-        GL.glEnable(GL.GL_COLOR_MATERIAL)
+        for cap in (GL.GL_DEPTH_TEST, GL.GL_NORMALIZE, GL.GL_LIGHTING, GL.GL_LIGHT0, GL.GL_LIGHT1, GL.GL_COLOR_MATERIAL):
+            GL.glEnable(cap)
         GL.glLightModeli(GL.GL_LIGHT_MODEL_TWO_SIDE, GL.GL_TRUE)
         GL.glColorMaterial(GL.GL_FRONT_AND_BACK, GL.GL_AMBIENT_AND_DIFFUSE)
         GL.glMaterialfv(GL.GL_FRONT_AND_BACK, GL.GL_SPECULAR, [0.45, 0.48, 0.54, 1.0])
@@ -135,7 +145,27 @@ class StageViewport3D(QOpenGLWidget):
         self._draw_stage_grid()
         self._draw_point_cloud()
         self._draw_trajectories()
+        self._draw_live_nav_3d()
         self._draw_robots()
+
+    def _draw_live_nav_3d(self) -> None:
+        if self._live_path and len(self._live_path) >= 2:
+            GL.glDisable(GL.GL_LIGHTING)
+            GL.glColor3f(0.13, 0.83, 0.93)
+            GL.glLineWidth(2.4)
+            GL.glBegin(GL.GL_LINE_STRIP)
+            for px, py in self._live_path:
+                GL.glVertex3f(px, py, 0.04)
+            GL.glEnd()
+        if self._live_pose is not None:
+            lx, ly, lyaw = self._live_pose
+            self._draw_footprint_ring(lx, ly, 0.42, False, (0.06, 0.72, 0.51))
+            GL.glDisable(GL.GL_LIGHTING)
+            GL.glColor3f(0.20, 0.95, 0.65)
+            GL.glBegin(GL.GL_LINES)
+            GL.glVertex3f(lx, ly, 0.12)
+            GL.glVertex3f(lx + 0.75 * math.cos(lyaw), ly + 0.75 * math.sin(lyaw), 0.12)
+            GL.glEnd()
 
     def _draw_stage_grid(self) -> None:
         GL.glDisable(GL.GL_LIGHTING)
@@ -162,19 +192,12 @@ class StageViewport3D(QOpenGLWidget):
 
     def _draw_point_cloud(self) -> None:
         if self._pcd_xyz is None or len(self._pcd_xyz) == 0:
+            self._cloud_vbo.release(GL)
             return
         GL.glDisable(GL.GL_LIGHTING)
         GL.glPointSize(2.0)
         GL.glEnableClientState(GL.GL_VERTEX_ARRAY)
-        GL.glVertexPointer(3, GL.GL_FLOAT, 0, self._pcd_xyz)
-        if self._pcd_rgb is not None:
-            GL.glEnableClientState(GL.GL_COLOR_ARRAY)
-            GL.glColorPointer(3, GL.GL_FLOAT, 0, self._pcd_rgb)
-        else:
-            GL.glColor3f(0.35, 0.65, 0.78)
-        GL.glDrawArrays(GL.GL_POINTS, 0, len(self._pcd_xyz))
-        if self._pcd_rgb is not None:
-            GL.glDisableClientState(GL.GL_COLOR_ARRAY)
+        self._cloud_vbo.draw(GL, self._pcd_xyz, self._pcd_rgb)
         GL.glDisableClientState(GL.GL_VERTEX_ARRAY)
 
     def _draw_trajectories(self) -> None:
@@ -203,23 +226,18 @@ class StageViewport3D(QOpenGLWidget):
 
     def _draw_robots(self) -> None:
         t = self.state.playhead_s
-        colliding: Set[str] = {
-            c.track_a for c in self.state.collisions if c.start_time <= t <= c.end_time
-        } | {
-            c.track_b for c in self.state.collisions if c.start_time <= t <= c.end_time
-        }
+        colliding: Set[str] = {n for c in self.state.collisions if c.start_time <= t <= c.end_time for n in (c.track_a, c.track_b)}
         GL.glEnable(GL.GL_LIGHTING)
         GL.glEnableClientState(GL.GL_VERTEX_ARRAY)
         GL.glEnableClientState(GL.GL_NORMAL_ARRAY)
-
         for track in self.state.tracks:
-            x, y, yaw = self.state.evaluate_robot_pose(track, t)
-            root_z, joints = self._resolve_robot_motion(track, t)
+            live_p = self._live_robot_poses.get(track.target_id.upper())
+            x, y, yaw = live_p if live_p is not None else self.state.evaluate_robot_pose(track, t)
+            root_z, joints = (0.793, np.zeros(29, dtype=np.float32)) if live_p is not None else self._resolve_robot_motion(track, t)
             track_rgb = _hex_rgb(track.color_hex)
             is_colliding = track.name in colliding
             self._draw_robot_meshes(x, y, yaw, root_z, joints, track_rgb, is_colliding)
             self._draw_footprint_ring(x, y, 0.38, is_colliding, track_rgb)
-
         GL.glDisableClientState(GL.GL_VERTEX_ARRAY)
         GL.glDisableClientState(GL.GL_NORMAL_ARRAY)
 
@@ -227,32 +245,16 @@ class StageViewport3D(QOpenGLWidget):
         action = self.state.active_action_at(track, t)
         if action is not None:
             blk = next(
-                (
-                    b for b in self.state.blocks
-                    if b.track_id == track.id and not b.is_ignored and b.block_type == "action" and b.start_time <= t <= b.end_time
-                ),
+                (b for b in self.state.blocks if b.track_id == track.id and not b.is_ignored and b.block_type == "action" and b.start_time <= t <= b.end_time),
                 None,
             )
             local_t = max(0.0, t - blk.start_time) if blk is not None else t
-            clip = self._motion_player.get_clip_for_action(
-                action.motion_file_path, lrmp_code=action.lrmp_code, action_no=action.no
-            )
-            return clip.sample_at(local_t)
+            return self._motion_player.get_clip_for_action(action.motion_file_path, lrmp_code=action.lrmp_code, action_no=action.no).sample_at(local_t)
         x0, y0, _ = self.state.evaluate_robot_pose(track, max(0.0, t - 0.05))
         x1, y1, _ = self.state.evaluate_robot_pose(track, t + 0.05)
-        speed = math.hypot(x1 - x0, y1 - y0) / 0.1
-        return procedural_gait_angles(t, speed)
+        return procedural_gait_angles(t, math.hypot(x1 - x0, y1 - y0) / 0.1)
 
-    def _draw_robot_meshes(
-        self,
-        x: float,
-        y: float,
-        yaw: float,
-        root_z: float,
-        joints: np.ndarray,
-        track_rgb: Tuple[float, float, float],
-        colliding: bool,
-    ) -> None:
+    def _draw_robot_meshes(self, x: float, y: float, yaw: float, root_z: float, joints: np.ndarray, track_rgb: Tuple[float, float, float], colliding: bool) -> None:
         parts = self._kinematics.solve_fk(x, y, yaw, root_z, joints)
         for rel_path, mat4 in parts:
             mesh = self._stl_cache.get_mesh(rel_path)

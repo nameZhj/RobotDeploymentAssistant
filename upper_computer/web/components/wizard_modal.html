@@ -104,9 +104,6 @@
                 style="width: 100%; padding: 9px 14px; font-size: 0.9rem; font-weight: 700; background: linear-gradient(135deg, #0284c7, #2563eb); box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35); border: none; border-radius: 6px; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; white-space: nowrap;">
                 ⚡ 设为同网段并连接
               </button>
-              <div style="font-size: 0.72rem; color: var(--text-muted); text-align: center; margin-top: 5px;">
-                自动将直连网卡配为 192.168.123.200 并自动握手连接目标机器人
-              </div>
             </div>
             <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.06); margin: 10px 0;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
@@ -114,7 +111,7 @@
               <button class="btn btn-primary btn-xs" id="btn-scan-network" style="white-space: nowrap; padding: 3px 8px;">🔍 一键全网扫描</button>
             </div>
             <div id="scan-results-list" style="max-height: 90px; overflow-y: auto; font-size: 0.76rem;">
-              <div style="font-size: 0.76rem; color: var(--text-muted); padding: 4px 0;">点击上方按钮扫描当前网段中的机器人与活跃主机</div>
+              <div style="font-size: 0.76rem; color: var(--text-muted); padding: 4px 0;">点击扫描当前网段设备</div>
             </div>
 
             <!-- Windows 本机 LoRa 串口驱动卡片 -->
@@ -141,7 +138,7 @@
         <div class="card" style="margin-bottom: 14px; padding: 14px 16px;">
           <div class="card-header" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.08);">
             <div class="card-title" style="font-size: 0.92rem; display: flex; align-items: center; gap: 8px;">
-              <span>🛠️ 机器人宿主机环境预检 (G1 硬件与运行时)</span>
+              <span>🛠️ 环境预检</span>
             </div>
             <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
               <button class="btn btn-secondary btn-sm" id="btn-run-precheck" onclick="Wizard.runPrecheck(false)" style="white-space: nowrap;">
@@ -149,20 +146,24 @@
               </button>
               <button class="btn btn-primary btn-sm" id="btn-wizard-fix-ch341" onclick="Wizard.runFixCh341()"
                 style="background: linear-gradient(135deg, #0284c7, #2563eb); font-weight: 700; white-space: nowrap; box-shadow: 0 2px 10px rgba(37, 99, 235, 0.4);"
-                title="在机器人下位机 (Linux) 在线编译安装 CH341 串口驱动，放行权限并启动自愈守护">
+                title="在机器人端自动编译安装 CH341 驱动并放行串口权限">
                 🤖 安装下位机 LoRa 驱动
               </button>
               <button class="btn btn-secondary btn-sm" id="btn-wizard-win-ch341" onclick="Wizard.installWindowsCh341()"
                 style="white-space: nowrap;"
-                title="若电脑上位机插有 USB LoRa 发射器，需在本机安装 Windows CH341 串口驱动">
+                title="安装本机 Windows CH341 串口驱动">
                 💻 安装上位机驱动
               </button>
+              <div class="help-tooltip-wrapper align-right">
+                <span class="help-icon-circle" tabindex="0" role="button" aria-label="环境预检说明">?</span>
+                <div class="help-tooltip-bubble">
+                  <div class="help-bubble-header">LoRa 驱动安装说明</div>
+                  <div class="help-bubble-item">
+                    <span class="help-item-desc">点击「安装下位机 LoRa 驱动」将在机器人端自动编译安装驱动并放行串口；电脑端插有发射器时请安装上位机驱动。</span>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-
-          <!-- 提示条 -->
-          <div style="background: rgba(14, 165, 233, 0.05); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 6px; padding: 6px 12px; margin-bottom: 10px; font-size: 0.74rem; color: var(--text-secondary); display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
-            <div>💡 提示：点击【🤖 安装下位机 LoRa 驱动】将在机器人机载端自动编译安装驱动与放行串口；电脑端插有发射器请安装上位机驱动。</div>
           </div>
 
           <div id="precheck-items-list">
@@ -274,15 +275,14 @@
               <div class="card-header" style="margin-bottom: 8px; padding-bottom: 4px;">
                 <div class="card-title"
                   style="font-size: 0.9rem; color: var(--accent-cyan); display: flex; align-items: center; gap: 6px;">
-                  <span>⚙️ 2. 分配 Robot ID 与自启动配置</span>
+                  <span>⚙️ 2. 分配 Robot ID</span>
                 </div>
-                <span class="card-badge" style="font-size: 0.68rem;">群控寻址标识</span>
+                <span class="card-badge" style="font-size: 0.68rem;">群控标识</span>
               </div>
 
               <div class="form-group" style="margin-bottom: 8px;">
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px;">
-                  <label class="form-label" style="font-size: 0.78rem; margin-bottom: 0;">Robot ID (每台机器人唯一)</label>
-                  <span style="font-size: 0.72rem; color: var(--text-muted);">开机自动加载此群控标识</span>
+                  <label class="form-label" style="font-size: 0.78rem; margin-bottom: 0;">Robot ID</label>
                 </div>
                 <div style="display: flex; gap: 8px; align-items: center;">
                   <input type="text" class="form-control" id="select-robot-id" placeholder="自定义 Robot ID，如 A、B、R1..."
@@ -324,7 +324,7 @@
 
               <div class="terminal-console" id="image-load-console"
                 style="flex: 1; min-height: 320px; padding: 10px 12px; font-size: 0.76rem; line-height: 1.5; overflow-y: auto;">
-                <div class="log-info">[INFO] 统一部署控制台就绪。您可执行镜像上传/导入，或配置 Robot ID 与自启动。</div>
+                <div class="log-info">[INFO] 就绪。</div>
               </div>
               <!-- 兼容占位 (隐藏元素，保证历史与后台刷新逻辑稳健无报错) -->
               <div id="container-start-console" style="display: none;"></div>
@@ -392,9 +392,6 @@
                 <div class="dropzone-icon" style="font-size: 1.8rem; margin-bottom: 4px;">📥</div>
                 <div class="dropzone-text" style="font-size: 0.85rem; font-weight: 600; color: #f1f5f9;">点击选择或拖拽
                   license.json 至此处</div>
-                <div class="dropzone-hint" style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">
-                  载入后系统将自动校验授权并启动机载服务
-                </div>
                 <input type="file" id="license-file-input" style="display: none;" accept=".json"
                   onchange="Wizard.handleLicenseFileInput(this)">
               </div>

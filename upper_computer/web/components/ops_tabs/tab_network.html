@@ -131,7 +131,7 @@
               style="padding: 8px 10px; margin-bottom: 0; background: rgba(16, 185, 129, 0.04); border: 1px solid rgba(52, 211, 153, 0.25);">
               <div class="card-header" style="margin-bottom: 5px; padding-bottom: 3px; display: flex; justify-content: space-between; align-items: center;">
                 <div class="card-title" style="font-size: 0.8rem; color: #34d399; display: flex; align-items: center; gap: 5px;">
-                  <span>📶 G1 无线 Wi-Fi 配置 (专用 LoRa 通道配网 · 其余业务全走 HTTP)</span>
+                  <span>📶 Wi-Fi 配网</span>
                 </div>
                 <div style="display: flex; align-items: center; gap: 4px;">
                   <input id="tp-wifi-ifname" class="form-input" value="wlan0"
@@ -140,6 +140,15 @@
                     style="padding: 2px 6px; font-size: 0.7rem; white-space: nowrap;">🔍 探测</button>
                   <button id="tp-btn-wifi-scan" class="btn btn-primary btn-xs" onclick="TabNetwork.scanRobotWifi()"
                     style="padding: 2px 6px; font-size: 0.7rem; white-space: nowrap;">📡 扫网</button>
+                  <div class="help-tooltip-wrapper align-right">
+                    <span class="help-icon-circle" tabindex="0" role="button" aria-label="配网说明">?</span>
+                    <div class="help-tooltip-bubble">
+                      <div class="help-bubble-header">Wi-Fi 配网说明</div>
+                      <div class="help-bubble-item">
+                        <span class="help-item-desc">通过专用 LoRa 串口通道为机器人配置 Wi-Fi 与静态 IP；配置完成后其余业务指令均走 Wi-Fi HTTP。</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div style="display: flex; gap: 4px; margin-bottom: 5px;">
@@ -176,8 +185,8 @@
               </div>
               <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 5px; font-size: 0.7rem; color: var(--text-muted);">
                 <span>当前无线 IP: <strong id="tp-wifi-current-ip" style="color: #6ee7b7;">未知</strong></span>
-                <button id="tp-btn-switch-wifi-ssh" class="btn btn-secondary btn-xs" onclick="TabNetwork.switchSshToWifiIp()"
-                  style="padding: 2px 6px; font-size: 0.68rem;">🔌 改用无线 IP 连 SSH</button>
+                <button id="tp-btn-switch-wifi-ssh" class="btn btn-primary btn-xs" onclick="TabNetwork.switchSshToWifiIp()"
+                  style="padding: 2px 6px; font-size: 0.68rem;">🌐 绑定无线 IP 到 HTTP 群控</button>
               </div>
             </div>
           </div>
@@ -190,7 +199,7 @@
               <div class="card-header" style="margin-bottom: 4px; padding-bottom: 2px;">
                 <div class="card-title"
                   style="font-size: 0.82rem; color: var(--accent-cyan); display: flex; align-items: center; gap: 6px;">
-                  <span>📡 局域网设备并发扫描 (192.168.123.x)</span>
+                  <span>📡 局域网扫描</span>
                 </div>
                 <button id="tp-btn-scan" class="btn btn-primary btn-xs" onclick="TabNetwork.scan()"
                   style="padding: 2px 8px; font-size: 0.72rem; font-weight: 700; white-space: nowrap;">
@@ -223,7 +232,7 @@
               </div>
               <div class="terminal-console log-wordwrap" id="tp-license-result"
                 style="flex: 1; min-height: 180px; overflow-y: auto; overflow-x: hidden; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; font-size: 0.74rem; line-height: 1.42; padding: 8px 10px;">
-                <div class="log-info" style="white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;">就绪。网络诊断、设备发现、机器码读取与 License 授权校验输出将在此统一实时显示...</div>
+                <div class="log-info" style="white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;">就绪。</div>
               </div>
             </div>
           </div>

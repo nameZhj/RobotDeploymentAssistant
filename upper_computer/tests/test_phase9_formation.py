@@ -41,3 +41,18 @@ def test_formation_planning_page_end_to_end(tmp_path) -> None:
     grp = page.commit_to_library()
     assert grp.id is not None
     assert len(state.blocks) == before_blocks + len(state.tracks)
+
+    # Verify map overlay binding and TEB speed sync path (offline returns 0 safely)
+    from src.domain.map_entities import PcdMapEntity
+    from PySide6.QtGui import QImage
+    png_p = tmp_path / "grid.png"
+    img = QImage(32, 32, QImage.Format.Format_RGBA8888)
+    img.fill(0)
+    img.save(str(png_p))
+    saved_m = state.map_repo.upsert_map(PcdMapEntity(name="test_map", grid_png_path=str(png_p), resolution=0.05))
+    state.scene.active_map_id = saved_m.id
+    state.scene_repo.update_scene(state.scene)
+    state.reload_all()
+    page.canvas._sync_active_map()
+    assert page.canvas._grid_img is not None
+    assert page.sync_teb_max_speed(0.8) == 0

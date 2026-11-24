@@ -116,6 +116,20 @@ class ComprehensiveSystemTest(unittest.TestCase):
             res = self.client.post('/api/robot/stop_processes')
             self.assertEqual(res.status_code, 200)
 
+    def test_web_console_cleanups_and_no_serial_send(self):
+        # 1. Index renders without duplicate 3d-player tab or hardcoded personal paths
+        idx = self.client.get('/')
+        self.assertEqual(idx.status_code, 200)
+        html = idx.data.decode('utf-8')
+        self.assertNotIn('tab-3d-player', html)
+        self.assertNotIn('wxid_', html)
+        self.assertIn('data-type="ros_nav"', html)
+
+        # 2. /api/serial/send refuses serial fallback when HTTP fleet not configured
+        res_send = self.client.post('/api/serial/send', json={'target': 'A', 'command': 'STAND'})
+        self.assertEqual(res_send.status_code, 400)
+        self.assertFalse(res_send.get_json().get('success'))
+
     def test_serial_parser(self):
         from backend.serial_manager import parse_dance_map_yaml
         sample_yaml = """

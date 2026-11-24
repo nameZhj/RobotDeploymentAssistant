@@ -242,5 +242,5 @@ def paint_empty_stage_hint(p: QPainter, w: int, h: int, track_count: int) -> Non
     p.drawText(
         QRectF(20, h - 42, max(120, w - 40), 28),
         Qt.AlignmentFlag.AlignCenter,
-        "当前舞台暂无机器人 — 请先在下方任务链点击『+ 轨道』真实添加机器人",
+        "暂无机器人轨道，请先添加",
     )

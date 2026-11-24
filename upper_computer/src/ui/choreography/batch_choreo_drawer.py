@@ -19,14 +19,14 @@ class BatchChoreoDrawer(UDrawer):
     """Push drawer appending an action/dance uniformly onto all unlocked robot task chains."""
 
     def __init__(self, state: StudioStateService, parent: QWidget | None = None) -> None:
-        super().__init__(title="批量任务链动作编排", width=310, parent=parent)
+        super().__init__(
+            title="批量追加动作",
+            width=310,
+            parent=parent,
+            help_text="为所有激活机器人轨道按顺序批量追加动作节点，前序节点完成后自动触发。",
+        )
         self.state = state
         self.hide()
-
-        desc = QLabel("为当前所有激活机器人轨道的任务链批量追加动作节点（前序节点完成后自动触发）：", self)
-        desc.setWordWrap(True)
-        desc.setStyleSheet(f"color: {C_TEXT_2}; font-size: 11px;")
-        self.body_layout.addWidget(desc)
 
         form = QFormLayout()
         form.setSpacing(8)

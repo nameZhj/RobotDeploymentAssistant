@@ -4,6 +4,7 @@ import json
 import time
 import queue
 import logging
+import subprocess
 import threading
 import zipfile
 from flask import Flask, request, jsonify, render_template, send_from_directory, Response
@@ -91,17 +92,34 @@ def static_proxy(path):
 # ==========================================
 @app.route("/api/status", methods=["GET"])
 def get_status():
-    is_conn = ssh_manager.is_connected()
-    latency = ssh_manager.test_latency() if is_conn else -1.0
+    http_ip = http_lower_bridge.active_robot_ip
+    http_info = http_lower_bridge.check_health(http_ip) if http_ip else {"online": False, "latency_ms": -1.0}
+    ssh_conn = ssh_manager.is_connected()
+    if http_info.get("online"):
+        return jsonify({
+            "connected": True,
+            "ssh_connected": ssh_conn,
+            "transport": "WIFI_HTTP",
+            "host": http_ip,
+            "port": http_info.get("port", http_lower_bridge.default_port),
+            "username": "http",
+            "latency_ms": http_info.get("latency_ms", -1.0),
+            "auto_detecting": False,
+            "auto_status_msg": f"Wi-Fi HTTP 在线 ({http_ip})",
+            "auto_connect_enabled": False,
+        })
+    latency = ssh_manager.test_latency() if ssh_conn else -1.0
     return jsonify({
-        "connected": is_conn,
-        "host": ssh_manager.host,
-        "port": ssh_manager.port,
-        "username": ssh_manager.username,
+        "connected": False,
+        "ssh_connected": ssh_conn,
+        "transport": "WIFI_HTTP",
+        "host": http_ip or (ssh_manager.host if ssh_conn else ""),
+        "port": http_lower_bridge.default_port if http_ip else (ssh_manager.port if ssh_conn else 8090),
+        "username": ssh_manager.username if ssh_conn else "http",
         "latency_ms": latency,
         "auto_detecting": network_manager.auto_detecting,
         "auto_status_msg": network_manager.last_auto_status_msg,
-        "auto_connect_enabled": network_manager.auto_connect_enabled
+        "auto_connect_enabled": network_manager.auto_connect_enabled,
     })
 
 
@@ -128,11 +146,16 @@ def disconnect_robot():
 @app.route("/api/startup_check", methods=["GET", "POST"])
 def startup_check():
     """
-    启动自检：
-    1. 若未连接，自动尝试连接默认预置参数 (192.168.123.164:22, unitree, 123)
-    2. 检查远端 License 授权与机器码是否匹配，以及容器是否正常运行
-    3. 返回 first_time 判定结果（True=进入一键部署向导，False=直接进入群控运行模式）
+    启动自检：优先通过 Wi-Fi 局域网 HTTP 检查在线机器人授权、容器与进程状态；
+    未绑定无线 HTTP 目标时兼容旧 SSH 探测。
     """
+    data = request.get_json(silent=True) if request.method == "POST" else {}
+    robot_ip = (data or {}).get("robot_ip", "") or request.args.get("robot_ip", "")
+    if robot_ip or http_lower_bridge.active_robot_ip:
+        http_res = http_lower_bridge.startup_check(robot_ip=robot_ip)
+        if http_res.get("connected"):
+            return jsonify(http_res)
+
     if not ssh_manager.is_connected():
         network_manager.auto_detect_and_connect(force_configure_nic=True, timeout=2.0)
 
@@ -330,6 +353,17 @@ def fix_docker():
 # ==========================================
 @app.route("/api/images/list", methods=["GET"])
 def list_images():
+    robot_ip = request.args.get("robot_ip", "")
+    if robot_ip or http_lower_bridge.active_robot_ip:
+        http_res = http_lower_bridge.get_docker_status(robot_ip=robot_ip)
+        if http_res.get("ok"):
+            d = http_res.get("data") or {}
+            imgs = d.get("images", [])
+            return jsonify({
+                "success": True, "http_used": True,
+                "images": imgs, "available_images": imgs, "all_images": imgs,
+                "running_containers": d.get("running_containers", []),
+            })
     res = deployment_core.list_docker_images()
     return jsonify({
         "success": True,
@@ -342,6 +376,11 @@ def list_images():
 
 @app.route("/api/containers/list", methods=["GET"])
 def list_containers():
+    robot_ip = request.args.get("robot_ip", "")
+    if robot_ip or http_lower_bridge.active_robot_ip:
+        http_res = http_lower_bridge.get_docker_status(robot_ip=robot_ip)
+        if http_res.get("ok"):
+            return jsonify({"success": True, "http_used": True, "containers": (http_res.get("data") or {}).get("containers", [])})
     containers = deployment_core.list_containers()
     return jsonify({"success": True, "containers": containers})
 
@@ -434,24 +473,35 @@ def upload_image():
     return jsonify({"success": True, "msg": "镜像上传任务已启动", "remote_path": remote_path, "local_path": local_path})
 
 
+def _pick_native_path(mode: str = "file") -> str:
+    """Run native file/folder picker in an isolated STA subprocess to avoid Flask thread crashes."""
+    if os.name != "nt":
+        return ""
+    if mode == "folder":
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms;"
+            "$d = New-Object System.Windows.Forms.FolderBrowserDialog;"
+            "$d.Description = '选择舞蹈动作文件夹';"
+            "if ($d.ShowDialog() -eq 'OK') { Write-Output $d.SelectedPath }"
+        )
+    else:
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms;"
+            "$f = New-Object System.Windows.Forms.OpenFileDialog;"
+            "$f.Title = '选择机器人 Docker 镜像文件 (.tar / .tar.gz)';"
+            "$f.Filter = 'Docker Image (*.tar.gz;*.tar;*.gz;*.tgz)|*.tar.gz;*.tar;*.gz;*.tgz|All (*.*)|*.*';"
+            "if ($f.ShowDialog() -eq 'OK') { Write-Output $f.FileName }"
+        )
+    proc = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps], capture_output=True, text=True, timeout=60, check=False)
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
 @app.route("/api/system/select_file", methods=["POST", "GET"])
 def select_local_file():
-    """打开 Windows 原生文件选择器获取镜像文件的真实绝对路径"""
+    """在独立 STA 子进程中打开 Windows 文件选择器获取镜像文件的真实绝对路径"""
     try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        selected_file = filedialog.askopenfilename(
-            title="选择机器人 Docker 镜像文件 (.tar / .tar.gz)",
-            filetypes=[
-                ("Docker 镜像压缩包", "*.tar.gz;*.tar;*.gz;*.tgz"),
-                ("所有文件", "*.*")
-            ]
-        )
-        root.destroy()
-        if selected_file:
+        selected_file = _pick_native_path("file")
+        if selected_file and os.path.exists(selected_file):
             norm_path = os.path.normpath(selected_file)
             size_bytes = os.path.getsize(norm_path)
             return jsonify({
@@ -468,18 +518,10 @@ def select_local_file():
 
 @app.route("/api/system/select_folder", methods=["POST", "GET"])
 def select_local_folder():
-    """打开 Windows 原生文件夹选择器获取动作文件夹的绝对路径"""
+    """在独立 STA 子进程中打开 Windows 文件夹选择器获取动作文件夹的绝对路径"""
     try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        selected_dir = filedialog.askdirectory(
-            title="选择舞蹈动作文件夹 (包含 .vsis 动作模型与配置文件)"
-        )
-        root.destroy()
-        if selected_dir:
+        selected_dir = _pick_native_path("folder")
+        if selected_dir and os.path.isdir(selected_dir):
             norm_path = os.path.normpath(selected_dir)
             files_count = 0
             total_size = 0
@@ -535,6 +577,11 @@ def load_image():
 
 @app.route("/api/container/status", methods=["GET"])
 def get_container_status():
+    robot_ip = request.args.get("robot_ip", "")
+    if robot_ip or http_lower_bridge.active_robot_ip:
+        http_res = http_lower_bridge.get_docker_status(robot_ip=robot_ip)
+        if http_res.get("ok"):
+            return jsonify({"success": True, "http_used": True, "data": http_res.get("data", {})})
     res = deployment_core.check_container_and_autostart_status()
     return jsonify({"success": True, "data": res})
 
@@ -562,6 +609,11 @@ def start_container():
 def stop_container_route():
     data = request.json or {}
     container_name = data.get("container_name", "vsis_g1")
+    robot_ip = data.get("robot_ip", "")
+    if robot_ip or http_lower_bridge.active_robot_ip:
+        http_res = http_lower_bridge.control_container("stop", container_name=container_name, robot_ip=robot_ip)
+        if http_res.get("ok"):
+            return jsonify(http_res)
     ok, msg = deployment_core.stop_container(container_name)
     return jsonify({"success": ok, "msg": msg})
 
@@ -570,6 +622,11 @@ def stop_container_route():
 def restart_container_route():
     data = request.json or {}
     container_name = data.get("container_name", "vsis_g1")
+    robot_ip = data.get("robot_ip", "")
+    if robot_ip or http_lower_bridge.active_robot_ip:
+        http_res = http_lower_bridge.control_container("restart", container_name=container_name, robot_ip=robot_ip)
+        if http_res.get("ok"):
+            return jsonify(http_res)
     ok, msg = deployment_core.restart_container(container_name)
     return jsonify({"success": ok, "msg": msg})
 
@@ -958,11 +1015,13 @@ def delete_3d_dance(dance_id):
 @app.route("/api/logs", methods=["GET"])
 def get_logs():
     log_type = request.args.get("type", "container")
-    container_name = request.args.get("container", "").strip()
+    container_name = request.args.get("container", "").strip() or "vsis_g1"
     lines = int(request.args.get("lines", 200))
     robot_ip = request.args.get("robot_ip", "")
     if robot_ip or http_lower_bridge.active_robot_ip:
-        http_res = http_lower_bridge.fetch_logs(log_type=log_type, lines=lines, robot_ip=robot_ip)
+        http_res = http_lower_bridge.fetch_logs(
+            log_type=log_type, lines=lines, container=container_name, robot_ip=robot_ip
+        )
         if http_res.get("ok"):
             return jsonify(http_res)
     res = log_diagnostics.fetch_logs(log_type, container_name, lines)
@@ -1012,20 +1071,120 @@ def connect_serial():
     return jsonify(res)
 
 
-@app.route("/api/serial/send", methods=["POST"])
+@app.route("/api/fleet", methods=["GET", "POST"])
+def manage_http_fleet():
+    if request.method == "GET":
+        return jsonify(http_lower_bridge.get_fleet())
+    data = request.json or {}
+    return jsonify(http_lower_bridge.save_fleet(data.get("robots", []), data.get("selected", [])))
+
+
+@app.route("/api/http/health", methods=["GET", "POST"])
+def check_http_fleet_health():
+    data = request.get_json(silent=True) if request.method == "POST" else {}
+    data = data or {}
+    if data.get("robot_ip"):
+        res = http_lower_bridge.check_health(data["robot_ip"], data.get("port"))
+        return jsonify({"success": res["ok"], **res})
+    robots = data.get("robots") if isinstance(data.get("robots"), list) else None
+    return jsonify(http_lower_bridge.check_fleet_health(robots))
+
+
+@app.route("/api/http/scan_lan", methods=["POST"])
+def scan_http_lan_robots():
+    data = request.get_json(silent=True) or {}
+    res = http_lower_bridge.scan_lan_http_robots(
+        subnet=str(data.get("subnet", "")),
+        port=data.get("port"),
+    )
+    return jsonify(res)
+
+
 @app.route("/api/http/command", methods=["POST"])
+def send_http_cmd():
+    """纯 Wi-Fi 局域网 HTTP 运控指令下发（严禁回退串口）"""
+    data = request.json or {}
+    target = str(data.get("target", "")).strip()
+    command = str(data.get("command", "")).strip()
+    robot_ip = str(data.get("robot_ip", "")).strip()
+    port = data.get("port")
+    targets_map = data.get("targets_map") if isinstance(data.get("targets_map"), dict) else None
+    if not command:
+        return jsonify({"success": False, "ok": False, "msg": "指令不能为空"})
+    return jsonify(http_lower_bridge.send_command_multi(target, command, robot_ip=robot_ip, port=port, targets_map=targets_map))
+
+
+@app.route("/api/http/state", methods=["GET"])
+def get_http_control_state():
+    return jsonify(http_lower_bridge.get_control_state(
+        target=request.args.get("target", ""),
+        robot_ip=request.args.get("robot_ip", ""),
+        port=int(request.args["port"]) if request.args.get("port", "").isdigit() else None,
+    ))
+
+
+@app.route("/api/http/posture", methods=["POST"])
+def send_http_posture():
+    data = request.json or {}
+    return jsonify(http_lower_bridge.send_posture(
+        target=str(data.get("target", "")),
+        posture=str(data.get("posture", "")),
+        robot_ip=str(data.get("robot_ip", "")),
+        port=data.get("port"),
+    ))
+
+
+@app.route("/api/http/velocity", methods=["POST"])
+def send_http_velocity():
+    data = request.json or {}
+    payload = {k: data[k] for k in ("direction", "duration", "vx", "vy", "vyaw") if k in data}
+    return jsonify(http_lower_bridge.send_velocity(
+        target=str(data.get("target", "")),
+        payload=payload,
+        robot_ip=str(data.get("robot_ip", "")),
+        port=data.get("port"),
+    ))
+
+
+@app.route("/api/http/dance", methods=["POST"])
+def send_http_dance():
+    data = request.json or {}
+    return jsonify(http_lower_bridge.send_dance(
+        target=str(data.get("target", "")),
+        alias=str(data.get("alias", "") or data.get("dance", "")),
+        robot_ip=str(data.get("robot_ip", "")),
+        port=data.get("port"),
+    ))
+
+
+@app.route("/api/http/stop", methods=["POST"])
+def send_http_stop():
+    data = request.json or {}
+    return jsonify(http_lower_bridge.send_stop(
+        target=str(data.get("target", "")),
+        emergency=bool(data.get("emergency", False)),
+        robot_ip=str(data.get("robot_ip", "")),
+        port=data.get("port"),
+    ))
+
+
+@app.route("/api/serial/send", methods=["POST"])
 def send_serial_cmd():
+    """已禁用串口群控回退：所有运动/控制指令必须走 Wi-Fi 局域网 HTTP。"""
     data = request.json or {}
     target = data.get("target", "ALL")
     command = data.get("command", "")
     robot_ip = data.get("robot_ip", "")
     if not command:
         return jsonify({"success": False, "msg": "指令不能为空"})
-    http_res = http_lower_bridge.send_command(target, command, robot_ip=robot_ip)
-    if http_res.get("ok"):
-        return jsonify(http_res)
-    res = serial_manager.send_command(target, command)
-    return jsonify(res)
+    if robot_ip or http_lower_bridge.robot_ip_map or http_lower_bridge.active_robot_ip:
+        http_res = http_lower_bridge.send_command_multi(target, command, robot_ip=robot_ip)
+        return jsonify(http_res), (200 if http_res.get("ok") else 503)
+    return jsonify({
+        "success": False,
+        "ok": False,
+        "msg": "串口已仅保留用于 LoRa Wi-Fi 配网；请先添加或扫描绑定机器人 Wi-Fi HTTP 地址",
+    }), 400
 
 
 @app.route("/api/http/bind_robot", methods=["POST"])
@@ -1061,29 +1220,34 @@ def get_serial_messages():
     return jsonify({"success": True, "messages": msgs, "count": len(msgs)})
 
 
-@app.route("/api/serial/dance_list", methods=["GET", "POST"])
 @app.route("/api/http/dance_list", methods=["GET", "POST"])
+def get_http_dance_list():
+    """纯 Wi-Fi 局域网 HTTP 动作列表拉取（严禁回退串口）"""
+    data = request.get_json(silent=True) if request.method == "POST" else {}
+    data = data or {}
+    target = str(data.get("target", "") or request.args.get("target", ""))
+    robot_ip = str(data.get("robot_ip", "") or request.args.get("robot_ip", ""))
+    targets_map = data.get("targets_map") if isinstance(data.get("targets_map"), dict) else None
+    res = http_lower_bridge.fetch_dance_list_multi(target_str=target, robot_ip=robot_ip, targets_map=targets_map)
+    return jsonify(res)
+
+
+@app.route("/api/serial/dance_list", methods=["GET", "POST"])
 def get_serial_dance_list():
-    """优先通过无线 Wi-Fi HTTP 从下位机获取动作列表，兼容串口回退"""
+    """兼容旧路径：优先 Wi-Fi HTTP，保留单元测试兼容"""
     data = request.get_json(silent=True) if request.method == "POST" else {}
     robot_ip = (data or {}).get("robot_ip", "") or request.args.get("robot_ip", "")
-    http_res = http_lower_bridge.fetch_dance_list(robot_ip=robot_ip)
-    if http_res.get("ok") and http_res.get("groups"):
-        serial_manager.latest_dance_list_parsed = http_res["groups"]
-        serial_manager.latest_dance_list_raw = http_res.get("raw", "")
-        return jsonify(http_res)
-
-    force_refresh = request.args.get("refresh", "0") in ["1", "true", "True"] or bool(data and data.get("refresh"))
-    if force_refresh and serial_manager.ser is not None and serial_manager.ser.is_open:
-        res = serial_manager.request_dance_list(timeout=2.5, force=True)
-        return jsonify(res)
+    if robot_ip or http_lower_bridge.active_robot_ip:
+        http_res = http_lower_bridge.fetch_dance_list(robot_ip=robot_ip)
+        if http_res.get("ok") and http_res.get("groups"):
+            return jsonify(http_res)
     res = serial_manager.get_dance_list()
     return jsonify(res)
 
 
 @app.route("/api/serial/refresh_dance_list", methods=["POST"])
 def refresh_serial_dance_list():
-    """优先通过无线 Wi-Fi HTTP 刷新动作列表，回退串口"""
+    """纯 Wi-Fi HTTP 刷新动作列表（严禁回退串口发送 GETDANCELIST）。"""
     data = request.get_json(silent=True) or {}
     robot_ip = data.get("robot_ip", "")
     http_res = http_lower_bridge.fetch_dance_list(robot_ip=robot_ip)
@@ -1091,9 +1255,13 @@ def refresh_serial_dance_list():
         serial_manager.latest_dance_list_parsed = http_res["groups"]
         serial_manager.latest_dance_list_raw = http_res.get("raw", "")
         return jsonify(http_res)
-    timeout = float(data.get("timeout", 2.5))
-    res = serial_manager.request_dance_list(timeout=timeout, force=True)
-    return jsonify(res)
+    return jsonify({
+        "success": False,
+        "ok": False,
+        "groups": [],
+        "total_count": 0,
+        "msg": http_res.get("msg") or "未配置或无法连接机器人 Wi-Fi HTTP 服务（串口不承载动作同步）",
+    }), 503
 
 
 @app.route("/api/serial/parse_dances", methods=["POST"])

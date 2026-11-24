@@ -24,7 +24,7 @@ from src.ui.design_system.tokens import (
     LINE,
     R_CARD,
 )
-from src.ui.design_system.u_buttons import UButton
+from src.ui.design_system.u_buttons import UButton, UHelpIcon
 
 
 class UDialog(QDialog):
@@ -39,6 +39,7 @@ class UDialog(QDialog):
         cancel_text: str = "取消",
         show_footer: bool = True,
         parent: Optional[QWidget] = None,
+        help_text: str = "",
     ) -> None:
         super().__init__(parent)
         self.setProperty("uDialog", True)
@@ -60,6 +61,8 @@ class UDialog(QDialog):
         self.header_title.setStyleSheet(f"font-size: 13px; font-weight: 600; color: {C_TEXT_1};")
         hl.addWidget(self.header_title)
         hl.addStretch(1)
+        if help_text:
+            hl.addWidget(UHelpIcon(help_text, parent=head))
         root.addWidget(head)
 
         self.body_widget = QWidget(self)
@@ -94,7 +97,13 @@ class UDialog(QDialog):
 class UDrawer(QFrame):
     """Collapsible right-side push drawer for AI / batch choreography tools."""
 
-    def __init__(self, title: str, width: int = 300, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        title: str,
+        width: int = 300,
+        parent: Optional[QWidget] = None,
+        help_text: str = "",
+    ) -> None:
         super().__init__(parent)
         self.setFixedWidth(width)
         self.setStyleSheet(f"UDrawer {{ background: {C_PANEL}; border-left: 1px solid {LINE}; }}")
@@ -111,6 +120,8 @@ class UDrawer(QFrame):
         lbl.setStyleSheet(f"font-size: 12px; font-weight: 600; color: {C_TEXT_1};")
         hl.addWidget(lbl)
         hl.addStretch(1)
+        if help_text:
+            hl.addWidget(UHelpIcon(help_text, parent=head))
         root.addWidget(head)
 
         self.body_widget = QWidget(self)

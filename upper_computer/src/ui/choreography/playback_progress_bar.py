@@ -88,8 +88,8 @@ class PlaybackProgressBar(QWidget):
         self.play_btn.clicked.connect(playback.toggle_play)
         hl.addWidget(self.play_btn)
 
-        self.stop_btn = UButton("停止", variant="danger", size="xs", icon_name="stop", tooltip="停止并回到原点", parent=self)
-        self.stop_btn.clicked.connect(playback.stop_and_return_origin)
+        self.stop_btn = UButton("复位", variant="default", size="xs", icon_name="stop", tooltip="停止本地预览并复位游标（不触发真机移动）", parent=self)
+        self.stop_btn.clicked.connect(playback.reset_preview)
         hl.addWidget(self.stop_btn)
 
         self.replay_btn = UIconButton("replay", tooltip="从原点重播", size=24, color=C_TEXT_2, parent=self)

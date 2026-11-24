@@ -49,7 +49,7 @@ def test_trajectory_editor_modal_save_and_virtual_http(tmp_path) -> None:
     dlg.name_edit.setText("双子星圆弧")
     dlg.traj.control_points = [ControlPoint2D(0.0, 0.0), ControlPoint2D(2.0, 1.5), ControlPoint2D(4.0, 0.0)]
     dlg._upload_http()
-    assert "HTTP" in dlg.http_badge.text() or "VIRTUAL" in dlg.http_badge.text()
+    assert "未配置" in dlg.http_badge.text() or "HTTP" in dlg.http_badge.text()
     dlg._on_save()
     assert dlg.saved_traj is not None
     assert dlg.saved_traj.name == "双子星圆弧"

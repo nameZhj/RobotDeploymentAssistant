@@ -40,7 +40,7 @@ class InitPointModal(UDialog):
         self._reload_presets()
 
         if not state.tracks:
-            hint = QLabel("当前舞台尚无真实机器人轨道，请先点击任务链上方『+ 轨道』添加机器人后再配置初始站位。", self)
+            hint = QLabel("请先点击『+ 轨道』添加机器人后再配置初始站位。", self)
             hint.setWordWrap(True)
             hint.setStyleSheet(f"color: {C_TEXT_3}; padding: 12px;")
             self.body_layout.addWidget(hint)

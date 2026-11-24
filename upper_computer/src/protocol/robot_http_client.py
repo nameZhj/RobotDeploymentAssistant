@@ -144,6 +144,23 @@ class RobotHttpClient:
             payload={"target_id": target_id, "command": command, "params": params or []}, port=port,
         )
 
+    def get_control_state(self, robot_ip: str, port: Optional[int] = None) -> RobotHttpResponse:
+        return self._request_json("GET", robot_ip, "/api/v1/control/state", port=port)
+
+    def send_posture(self, robot_ip: str, posture: str, port: Optional[int] = None) -> RobotHttpResponse:
+        return self._request_json("POST", robot_ip, "/api/v1/control/posture", payload={"posture": posture}, port=port)
+
+    def send_velocity(
+        self, robot_ip: str, payload: Dict[str, Any], port: Optional[int] = None
+    ) -> RobotHttpResponse:
+        return self._request_json("POST", robot_ip, "/api/v1/control/velocity", payload=payload, port=port)
+
+    def send_dance(self, robot_ip: str, alias: str, port: Optional[int] = None) -> RobotHttpResponse:
+        return self._request_json("POST", robot_ip, "/api/v1/control/dance", payload={"alias": alias}, port=port)
+
+    def send_stop(self, robot_ip: str, emergency: bool = False, port: Optional[int] = None) -> RobotHttpResponse:
+        return self._request_json("POST", robot_ip, "/api/v1/control/stop", payload={"emergency": emergency}, port=port)
+
     def navctl(self, robot_ip: str, action: str, port: Optional[int] = None) -> RobotHttpResponse:
         return self._request_json("POST", robot_ip, "/api/v1/navigation/navctl", payload={"action": action}, port=port)
 
@@ -178,6 +195,31 @@ class RobotHttpClient:
     def fetch_cad_scan(self, robot_ip: str, port: Optional[int] = None) -> RobotHttpResponse:
         return self._request_json("GET", robot_ip, "/api/v1/slam/scan", port=port)
 
+    def fetch_nav_discovery(self, robot_ip: str, port: Optional[int] = None) -> RobotHttpResponse:
+        return self._request_json("GET", robot_ip, "/api/v1/navigation/discovery", port=port)
+
+    def fetch_slam_live_state(self, robot_ip: str, port: Optional[int] = None) -> RobotHttpResponse:
+        return self._request_json("GET", robot_ip, "/api/v1/slam/live_state", port=port)
+
+    def slam_stream_url(self, robot_ip: str, port: Optional[int] = None) -> str:
+        return f"{self._base(robot_ip, port)}/api/v1/slam/stream"
+
+    def list_remote_maps(self, robot_ip: str, port: Optional[int] = None) -> RobotHttpResponse:
+        return self._request_json("GET", robot_ip, "/api/v1/slam/maps", port=port)
+
+    def fetch_slam_live_cloud(
+        self, robot_ip: str, since_seq: int = 0, max_points: int = 30000, port: Optional[int] = None
+    ) -> RobotHttpResponse:
+        url = f"{self._base(robot_ip, port)}/api/v1/slam/live_cloud?since_seq={since_seq}&max_points={max_points}"
+        try:
+            with self._opener.open(urlrequest.Request(url, method="GET"), timeout=self._timeout()) as resp:
+                raw = resp.read()
+                seq = int(resp.headers.get("X-Cloud-Seq", str(since_seq)) or 0)
+                cnt = int(resp.headers.get("X-Cloud-Count", str(len(raw) // 12)) or 0)
+                return RobotHttpResponse(int(resp.status) == 200, int(resp.status), url, {"cloud_seq": seq, "point_count": cnt}, "OK" if resp.status == 200 else "UNCHANGED", raw)
+        except Exception as ex:
+            return RobotHttpResponse(False, 0, url, {}, f"点云拉取失败: {ex}")
+
     def system_precheck(self, robot_ip: str, port: Optional[int] = None) -> RobotHttpResponse:
         return self._request_json("GET", robot_ip, "/api/v1/system/precheck", port=port)
 
@@ -193,8 +235,23 @@ class RobotHttpClient:
     def set_robot_id(self, robot_ip: str, robot_id: str, port: Optional[int] = None) -> RobotHttpResponse:
         return self._request_json("POST", robot_ip, "/api/v1/system/robot_id", payload={"robot_id": robot_id}, port=port)
 
-    def fetch_logs(self, robot_ip: str, log_type: str = "sec_run", lines: int = 200, port: Optional[int] = None) -> RobotHttpResponse:
-        return self._request_json("GET", robot_ip, f"/api/v1/system/logs?type={log_type}&lines={lines}", port=port)
+    def get_docker_status(self, robot_ip: str, port: Optional[int] = None) -> RobotHttpResponse:
+        return self._request_json("GET", robot_ip, "/api/v1/system/docker", port=port)
+
+    def control_container(
+        self, robot_ip: str, action: str, container_name: str = "vsis_g1", port: Optional[int] = None
+    ) -> RobotHttpResponse:
+        return self._request_json(
+            "POST", robot_ip, "/api/v1/system/container",
+            payload={"action": action, "container_name": container_name}, port=port,
+        )
+
+    def fetch_logs(
+        self, robot_ip: str, log_type: str = "sec_run", lines: int = 200, container: str = "vsis_g1", port: Optional[int] = None
+    ) -> RobotHttpResponse:
+        return self._request_json(
+            "GET", robot_ip, f"/api/v1/system/logs?type={log_type}&lines={lines}&container={container}", port=port
+        )
 
     def fetch_license_status(self, robot_ip: str, port: Optional[int] = None) -> RobotHttpResponse:
         return self._request_json("GET", robot_ip, "/api/v1/license/status", port=port)
@@ -206,18 +263,37 @@ class RobotHttpClient:
         b64 = base64.b64encode(zip_bytes).decode("ascii")
         return self._request_json("POST", robot_ip, "/api/v1/dance/deploy", payload={"zip_base64": b64}, port=port)
 
-    def download_slam_pcd(self, robot_ip: str, save_path: Path, port: Optional[int] = None) -> RobotHttpResponse:
-        url = f"{self._base(robot_ip, port)}/api/v1/slam/map.pcd"
-        req = urlrequest.Request(url, method="GET")
+    def download_slam_pcd(
+        self, robot_ip: str, save_path: Path, remote_path: str = "", port: Optional[int] = None
+    ) -> RobotHttpResponse:
+        from urllib.parse import quote
+        qs = f"?path={quote(remote_path)}" if remote_path else ""
+        url = f"{self._base(robot_ip, port)}/api/v1/slam/map.pcd{qs}"
         try:
-            with self._opener.open(req, timeout=max(5.0, self._timeout())) as resp:
+            with self._opener.open(urlrequest.Request(url, method="GET"), timeout=max(5.0, self._timeout())) as resp:
                 raw = resp.read()
                 save_path.parent.mkdir(parents=True, exist_ok=True)
                 save_path.write_bytes(raw)
-                digest = hashlib.sha256(raw).hexdigest()
-                return RobotHttpResponse(True, int(resp.status), url, {"saved_path": str(save_path), "sha256": digest}, "PCD 下载成功", raw)
+                return RobotHttpResponse(True, int(resp.status), url, {"saved_path": str(save_path), "sha256": hashlib.sha256(raw).hexdigest()}, "PCD 下载成功", raw)
         except urlerror.HTTPError as ex:
-            body = ex.read().decode("utf-8", errors="ignore")
-            return RobotHttpResponse(False, int(ex.code), url, {}, f"HTTP {ex.code}: {body}")
+            return RobotHttpResponse(False, int(ex.code), url, {}, f"HTTP {ex.code}: {ex.read().decode('utf-8', errors='ignore')}")
         except Exception as ex:
             return RobotHttpResponse(False, 0, url, {}, f"PCD 下载失败: {ex}")
+
+    def upload_slam_pcd(
+        self, robot_ip: str, pcd_path: Path, restart_localization: bool = False, port: Optional[int] = None
+    ) -> RobotHttpResponse:
+        from urllib.parse import quote
+        if not pcd_path.exists():
+            return RobotHttpResponse(False, 0, "", {}, f"本地 PCD 不存在: {pcd_path}")
+        raw = pcd_path.read_bytes()
+        url = f"{self._base(robot_ip, port)}/api/v1/slam/map/upload?filename={quote(pcd_path.name)}&restart_localization={'1' if restart_localization else '0'}"
+        req = urlrequest.Request(url, data=raw, headers={"Content-Type": "application/octet-stream"}, method="POST")
+        try:
+            with self._opener.open(req, timeout=max(15.0, self._timeout() * 3.0)) as resp:
+                parsed = json.loads(resp.read().decode("utf-8") or "{}")
+                return RobotHttpResponse(200 <= resp.status < 300, int(resp.status), url, parsed, str(parsed.get("message") or "PCD 上传成功"))
+        except urlerror.HTTPError as ex:
+            return RobotHttpResponse(False, int(ex.code), url, {}, f"HTTP {ex.code}: {ex.read().decode('utf-8', errors='ignore')}")
+        except Exception as ex:
+            return RobotHttpResponse(False, 0, url, {}, f"PCD 上传失败: {ex}")

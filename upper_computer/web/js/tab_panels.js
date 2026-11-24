@@ -95,15 +95,15 @@ const TabNetwork = {
     const btn = document.getElementById('tp-btn-scan');
     const listEl = document.getElementById('tp-scan-results');
     if (btn) btn.disabled = true;
-    if (listEl) listEl.innerHTML = '<div style="padding: 12px; color: var(--accent-cyan);">🔍 正在扫描局域网 (192.168.123.1~254) ...</div>';
+    if (listEl) listEl.innerHTML = '<div style="padding: 12px; color: var(--accent-cyan);">🔍 正在扫描 Wi-Fi 局域网下位机 HTTP 服务 (端口 8090) ...</div>';
 
     try {
-      const res = await API.scanNetwork('192.168.123.');
+      const res = await API.scanLanHttpRobots('', 8090);
       if (btn) btn.disabled = false;
       if (!res.devices || res.devices.length === 0) {
         if (listEl) listEl.innerHTML = `
           <div style="padding: 12px; color: var(--accent-yellow);">
-            ⚠️ 未发现活跃设备。请确认：网线已连接、电脑网卡已配置为 192.168.123.x 网段、机器人电源已开启。
+            ⚠️ 未在网段 ${res.subnet || 'Wi-Fi 局域网'} 发现运行下位机 HTTP(8090) 的机器人。请确认处于同一 Wi-Fi 且下位机已启动。
           </div>
         `;
         return;
@@ -111,12 +111,12 @@ const TabNetwork = {
       let html = '';
       for (const dev of res.devices) {
         html += `
-          <div class="card" style="margin-bottom: 8px; padding: 12px; display: flex; align-items: center; justify-content: space-between;">
+          <div class="card" style="margin-bottom: 8px; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between;">
             <div>
-              <div style="font-weight: 700; color: #ffffff; font-family: monospace; font-size: 1rem;">${dev.ip}:${dev.port}</div>
-              <div style="font-size: 0.78rem; color: #9ca3af;">${dev.device_type} - ${dev.default_hint}</div>
+              <div style="font-weight: 700; color: #ffffff; font-family: monospace; font-size: 0.95rem;">[${dev.robot_id}] http://${dev.ip}:${dev.port}</div>
+              <div style="font-size: 0.76rem; color: #9ca3af;">控制权: ${dev.authority} · ROS: ${dev.ros_master_reachable ? '在线' : '离线'}</div>
             </div>
-            <button class="btn btn-primary btn-sm" onclick="TabNetwork.connectDevice('${dev.ip}', ${dev.port})">🔗 连接此设备</button>
+            <button class="btn btn-primary btn-sm" onclick="TabNetwork.bindDiscoveredHttp('${dev.robot_id}', '${dev.ip}', ${dev.port})">🌐 绑定 HTTP</button>
           </div>
         `;
       }
@@ -124,6 +124,19 @@ const TabNetwork = {
     } catch (err) {
       if (btn) btn.disabled = false;
       if (listEl) listEl.innerHTML = `<div style="padding: 12px; color: var(--accent-red);">扫描失败: ${err.message}</div>`;
+    }
+  },
+
+  async bindDiscoveredHttp(robotId, ip, port = 8090) {
+    try {
+      const res = await API.bindHttpRobot(robotId, ip, port);
+      if (res && res.success) {
+        if (typeof RobotControl !== 'undefined') RobotControl.upsertRobotEndpoint(robotId, ip, port);
+        this.appendWifiLog(`✅ 已绑定 [${robotId}] -> http://${ip}:${port} 至 Wi-Fi HTTP 群控`, 'success');
+        if (typeof App !== 'undefined' && App.updateStatus) App.updateStatus();
+      }
+    } catch (err) {
+      showToast(`绑定 HTTP 失败: ${err.message}`, 'error');
     }
   },
 
@@ -282,23 +295,22 @@ const TabNetwork = {
 
   async switchSshToWifiIp() {
     const el = document.getElementById('tp-wifi-current-ip');
-    const ip = (el && el.dataset && el.dataset.ip) ? el.dataset.ip : '';
+    const ip = (el && el.dataset && el.dataset.ip) ? el.dataset.ip : (document.getElementById('tp-wifi-static-ip')?.value || '').trim();
     if (!ip) {
-      showToast('尚未获取到机器人无线 IP，请先连接 Wi-Fi 或执行网卡探测', 'warning');
+      showToast('尚未获取到机器人无线 IP，请先通过 LoRa 连接 Wi-Fi 或填写静态 IP', 'warning');
       return;
     }
-    const hostInput = document.getElementById('ssh-host');
-    if (hostInput) hostInput.value = ip;
     try {
-      const res = await API.connect({ host: ip });
-      if (res.success) {
-        showToast(`✅ 已切换至无线 SSH: ${ip}`, 'success');
+      const res = await API.bindHttpRobot('A', ip, 8090);
+      if (res && res.success) {
+        if (typeof RobotControl !== 'undefined') RobotControl.upsertRobotEndpoint('A', ip, 8090);
+        this.appendWifiLog(`✅ 已将无线 IP ${ip}:8090 绑定至 Wi-Fi HTTP 群控通道`, 'success');
         if (typeof App !== 'undefined' && App.updateStatus) App.updateStatus();
       } else {
-        showToast(`切换连接失败: ${res.msg || '未知原因'}`, 'error');
+        showToast(`绑定 HTTP 失败: ${res?.msg || '未知原因'}`, 'error');
       }
     } catch (err) {
-      showToast(`切换无线 SSH 异常: ${err.message}`, 'error');
+      showToast(`绑定无线 HTTP 异常: ${err.message}`, 'error');
     }
   }
 };

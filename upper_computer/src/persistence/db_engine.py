@@ -79,7 +79,8 @@ _DEFAULT_DB: Optional[StudioDatabase] = None
 def get_database(db_path: Optional[Path] = None, reset: bool = False) -> StudioDatabase:
     """Return the singleton StudioDatabase instance (with seed data ensured)."""
     global _DEFAULT_DB
-    if _DEFAULT_DB is None or reset or db_path is not None:
+    expected = db_path or get_paths().db_path
+    if _DEFAULT_DB is None or reset or db_path is not None or _DEFAULT_DB.db_path != expected:
         db = StudioDatabase(db_path=db_path)
         from src.persistence.seed_builtin_data import ensure_seeded
         ensure_seeded(db)

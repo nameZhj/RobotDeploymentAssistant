@@ -22,14 +22,14 @@ class FormationGroupDock(UPanel):
     syncFromTracksRequested = Signal()
 
     def __init__(self, state: StudioStateService, parent: QWidget | None = None) -> None:
-        super().__init__(title="集群点位表 (起止坐标)", header_widgets=[], parent=parent)
+        super().__init__(
+            title="集群点位表",
+            header_widgets=[],
+            parent=parent,
+            help_text="绿点为起点位姿，可在右侧生成目标阵型与无碰撞过渡轨迹。",
+        )
         self.state = state
         self.setFixedWidth(260)
-
-        tip = QLabel("绿色圆为起点位姿，右侧面板生成目标队形与避障路径：", self.body_widget)
-        tip.setWordWrap(True)
-        tip.setStyleSheet(f"color: {C_TEXT_2}; font-size: 11px;")
-        self.body_layout.addWidget(tip)
 
         self.table = UTable(["轨道", "起点 (X,Y)", "目标 (X,Y)"], self.body_widget)
         self.body_layout.addWidget(self.table, 1)

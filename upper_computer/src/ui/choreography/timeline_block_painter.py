@@ -42,7 +42,7 @@ def paint_ruler(
 
     p.setFont(QFont("Microsoft YaHei UI", 8))
     p.setPen(QColor(C_TEXT_3))
-    p.drawText(QRectF(x0 + 10, 0, max(120, width - 20), RULER_H), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "任务链顺序流向 (到点触发下一动作) ➔")
+    p.drawText(QRectF(x0 + 10, 0, max(120, width - 20), RULER_H), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "任务链顺序 ➔")
 
     ph_x = int(x0 + playhead_s * pps - scroll_x)
     if x0 <= ph_x <= x0 + width:
@@ -93,7 +93,7 @@ def paint_empty_timeline_hint(p: QPainter, x0: int, w: int, y_top: int, tracks: 
     p.drawText(
         QRectF(x0 + 12, y_top + 18, max(120, w - 24), 48),
         Qt.AlignmentFlag.AlignCenter,
-        "暂无真实机器人轨道 — 请点击上方『+ 轨道』按钮真实添加机器人",
+        "请点击上方『+ 轨道』添加机器人",
     )
 
 

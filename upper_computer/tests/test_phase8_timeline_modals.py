@@ -19,14 +19,12 @@ from src.services.studio_state_service import StudioStateService
 from src.ui.choreography import ChoreographyPage
 from src.ui.modals import (
     AddTrackDialog,
-    BpmInfoModal,
     CoordTransformModal,
     CustomMapModal,
     DeviceOverviewModal,
     FragmentSaveDialog,
     InitPointModal,
     PreDanceCheckModal,
-    RangeExportImportDialog,
     StageSizeModal,
     SwitchTaskModal,
     TaskJsonViewerModal,
@@ -82,8 +80,6 @@ def test_all_standard_modals_construct(tmp_path) -> None:
         InitPointModal(state),
         SwitchTaskModal(state),
         FragmentSaveDialog(state, 2.0),
-        RangeExportImportDialog(state),
-        BpmInfoModal(state),
         PreDanceCheckModal(state),
         DeviceOverviewModal(state),
         CoordTransformModal(state),

@@ -1,12 +1,14 @@
 # @file: src/ui/design_system/u_buttons.py
-# @brief: Unified UButton, UIconButton, USegmented, and UBadge controls guaranteeing zero text truncation.
-# @exports: UButton, UIconButton, USegmented, UBadge
+# @brief: Unified UButton, UIconButton, USegmented, UBadge, and UHelpIcon controls guaranteeing zero text truncation.
+# @exports: UButton, UIconButton, USegmented, UBadge, UHelpIcon
 
 from __future__ import annotations
 
 from typing import List, Optional, Sequence
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
+from PySide6.QtCore import QEvent, QPoint, QSize, Qt, Signal
+from PySide6.QtGui import QEnterEvent, QGuiApplication
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
+from src.ui.design_system import tokens as _t
 
 from src.ui.design_system.svg_icons import render_svg_icon
 from src.ui.design_system.tokens import (
@@ -56,12 +58,20 @@ class UButton(QPushButton):
             self.setIconSize(QSize(14, 14))
         self.setToolTip(tooltip or text)
         self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
-        # Prevent text truncation by locking minimum width to intrinsic content width
-        self.setMinimumWidth(max(height, self.sizeHint().width() + 4))
+        # Account for QSS horizontal padding (20px) + icon (18px) so buttons never overlap or clip
+        text_w = self.fontMetrics().horizontalAdvance(text) if text else 0
+        icon_w = 20 if icon_name else 0
+        self.setMinimumWidth(max(height, self.sizeHint().width() + 8, text_w + icon_w + 24))
+
+    def set_variant(self, variant: str) -> None:
+        self.setProperty("variant", variant)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
 
 
 class UIconButton(QPushButton):
-    """Square 24px/28px crisp vector SVG icon button with clean tooltip."""
+    """Square 24px/30px crisp vector SVG icon button with clean tooltip."""
 
     def __init__(
         self,
@@ -70,16 +80,19 @@ class UIconButton(QPushButton):
         size: int = H_BTN_SM,
         color: str = C_TEXT_1,
         checkable: bool = False,
+        variant: str = "ghost",
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__("", parent)
         self.setProperty("uBtn", True)
-        self.setProperty("variant", "ghost")
+        self.setProperty("variant", variant)
         self.setCheckable(checkable)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedSize(size, size)
-        self.setIcon(render_svg_icon(icon_name, color=color, size=max(13, size - 12)))
-        self.setIconSize(QSize(max(13, size - 12), max(13, size - 12)))
+        self.setStyleSheet("QPushButton { padding: 0px; }")
+        ico_px = max(14, size - 14)
+        self.setIcon(render_svg_icon(icon_name, color=color, size=ico_px))
+        self.setIconSize(QSize(ico_px, ico_px))
         if tooltip:
             self.setToolTip(tooltip)
 
@@ -167,3 +180,107 @@ class UBadge(QLabel):
             f"QLabel {{ background: {bg}; color: {fg}; border: 1px solid {bd}; "
             f"border-radius: 4px; padding: 1px 7px; font-size: 11px; font-weight: 600; }}"
         )
+
+
+class _HelpPopupCard(QFrame):
+    """Frameless floating help card shown when hovering a UHelpIcon."""
+
+    def __init__(self) -> None:
+        flags = Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint
+        super().__init__(None, flags)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setMaximumWidth(300)
+        self.setStyleSheet(f"_HelpPopupCard {{ background: {_t.C_FLOAT_2}; border: 1px solid {_t.C_FLOAT_EDGE}; border-radius: 6px; }}")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(10, 8, 10, 8)
+        lay.setSpacing(4)
+        self._title_lbl = QLabel(self)
+        self._title_lbl.setStyleSheet(f"color: {_t.C_TEXT_1}; font-size: 12px; font-weight: 600; border: none;")
+        self._body_lbl = QLabel(self)
+        self._body_lbl.setWordWrap(True)
+        self._body_lbl.setStyleSheet(f"color: {_t.C_TEXT_2}; font-size: 11px; line-height: 1.45; border: none;")
+        lay.addWidget(self._title_lbl)
+        lay.addWidget(self._body_lbl)
+
+    def set_content(self, title: str, text: str) -> None:
+        self._title_lbl.setText(title)
+        self._title_lbl.setVisible(bool(title))
+        self._body_lbl.setText(text)
+        self.adjustSize()
+
+
+class UHelpIcon(QWidget):
+    """Circular '?' button in top-right headers that opens a floating help popup on hover."""
+
+    def __init__(self, help_text: str = "", title: str = "操作提示", size: int = 18, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._help_text, self._help_title, self._size = help_text.strip(), title.strip(), size
+        self._popup: Optional[_HelpPopupCard] = None
+        self.setFixedSize(size, size)
+        self.setCursor(Qt.CursorShape.WhatsThisCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setAccessibleName(self._help_title or "操作提示")
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self._circle = QLabel("?", self)
+        self._circle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._circle.setFixedSize(size, size)
+        lay.addWidget(self._circle)
+        self._apply_circle_style(hovered=False)
+        self.destroyed.connect(self._cleanup_popup)
+
+    def set_help_text(self, help_text: str, title: Optional[str] = None) -> None:
+        self._help_text = help_text.strip()
+        if title is not None:
+            self._help_title = title.strip()
+        if self._popup is not None and self._popup.isVisible():
+            self._popup.set_content(self._help_title, self._help_text)
+
+    def _apply_circle_style(self, hovered: bool) -> None:
+        bg, fg, bd = (_t.C_ACCENT_DIM, _t.C_TEXT_1, _t.C_ACCENT) if hovered else ("rgba(255,255,255,0.06)", _t.C_TEXT_2, _t.C_FLOAT_EDGE)
+        self._circle.setStyleSheet(
+            f"QLabel {{ background: {bg}; color: {fg}; border: 1px solid {bd}; "
+            f"border-radius: {self._size // 2}px; font-size: 11px; font-weight: 700; }}"
+        )
+
+    def _show_popup(self) -> None:
+        if not self._help_text:
+            return
+        if self._popup is None:
+            self._popup = _HelpPopupCard()
+        self._popup.set_content(self._help_title, self._help_text)
+        anchor = self.mapToGlobal(QPoint(self.width(), self.height() + 6))
+        x, y = anchor.x() - self._popup.width(), anchor.y()
+        scr = self.screen() or QGuiApplication.screenAt(anchor)
+        if scr is not None:
+            geo = scr.availableGeometry()
+            x = max(geo.left() + 6, min(x, geo.right() - self._popup.width() - 6))
+            if y + self._popup.height() > geo.bottom() - 6:
+                y = self.mapToGlobal(QPoint(0, -6)).y() - self._popup.height()
+            y = max(geo.top() + 6, y)
+        self._popup.move(x, y)
+        self._popup.show()
+
+    def _cleanup_popup(self) -> None:
+        if self._popup is not None:
+            self._popup.hide()
+            self._popup.deleteLater()
+            self._popup = None
+
+    def enterEvent(self, event: QEnterEvent) -> None:
+        self._apply_circle_style(hovered=True)
+        self._show_popup()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: QEvent) -> None:
+        self._apply_circle_style(hovered=False)
+        if self._popup is not None:
+            self._popup.hide()
+        super().leaveEvent(event)
+
+    def hideEvent(self, event: QEvent) -> None:
+        self._apply_circle_style(hovered=False)
+        if self._popup is not None:
+            self._popup.hide()
+        super().hideEvent(event)

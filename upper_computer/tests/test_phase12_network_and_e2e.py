@@ -70,9 +70,10 @@ def test_full_six_page_main_studio_window(tmp_path, monkeypatch) -> None:
     win = MainStudioWindow(initial_page="choreography")
     win.resize(1440, 860)
     win.show()
-    for page_key in ("choreography", "formation", "mapping", "monitoring", "radar", "network"):
+    for page_key in ("choreography", "formation", "mapping", "monitoring", "network"):
         win.switch_page(page_key)
         assert win.stack.currentWidget() is win._page_widgets[page_key]
+    assert "radar" not in win._page_widgets
     win.close()
     monkeypatch.undo()
     get_paths(reset=True)

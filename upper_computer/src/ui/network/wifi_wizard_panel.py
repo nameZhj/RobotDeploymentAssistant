@@ -26,7 +26,12 @@ class WifiWizardPanel(UPanel):
     """G1 LoRa-only Wi-Fi provisioning wizard feeding wireless IPs to HTTP runtime."""
 
     def __init__(self, state: StudioStateService, provisioner: G1WifiProvisioner, parent=None) -> None:
-        super().__init__(title="G1 无线配网向导 (专用 LoRa 通道配网 · 其余业务全走 Wi-Fi HTTP)", header_widgets=[], parent=parent)
+        super().__init__(
+            title="无线配网向导",
+            header_widgets=[],
+            parent=parent,
+            help_text="通过 LoRa 串口（或备用有线 SSH）为机器人配置 Wi-Fi 与静态 IP；配网完成后业务通信全部走 Wi-Fi HTTP。",
+        )
         self.state = state
         self.prov = provisioner
         self.body_layout.setSpacing(8)
@@ -34,16 +39,22 @@ class WifiWizardPanel(UPanel):
         lora_row = QHBoxLayout()
         lora_row.setSpacing(6)
         self.lora_port_sel = USelect([], self.body_widget)
-        ref_lora_b = UButton("刷新 LoRa 串口", variant="ghost", size="xs", icon_name="refresh", parent=self.body_widget)
+        ref_lora_b = UButton("刷新串口", variant="ghost", size="xs", icon_name="refresh", parent=self.body_widget)
         ref_lora_b.clicked.connect(self.refresh_lora_ports)
-        bind_lora_b = UButton("绑定 LoRa 配网口", variant="default", size="xs", parent=self.body_widget)
+        bind_lora_b = UButton("1. 绑定纯 LoRa 配网口", variant="primary", size="xs", parent=self.body_widget)
         bind_lora_b.clicked.connect(self._on_bind_lora)
+        probe_b = UButton("2. 探测网卡", variant="default", size="xs", parent=self.body_widget)
+        probe_b.clicked.connect(self._on_probe)
+        scan_b = UButton("3. 扫描 Wi-Fi", variant="default", size="xs", icon_name="refresh", parent=self.body_widget)
+        scan_b.clicked.connect(self._on_scan)
         lora_lbl = QLabel("LoRa 串口:", self.body_widget)
         lora_lbl.setStyleSheet(f"color: {C_TEXT_2}; font-size: 11px;")
         lora_row.addWidget(lora_lbl)
         lora_row.addWidget(self.lora_port_sel, 1)
         lora_row.addWidget(ref_lora_b)
         lora_row.addWidget(bind_lora_b)
+        lora_row.addWidget(probe_b)
+        lora_row.addWidget(scan_b)
         self.body_layout.addLayout(lora_row)
 
         ssh_row = QHBoxLayout()
@@ -55,21 +66,15 @@ class WifiWizardPanel(UPanel):
         self.ifname_edit = QLineEdit("wlan0", self.body_widget)
         self.ifname_edit.setFixedWidth(72)
 
-        conn_b = UButton("1. 连接 LoRa 通道", variant="primary", size="sm", parent=self.body_widget)
+        conn_b = UButton("可选: 有线 SSH 连接", variant="ghost", size="xs", parent=self.body_widget)
         conn_b.clicked.connect(self._on_ssh_connect)
-        probe_b = UButton("2. 探测网卡", variant="default", size="sm", parent=self.body_widget)
-        probe_b.clicked.connect(self._on_probe)
-        scan_b = UButton("3. 扫描 Wi-Fi", variant="default", size="sm", icon_name="refresh", parent=self.body_widget)
-        scan_b.clicked.connect(self._on_scan)
 
-        for lbl_t, w in (("G1地址:", self.host_edit), ("用户:", self.user_edit), ("密码:", self.pwd_edit), ("网卡:", self.ifname_edit)):
+        for lbl_t, w in (("可选有线SSH:", self.host_edit), ("用户:", self.user_edit), ("密码:", self.pwd_edit), ("网卡:", self.ifname_edit)):
             lbl = QLabel(lbl_t, self.body_widget)
             lbl.setStyleSheet(f"color: {C_TEXT_2}; font-size: 11px;")
             ssh_row.addWidget(lbl)
             ssh_row.addWidget(w)
         ssh_row.addWidget(conn_b)
-        ssh_row.addWidget(probe_b)
-        ssh_row.addWidget(scan_b)
         self.body_layout.addLayout(ssh_row)
 
         self.wifi_table = UTable(["状态", "SSID", "信号%", "加密方式", "BSSID"], self.body_widget)
@@ -95,7 +100,7 @@ class WifiWizardPanel(UPanel):
         self.ip_addr_edit = QLineEdit("192.168.50.101", self.body_widget)
         self.gw_edit = QLineEdit("192.168.50.1", self.body_widget)
         self.track_sel = USelect([], self.body_widget)
-        apply_ip_b = UButton("5. 应用 IPv4 并切换 Wi-Fi HTTP", variant="default", size="sm", icon_name="check", parent=self.body_widget)
+        apply_ip_b = UButton("5. 应用并同步轨道 IP", variant="default", size="sm", icon_name="check", parent=self.body_widget)
         apply_ip_b.clicked.connect(self._on_apply_ipv4)
         ip_form.addRow("配置方式", self.ip_method)
         ip_form.addRow("无线静态 IP", self.ip_addr_edit)
@@ -105,7 +110,7 @@ class WifiWizardPanel(UPanel):
         bot.addLayout(ip_form, 1)
         self.body_layout.addLayout(bot)
 
-        self.status_badge = UBadge("LoRa 配网通道待连接", tone="neutral", parent=self.body_widget)
+        self.status_badge = UBadge("LoRa 待连接", tone="neutral", parent=self.body_widget)
         self.log_view = QPlainTextEdit(self.body_widget)
         self.log_view.setReadOnly(True)
         self.log_view.setFixedHeight(95)

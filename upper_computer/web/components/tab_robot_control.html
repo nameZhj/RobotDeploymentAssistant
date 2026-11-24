@@ -1,55 +1,50 @@
 <!-- ======================================= -->
-<!-- TAB 1 (首页): 机器人群控与实时控制控制台 -->
+<!-- TAB 1 (首页): 机器人群控与实时控制控制台 (Wi-Fi 局域网 HTTP) -->
 <!-- ======================================= -->
 <section class="tab-content-panel active tab-robot-control" id="tab-robot-control">
-  <!-- 底层串口配置与连接组件 (按需隐藏，保持后台自动热插拔连接) -->
-  <div class="serial-config-group" style="display: none;">
-    <select id="ctrl-serial-port-select">
-      <option value=""></option>
-    </select>
-    <button id="ctrl-serial-refresh-btn"></button>
-    <select id="ctrl-baud-rate-select">
-      <option value="9600"></option>
-    </select>
-    <button id="ctrl-serial-connect-btn"><span class="btn-text"></span></button>
-  </div>
-
-  <!-- 2. 全宽横向展开的控制目标与自由多选编队区 -->
+  <!-- 1. 全宽横向展开的控制目标与自由多选编队区 -->
   <div class="ctrl-target-banner">
     <div class="target-banner-header">
       <div class="banner-title-group">
-        <h3><span class="icon">🎯</span> 控制目标选择与多机编队</h3>
-        <div class="help-tooltip-wrapper">
-          <span class="help-icon-circle" tabindex="0" role="button" aria-label="快捷操作指南">?</span>
-          <div class="help-tooltip-bubble">
-            <div class="help-bubble-header">💡 操作指南与快捷键</div>
-            <div class="help-bubble-item">
-              <span class="help-item-title">🎯 目标编队</span>
-              <span class="help-item-desc">左键单选 / Ctrl+左键多选 / 全选与取消全选 (Ctrl+A)</span>
-            </div>
-            <div class="help-bubble-item">
-              <span class="help-item-title">🦾 基础姿态</span>
-              <span class="help-item-desc">按键 1 站立 (STAND) / 2 步态 (GAIT) / 0 趴下 (PASSIVE) / X 急停复位 (STOP)</span>
-            </div>
-            <div class="help-bubble-item">
-              <span class="help-item-title">🕹️ 移动转向</span>
-              <span class="help-item-desc">W/A/S/D 方向移动，Q/E 原地转向 (长按/按住持续移动 5Hz)</span>
-            </div>
-          </div>
-        </div>
+        <h3><span class="icon">🎯</span> 控制目标与编队</h3>
       </div>
 
       <div class="target-management-toolbar">
         <div class="selection-status-badge" id="ctrl-selection-status">
           <span class="pulse-dot"></span>
-          <span id="ctrl-selected-summary">已选: 暂无机器人 (请先添加)</span>
+          <span id="ctrl-selected-summary">已选: 无</span>
         </div>
-        <button class="btn btn-secondary btn-sm" id="btn-select-all-action" title="全选所有受控机器人 (Ctrl+A)">
+        <button class="btn btn-secondary btn-sm" id="btn-scan-http-robots" title="扫描局域网在线机器人">
+          <span>🔍</span> 扫描局域网
+        </button>
+        <button class="btn btn-secondary btn-sm" id="btn-select-all-action" title="全选 (Ctrl+A)">
           <span>👑</span> 全选
         </button>
-        <button class="btn btn-primary btn-sm" id="btn-add-robot-action" title="自定义添加机器人 ID（与 lora_robot_id 一致）">
+        <button class="btn btn-primary btn-sm" id="btn-add-robot-action" title="添加机器人">
           <span>➕</span> 添加机器人
         </button>
+        <div class="help-tooltip-wrapper align-right">
+          <span class="help-icon-circle" tabindex="0" role="button" aria-label="快捷操作指南">?</span>
+          <div class="help-tooltip-bubble">
+            <div class="help-bubble-header">💡 操作指南</div>
+            <div class="help-bubble-item">
+              <span class="help-item-title">🌐 群控通信</span>
+              <span class="help-item-desc">添加机器人 ID 与 Wi-Fi IP 后均通过 HTTP 直连通信（仅 Wi-Fi 配网走 LoRa）</span>
+            </div>
+            <div class="help-bubble-item">
+              <span class="help-item-title">🎯 目标编队</span>
+              <span class="help-item-desc">左键单选 / Ctrl+左键多选 / Ctrl+A 全选</span>
+            </div>
+            <div class="help-bubble-item">
+              <span class="help-item-title">🦾 姿态控制</span>
+              <span class="help-item-desc">1 站立 (STAND) / 2 步态 (GAIT) / 0 趴下 (PASSIVE) / X 急停 (STOP)</span>
+            </div>
+            <div class="help-bubble-item">
+              <span class="help-item-title">🕹️ 移动转向</span>
+              <span class="help-item-desc">W/A/S/D 移动，Q/E 原地转向（按住连续发送 5Hz）</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -158,11 +153,11 @@
     <div class="workspace-right">
       <div class="ctrl-card dance-terminal-panel">
         <div class="card-header-compact">
-          <h3><span class="icon">💃</span> 舞蹈与特技动作</h3>
+          <h3><span class="icon">💃</span> 机载动作</h3>
           <div style="display: flex; align-items: center; gap: 8px;">
-            <span class="hint-tag" id="ctrl-dance-count-tag">串口动态同步</span>
+            <span class="hint-tag" id="ctrl-dance-count-tag">待同步</span>
             <button class="btn btn-secondary btn-xs" id="ctrl-refresh-dance-btn"
-              title="向当前选中机器人发送 GETDANCELIST 重新同步舞蹈列表"
+              title="重新同步动作列表"
               style="padding: 2px 8px; font-size: 0.75rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px;">
               <span>🔄</span> 刷新
             </button>
@@ -173,8 +168,8 @@
         <div class="dance-scroll-container" id="ctrl-dance-scroll-container">
           <div class="dance-loading-state"
             style="padding: 24px; text-align: center; color: var(--text-secondary); font-size: 0.85rem;">
-            <div style="font-size: 1.5rem; margin-bottom: 8px;">⏳</div>
-            <span>连接串口并选择受控机器人后自动同步动作列表</span>
+            <div style="font-size: 1.5rem; margin-bottom: 8px;">🌐</div>
+            <span>添加并选择机器人后自动同步动作列表</span>
           </div>
         </div>
 

@@ -77,7 +77,13 @@ def test_dual_computer_full_http_closure(tmp_path: Path, monkeypatch) -> None:
             return 0, "ok", ""
         return 0, "", ""
 
-    l_cfg = RosEnvCfg(lora_yaml_file=yaml_file, robot_id_file=id_file, cache_dir=tmp_path / "lower_cache", nav_poll_interval_s=0.04)
+    l_cfg = RosEnvCfg(
+        deploy_root=tmp_path / "lower_deploy",
+        lora_yaml_file=yaml_file,
+        robot_id_file=id_file,
+        cache_dir=tmp_path / "lower_cache",
+        nav_poll_interval_s=0.04,
+    )
     l_bridge = RosBridge(cfg=l_cfg, master_checker=lambda: True, shell_runner=_ros_shell)
     l_navctl = NavctlRunner(cmd_runner=lambda argv, _t: subprocess.CompletedProcess(argv, 0, "navctl ok", ""), exists_checker=lambda _p: True)
     l_ctx = LowerCtx(cfg=l_cfg, navctl=l_navctl, ros_bridge=l_bridge)
@@ -172,6 +178,43 @@ def test_dual_computer_full_http_closure(tmp_path: Path, monkeypatch) -> None:
         assert dances_res["ok"] is True and dances_res["total_count"] == 2
         pre_res = bridge.precheck("127.0.0.1")
         assert pre_res["ok"] is True and pre_res["http_used"] is True
+        disc_res = state.http_rpc.fetch_nav_discovery("127.0.0.1")
+        assert disc_res.ok is True and disc_res.data["endpoints"]["odom_topic"] == "/Odometry_loc"
+
+        # Verify Flask Web Console pure Wi-Fi HTTP APIs (fleet, health, command, posture, velocity, dance, stop, state, precheck, logs)
+        from app import app as flask_app
+        from backend.http_lower_bridge import http_lower_bridge
+        orig_storage = http_lower_bridge._storage_file
+        http_lower_bridge._storage_file = tmp_path / "test_http_fleet.json"
+        log_dir = l_cfg.deploy_root / "log"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / "sec_run.log").write_text("[INFO] g1_ctrl_vsis ready\n", encoding="utf-8")
+        try:
+            flask_client = flask_app.test_client()
+            r_fl = flask_client.post("/api/fleet", json={"robots": [{"id": "A", "ip": "127.0.0.1", "port": lower_port}], "selected": ["A"]})
+            assert r_fl.status_code == 200 and r_fl.get_json()["success"] is True
+            r_hl = flask_client.post("/api/http/health", json={"robots": [{"id": "A", "ip": "127.0.0.1", "port": lower_port}]})
+            assert r_hl.status_code == 200 and r_hl.get_json()["online_count"] == 1
+            r_cm = flask_client.post("/api/http/command", json={"target": "A", "command": "STAND", "targets_map": {"A": {"ip": "127.0.0.1", "port": lower_port}}})
+            assert r_cm.status_code == 200 and r_cm.get_json()["success"] is True and r_cm.get_json()["http_used"] is True
+            r_po = flask_client.post("/api/http/posture", json={"target": "A", "posture": "GAIT", "robot_ip": "127.0.0.1", "port": lower_port})
+            assert r_po.status_code == 200 and r_po.get_json()["success"] is True
+            r_ve = flask_client.post("/api/http/velocity", json={"target": "A", "direction": "FORWARD", "duration": 1.0, "robot_ip": "127.0.0.1", "port": lower_port})
+            assert r_ve.status_code == 200 and r_ve.get_json()["success"] is True
+            r_da = flask_client.post("/api/http/dance", json={"target": "A", "alias": "G1_TAIJI", "robot_ip": "127.0.0.1", "port": lower_port})
+            assert r_da.status_code == 200 and r_da.get_json()["success"] is True
+            r_st = flask_client.get(f"/api/http/state?target=A&robot_ip=127.0.0.1&port={lower_port}")
+            assert r_st.status_code == 200 and r_st.get_json()["data"]["motion"]["active_dance"] == "G1_TAIJI"
+            r_sp = flask_client.post("/api/http/stop", json={"target": "A", "emergency": False, "robot_ip": "127.0.0.1", "port": lower_port})
+            assert r_sp.status_code == 200 and r_sp.get_json()["success"] is True
+            r_dn = flask_client.post("/api/http/dance_list", json={"target": "A", "targets_map": {"A": {"ip": "127.0.0.1", "port": lower_port}}})
+            assert r_dn.status_code == 200 and r_dn.get_json()["total_count"] == 2
+            r_lg = flask_client.get("/api/logs?type=g1_ctrl&lines=50&robot_ip=127.0.0.1")
+            assert r_lg.status_code == 200 and "g1_ctrl_vsis ready" in r_lg.get_json().get("raw_text", "")
+            r_pc = flask_client.get("/api/precheck?robot_ip=127.0.0.1")
+            assert r_pc.status_code == 200 and "items" in r_pc.get_json().get("data", {})
+        finally:
+            http_lower_bridge._storage_file = orig_storage
 
         # Pure-LoRa Wi-Fi probe handshake without SSH: Upper LoraWifiTunnel <-> Lower LoraSerialWifiDaemon
         l_ctx.lora_wifi._shell = lambda _c, _t: (0, "GENERAL.STATE:100 (connected)\nIP4.ADDRESS[1]:192.168.50.108/24\n", "")

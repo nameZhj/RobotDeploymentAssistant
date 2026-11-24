@@ -30,7 +30,7 @@ from src.ui.design_system.tokens import (
     LINE,
     R_CARD,
 )
-from src.ui.design_system.u_buttons import UBadge, UIconButton
+from src.ui.design_system.u_buttons import UBadge, UHelpIcon, UIconButton
 
 
 class UPanel(QFrame):
@@ -41,15 +41,17 @@ class UPanel(QFrame):
         title: str = "",
         header_widgets: Sequence[QWidget] = (),
         parent: Optional[QWidget] = None,
+        help_text: str = "",
     ) -> None:
         super().__init__(parent)
+        self._help_icon: Optional[UHelpIcon] = None
         self.setProperty("uniPanel", True)
         self.root_layout = QVBoxLayout(self)
         self.root_layout.setContentsMargins(0, 0, 0, 0)
         self.root_layout.setSpacing(0)
 
         self.header_bar: Optional[QWidget] = None
-        if title or header_widgets:
+        if title or header_widgets or help_text:
             self.header_bar = QFrame(self)
             self.header_bar.setFixedHeight(34)
             self.header_bar.setStyleSheet(
@@ -66,6 +68,8 @@ class UPanel(QFrame):
             for w in header_widgets:
                 hl.addWidget(w)
             self.root_layout.addWidget(self.header_bar)
+            if help_text:
+                self.set_help_text(help_text)
 
         self.body_widget = QWidget(self)
         self.body_widget.setObjectName("uPanelBody")
@@ -74,6 +78,24 @@ class UPanel(QFrame):
         self.body_layout.setContentsMargins(8, 8, 8, 8)
         self.body_layout.setSpacing(6)
         self.root_layout.addWidget(self.body_widget, 1)
+
+    def set_help_text(self, help_text: str, title: str = "操作提示") -> None:
+        """Attach or update a top-right circular '?' help button on the panel header."""
+        if self.header_bar is None:
+            return
+        hl = self.header_bar.layout()
+        text = help_text.strip()
+        if not text:
+            if self._help_icon is not None:
+                self._help_icon.hide()
+            return
+        if self._help_icon is None:
+            self._help_icon = UHelpIcon(text, title=title, parent=self.header_bar)
+        else:
+            self._help_icon.set_help_text(text, title=title)
+            self._help_icon.show()
+            hl.removeWidget(self._help_icon)
+        hl.addWidget(self._help_icon)
 
 
 class UCollapsibleGroup(QFrame):

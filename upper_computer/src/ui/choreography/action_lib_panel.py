@@ -5,13 +5,10 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-import shutil
 from typing import Optional
 from PySide6.QtCore import QMimeData, QPoint, Qt, Signal
 from PySide6.QtGui import QDrag
 from PySide6.QtWidgets import (
-    QFileDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -23,7 +20,6 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.event_bus import StudioEvent
-from src.core.paths import get_paths
 from src.domain.action_entities import ActionEntity
 from src.services.studio_state_service import StudioStateService
 from src.ui.choreography.track_lib_panel import BLOCK_MIME_TYPE
@@ -98,25 +94,22 @@ class ActionLibPanel(UPanel):
     """Right-bottom Action Library populated via Wi-Fi HTTP GET /api/v1/actions/list or local imports."""
 
     def __init__(self, state: StudioStateService, parent=None) -> None:
-        super().__init__(title="动作库 (Wi-Fi HTTP 同步)", header_widgets=[], parent=parent)
+        super().__init__(title="动作库", header_widgets=[], parent=parent)
         self.state = state
         self.body_layout.setContentsMargins(6, 6, 6, 6)
         self.body_layout.setSpacing(6)
 
-        self.sync_btn = UIconButton("refresh", tooltip="通过无线 Wi-Fi HTTP 从下位机同步真实动作库", size=24, parent=self)
+        self.sync_btn = UIconButton("refresh", tooltip="从机器人同步动作库", size=24, parent=self)
         self.sync_btn.clicked.connect(self._sync_from_http)
         self.header_bar.layout().addWidget(self.sync_btn)
-
-        imp_b = UIconButton("plus", tooltip="导入本地 CSV / NPZ 动作文件", size=24, parent=self)
-        imp_b.clicked.connect(self._import_motion_file)
-        self.header_bar.layout().addWidget(imp_b)
+        self.set_help_text("点击右上角刷新按钮同步机载动作库，拖拽动作卡片即可加入任务链轨道。", title="动作库")
 
         flt = QHBoxLayout()
         flt.setSpacing(6)
-        self.search_box = USearchInput("搜索动作名称 / 别名...", self.body_widget)
+        self.search_box = USearchInput("搜索动作...", self.body_widget)
         self.search_box.textChanged.connect(lambda _t: self.refresh())
         self.cat_sel = USelect(
-            [("全部分组", "ALL"), ("G1 组", "G1"), ("G2 组", "G2"), ("G3 组", "G3"), ("本地导入", "CUSTOM")],
+            [("全部分组", "ALL"), ("G1 组", "G1"), ("G2 组", "G2"), ("G3 组", "G3")],
             self.body_widget,
         )
         self.cat_sel.setFixedWidth(96)
@@ -152,7 +145,7 @@ class ActionLibPanel(UPanel):
 
         if not actions:
             self.list_layout.addWidget(
-                UEmpty("暂无动作", "请配置机器人 Wi-Fi IP 后点击右上角同步按钮获取真实动作 (HTTP)", self.container)
+                UEmpty("暂无动作", "连接机器人后点击右上角同步", self.container)
             )
         for act in actions:
             row = _DraggableActionRow(act, self.container)
@@ -163,9 +156,6 @@ class ActionLibPanel(UPanel):
 
     def _sync_from_http(self) -> None:
         self.state.sync_actions_from_http()
-
-    def _sync_from_serial(self) -> None:
-        self.state.sync_actions_from_serial()
 
     def _edit_action(self, act: ActionEntity) -> None:
         dlg = UDialog(f"编辑动作 [{act.no}]", width=380, height=230, confirm_text="保存", parent=self)
@@ -190,30 +180,4 @@ class ActionLibPanel(UPanel):
             return
         self.state.action_repo.delete_action(action_id)
         self.state.bus.publish(StudioEvent.ACTION_LIB_UPDATED, None)
-        self.state.notify("已删除自定义动作", "info")
-
-    def _import_motion_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "导入本地动作文件", "", "Motion Files (*.csv *.npz)")
-        if not path:
-            return
-        src = Path(path)
-        dst = get_paths().motions_dir / src.name
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        if src.resolve() != dst.resolve():
-            shutil.copy2(src, dst)
-        existing = self.state.action_repo.list_actions()
-        next_no = max((a.no for a in existing), default=2000) + 1
-        rel = dst.relative_to(get_paths().root_dir).as_posix()
-        act = ActionEntity(
-            no=next_no,
-            name=src.stem,
-            category="CUSTOM",
-            lrmp_code=f"CUSTOM_{src.stem.upper()[:10]}",
-            robot_model="G1",
-            duration=15.0,
-            motion_file_path=rel,
-            is_builtin=False,
-        )
-        self.state.action_repo.upsert_action(act)
-        self.state.bus.publish(StudioEvent.ACTION_LIB_UPDATED, act.id)
-        self.state.notify(f"已导入本地动作 {act.name}", "ok")
+        self.state.notify("已删除动作条目", "info")

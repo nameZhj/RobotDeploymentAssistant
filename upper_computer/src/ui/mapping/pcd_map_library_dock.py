@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QWidget,
 )
 
@@ -37,12 +38,18 @@ class PcdMapLibraryDock(UPanel):
     cloudLoaded = Signal(object, object)  # (PcdMapEntity, PcdPointCloud)
 
     def __init__(self, state: StudioStateService, parent: QWidget | None = None) -> None:
-        super().__init__(title="场地地图管理 (.PCD)", header_widgets=[], parent=parent)
+        super().__init__(
+            title="场地地图",
+            header_widgets=[],
+            parent=parent,
+            help_text="支持上传本地 .pcd 点云、从机器人拉取或推送地图，以及标定舞台坐标系。",
+        )
         self.state = state
+        self.active_robot_ip: str = ""
         self.setFixedWidth(306)
         self.body_layout.setSpacing(8)
 
-        self.search = USearchInput("搜索地图名称 / 文件名...", self.body_widget)
+        self.search = USearchInput("搜索地图...", self.body_widget)
         self.search.textChanged.connect(lambda _t: self.refresh())
         self.body_layout.addWidget(self.search)
 
@@ -55,20 +62,26 @@ class PcdMapLibraryDock(UPanel):
         grid.setSpacing(6)
         up_b = UButton("上传本地 PCD", variant="primary", size="sm", icon_name="upload", parent=self.body_widget)
         up_b.clicked.connect(self.upload_pcd_dialog)
+        pull_b = UButton("拉取机载 PCD", variant="default", size="sm", icon_name="download", parent=self.body_widget)
+        pull_b.clicked.connect(self.sync_remote_pcd_dialog)
         load_b = UButton("加载到舞台", variant="default", size="sm", icon_name="map", parent=self.body_widget)
         load_b.clicked.connect(self.load_selected_to_stage)
         ren_b = UButton("重命名", variant="default", size="sm", icon_name="edit", parent=self.body_widget)
         ren_b.clicked.connect(self.rename_selected)
         cal_b = UButton("坐标系标定", variant="default", size="sm", icon_name="target", parent=self.body_widget)
         cal_b.clicked.connect(lambda: CoordTransformModal(self.state, self).exec())
+        push_b = UButton("推送至机器人", variant="default", size="sm", icon_name="upload", parent=self.body_widget)
+        push_b.clicked.connect(self.push_selected_to_robot)
         del_b = UButton("删除地图", variant="danger", size="sm", icon_name="trash", parent=self.body_widget)
         del_b.clicked.connect(self.delete_selected)
 
         grid.addWidget(up_b, 0, 0)
-        grid.addWidget(load_b, 0, 1)
-        grid.addWidget(ren_b, 1, 0)
-        grid.addWidget(cal_b, 1, 1)
-        grid.addWidget(del_b, 2, 0, 1, 2)
+        grid.addWidget(pull_b, 0, 1)
+        grid.addWidget(push_b, 1, 0)
+        grid.addWidget(load_b, 1, 1)
+        grid.addWidget(ren_b, 2, 0)
+        grid.addWidget(cal_b, 2, 1)
+        grid.addWidget(del_b, 3, 0, 1, 2)
         self.body_layout.addLayout(grid)
 
         self.meta_lbl = QLabel("未选择地图", self.body_widget)
@@ -130,10 +143,62 @@ class PcdMapLibraryDock(UPanel):
             f"路径: {Path(m.file_path).name}"
         )
 
+    def push_selected_to_robot(self, restart_localization: Optional[bool] = None) -> bool:
+        """Push selected local .pcd file to active robot's discovered onboard map dir via Wi-Fi HTTP."""
+        m = self._selected_entity()
+        if not m or not m.file_path or not Path(m.file_path).exists():
+            self.state.notify("请先选择有效的本地 PCD 地图", "warn")
+            return False
+        robot_ip = self.active_robot_ip.strip() or next((tr.robot_ip.strip() for tr in self.state.tracks if tr.robot_ip), "")
+        if not robot_ip:
+            self.state.notify("请先添加配置了 Wi-Fi IP 的机器人轨道", "warn")
+            return False
+        if restart_localization is None:
+            ans = QMessageBox.question(
+                self,
+                "推送 PCD 至机器人",
+                f"将 [{m.name}.pcd] 推送到 {robot_ip} 后，是否立即执行 navctl restart localization？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.No,
+            )
+            if ans == QMessageBox.StandardButton.Cancel:
+                return False
+            restart_localization = ans == QMessageBox.StandardButton.Yes
+        res = self.state.http_rpc.upload_slam_pcd(robot_ip, Path(m.file_path), restart_localization=bool(restart_localization))
+        self.state.notify(res.message, "ok" if res.ok else "warn")
+        return res.ok
+
     def upload_pcd_dialog(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "上传本地 PCD 地图", "", "PCD Files (*.pcd)")
         if path:
             self.import_pcd_file(Path(path), activate=True)
+
+    def sync_remote_pcd_dialog(self) -> Optional[PcdMapEntity]:
+        """Discover onboard .pcd maps over Wi-Fi HTTP and download selected real map."""
+        robot_ip = self.active_robot_ip.strip() or next((tr.robot_ip.strip() for tr in self.state.tracks if tr.robot_ip), "")
+        if not robot_ip:
+            self.state.notify("请先添加配置了 Wi-Fi IP 的机器人轨道", "warn")
+            return None
+        res = self.state.http_rpc.list_remote_maps(robot_ip)
+        maps = (res.data.get("maps") or []) if res.ok else []
+        if not maps:
+            self.state.notify(f"未在机器人端动态发现 .pcd 地图 ({res.message})", "warn")
+            return None
+        choices = [f"{m['name']}.pcd ({round(m['size_bytes'] / (1024 * 1024), 2)}MB) — {m['path']}" for m in maps]
+        if len(choices) == 1:
+            idx = 0
+        else:
+            picked, ok = QInputDialog.getItem(self, "选择机载真实 PCD 地图", "动态发现的机载地图:", choices, 0, False)
+            if not ok or picked not in choices:
+                return None
+            idx = choices.index(picked)
+        remote_p = str(maps[idx]["path"])
+        dst = get_paths().maps_dir / Path(remote_p).name
+        dl = self.state.http_rpc.download_slam_pcd(robot_ip, dst, remote_path=remote_p)
+        if not dl.ok:
+            self.state.notify(f"下载机载 PCD 失败: {dl.message}", "warn")
+            return None
+        return self.import_pcd_file(dst, activate=True)
 
     def import_pcd_file(self, src: Path, activate: bool = True) -> PcdMapEntity:
         dst = get_paths().maps_dir / src.name

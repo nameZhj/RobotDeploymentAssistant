@@ -386,7 +386,49 @@ const API = {
     });
   },
 
-  // 10. 受控机器人机队配置持久化
+  // 10. Wi-Fi 局域网 HTTP 群控与机队管理 API（所有非 Wi-Fi 配网业务均走此通道）
+  bindHttpRobot(targetId, robotIp, port = 8090) {
+    return this.request('/api/http/bind_robot', {
+      method: 'POST',
+      body: JSON.stringify({ target_id: targetId, robot_ip: robotIp, port })
+    });
+  },
+
+  sendHttpCommand(target, command, robotIp = '', port = null, targetsMap = null) {
+    return this.request('/api/http/command', {
+      method: 'POST',
+      body: JSON.stringify({ target, command, robot_ip: robotIp, port, targets_map: targetsMap })
+    });
+  },
+
+  getHttpDanceList(target = '', targetsMap = null) {
+    return this.request('/api/http/dance_list', {
+      method: 'POST',
+      body: JSON.stringify({ target, targets_map: targetsMap })
+    });
+  },
+
+  checkHttpHealth(robots = null) {
+    return this.request('/api/http/health', {
+      method: 'POST',
+      body: JSON.stringify(robots ? { robots } : {})
+    });
+  },
+
+  scanLanHttpRobots(subnet = '', port = 8090) {
+    return this.request('/api/http/scan_lan', {
+      method: 'POST',
+      body: JSON.stringify({ subnet, port })
+    });
+  },
+
+  configureLoraWifi(payload) {
+    return this.request('/api/wifi/lora_config', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
   getFleet() {
     return this.request('/api/fleet');
   },

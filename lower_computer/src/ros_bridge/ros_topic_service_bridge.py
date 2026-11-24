@@ -12,11 +12,14 @@ import re
 import shutil
 import socket
 import subprocess
+import threading
+import time
 from typing import Any, Callable, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
 from src.config.ros_env_config import ROS_SERVICES, ROS_TOPICS, RosEnvConfig
 from src.ros_bridge.ros_nav_diagnostics import RosNavDiagnostics
+from src.ros_bridge.ros_runtime_discovery import RosRuntimeDiscovery
 
 
 @dataclass
@@ -78,7 +81,13 @@ class RosTopicServiceBridge:
         self.cfg = cfg or RosEnvConfig()
         self._shell = shell_runner or _default_shell_runner
         self._master_check_fn = master_checker
-        self.diagnostics = RosNavDiagnostics(self.cfg, self._shell, use_navctl_shell=use_navctl_shell)
+        self.discovery = RosRuntimeDiscovery(self.cfg, self._shell, use_navctl_shell=use_navctl_shell)
+        self.diagnostics = RosNavDiagnostics(
+            self.cfg, self._shell, use_navctl_shell=use_navctl_shell, discovery=self.discovery
+        )
+        self._vel_lock = threading.Lock()
+        self._vel_stop = threading.Event()
+        self._vel_thread: Optional[threading.Thread] = None
 
     def is_ros_master_reachable(self) -> bool:
         if self._master_check_fn is not None:
@@ -100,11 +109,11 @@ class RosTopicServiceBridge:
         if not self.is_ros_master_reachable():
             return f"ROS Master ({self.cfg.ros_master_uri}) 不可达"
         if self._shell is _default_shell_runner:
-            if self.diagnostics.use_navctl_shell:
-                if not Path(self.cfg.navctl_bin).exists():
-                    return f"未找到 {self.cfg.navctl_bin}，无法进入 ROS 容器环境"
-            elif not self.has_rostopic_cli():
-                return "未检测到 rostopic/rosservice CLI 工具（需在 ROS 1.17.4 或 navctl shell 环境中运行）"
+            mode = self.discovery._resolve_shell_mode()
+            if mode == "navctl_shell" and not Path(self.cfg.navctl_bin).exists():
+                return f"未找到 {self.cfg.navctl_bin}，无法进入 ROS 容器环境"
+            if mode == "direct" and not self.has_rostopic_cli():
+                return "未检测到 rostopic/rosservice CLI 工具（需在 ROS 1.17.4 或 navctl/docker 环境中运行）"
         return None
 
     def read_telemetry_snapshot(self) -> RosTelemetrySnapshot:
@@ -112,12 +121,13 @@ class RosTopicServiceBridge:
         if err:
             return RosTelemetrySnapshot(ros_available=False, master_reachable=False, reason=err)
 
-        pose = self._echo_odometry_pose()
+        ep = self.discovery.discover_topics()
+        pose = self._echo_odometry_pose(ep.odom_topic)
         if pose is None:
             pose = self.diagnostics.read_tf_map_to_base_link()
-        conf = self._echo_float_topic(ROS_TOPICS["loc_confidence"]["topic"])
-        delay = self._echo_float_topic(ROS_TOPICS["loc_delay_ms"]["topic"])
-        nav_st = self._echo_string_topic(ROS_TOPICS["local_nav_status"]["topic"])
+        conf = self._echo_float_topic(ep.confidence_topic)
+        delay = self._echo_float_topic(ep.delay_topic)
+        nav_st = self._echo_string_topic(ep.nav_status_topic)
         cmd_v = self.diagnostics.read_cmd_vel()
         return RosTelemetrySnapshot(
             ros_available=True,
@@ -127,11 +137,12 @@ class RosTopicServiceBridge:
             localization_delay_ms=delay,
             local_nav_status=nav_st,
             cmd_vel=cmd_v,
-            reason="" if pose is not None else "已连接 ROS Master，等待 /Odometry_loc 或 TF map->base_link 发布",
+            reason="" if pose is not None else f"已连接 ROS Master，等待 {ep.odom_topic} 或 TF map->base_link 发布",
         )
 
-    def _echo_odometry_pose(self) -> Optional[Tuple[float, float, float]]:
-        rc, out, _ = self.diagnostics.run_ros_cmd(f"rostopic echo -n 1 {ROS_TOPICS['odometry_loc']['topic']}", 2.5)
+    def _echo_odometry_pose(self, topic: str = "") -> Optional[Tuple[float, float, float]]:
+        use_topic = topic or self.discovery.current.odom_topic
+        rc, out, _ = self.diagnostics.run_ros_cmd(f"rostopic echo -n 1 {use_topic}", 2.5)
         if rc != 0 or not out:
             return None
         mx = re.search(r"position:\s*\n\s*x:\s*([-0-9.eE+]+)\s*\n\s*y:\s*([-0-9.eE+]+)", out)
@@ -163,60 +174,91 @@ class RosTopicServiceBridge:
         err = self._check_ready()
         if err:
             return {"ok": False, "ros_available": False, "reason": err}
+        topic = self.discovery.discover_topics().goal_topic
         qz, qw = _yaw_to_quat_zw(yaw)
         yaml_msg = (
             f"{{header: {{frame_id: '{frame_id}'}}, "
             f"pose: {{position: {{x: {x:.4f}, y: {y:.4f}, z: 0.0}}, "
             f"orientation: {{x: 0.0, y: 0.0, z: {qz:.6f}, w: {qw:.6f}}}}}}}"
         )
-        cmd = f"rostopic pub -1 {ROS_TOPICS['move_base_goal']['topic']} {ROS_TOPICS['move_base_goal']['type']} \"{yaml_msg}\""
+        cmd = f"rostopic pub -1 {topic} {ROS_TOPICS['move_base_goal']['type']} \"{yaml_msg}\""
         rc, out, err_s = self.diagnostics.run_ros_cmd(cmd, 5.0)
         return {
-            "ok": rc == 0,
-            "ros_available": True,
-            "topic": ROS_TOPICS["move_base_goal"]["topic"],
+            "ok": rc == 0, "ros_available": True, "topic": topic,
             "goal": {"x": x, "y": y, "yaw": yaw, "frame_id": frame_id},
-            "stdout": out,
-            "reason": "" if rc == 0 else (err_s or f"rostopic pub 退出码 {rc}"),
+            "stdout": out, "reason": "" if rc == 0 else (err_s or f"rostopic pub 退出码 {rc}"),
         }
 
     def publish_initial_pose(self, x: float, y: float, yaw: float, frame_id: str = "map") -> Dict[str, Any]:
         err = self._check_ready()
         if err:
             return {"ok": False, "ros_available": False, "reason": err}
+        topic = self.discovery.discover_topics().initialpose_topic
         qz, qw = _yaw_to_quat_zw(yaw)
         yaml_msg = (
             f"{{header: {{frame_id: '{frame_id}'}}, "
             f"pose: {{pose: {{position: {{x: {x:.4f}, y: {y:.4f}, z: 0.0}}, "
             f"orientation: {{x: 0.0, y: 0.0, z: {qz:.6f}, w: {qw:.6f}}}}}}}}}"
         )
-        cmd = f"rostopic pub -1 {ROS_TOPICS['initialpose']['topic']} {ROS_TOPICS['initialpose']['type']} \"{yaml_msg}\""
+        cmd = f"rostopic pub -1 {topic} {ROS_TOPICS['initialpose']['type']} \"{yaml_msg}\""
         rc, out, err_s = self.diagnostics.run_ros_cmd(cmd, 5.0)
         return {
-            "ok": rc == 0,
-            "ros_available": True,
-            "topic": ROS_TOPICS["initialpose"]["topic"],
-            "stdout": out,
-            "reason": "" if rc == 0 else (err_s or f"rostopic pub 退出码 {rc}"),
+            "ok": rc == 0, "ros_available": True, "topic": topic,
+            "stdout": out, "reason": "" if rc == 0 else (err_s or f"rostopic pub 退出码 {rc}"),
         }
 
-    def publish_cmd_vel(self, vx: float, vy: float, vyaw: float) -> Dict[str, Any]:
+    def _publish_cmd_vel_once(self, vx: float, vy: float, vyaw: float) -> Tuple[bool, str, str]:
+        topic = self.discovery.discover_topics().cmd_vel_topic
+        yaml_msg = f"{{linear: {{x: {vx:.4f}, y: {vy:.4f}, z: 0.0}}, angular: {{x: 0.0, y: 0.0, z: {vyaw:.4f}}}}}"
+        cmd = f"rostopic pub -1 {topic} {ROS_TOPICS['cmd_vel']['type']} \"{yaml_msg}\""
+        rc, out, err_s = self.diagnostics.run_ros_cmd(cmd, 3.0)
+        return rc == 0, topic, ("" if rc == 0 else (err_s or out or f"rostopic pub cmd_vel 退出码 {rc}"))
+
+    def stop_cmd_vel(self) -> Dict[str, Any]:
+        with self._vel_lock:
+            self._vel_stop.set()
+            prev = self._vel_thread
+            self._vel_thread = None
+        if prev is not None and prev.is_alive() and prev is not threading.current_thread():
+            prev.join(timeout=0.5)
         err = self._check_ready()
         if err:
             return {"ok": False, "ros_available": False, "reason": err}
-        yaml_msg = (
-            f"{{linear: {{x: {vx:.4f}, y: {vy:.4f}, z: 0.0}}, "
-            f"angular: {{x: 0.0, y: 0.0, z: {vyaw:.4f}}}}}"
-        )
-        cmd = f"rostopic pub -1 {ROS_TOPICS['cmd_vel']['topic']} {ROS_TOPICS['cmd_vel']['type']} \"{yaml_msg}\""
-        rc, out, err_s = self.diagnostics.run_ros_cmd(cmd, 3.0)
+        ok, topic, reason = self._publish_cmd_vel_once(0.0, 0.0, 0.0)
+        return {"ok": ok, "ros_available": True, "topic": topic, "cmd_vel": {"vx": 0.0, "vy": 0.0, "vyaw": 0.0}, "reason": reason}
+
+    def publish_cmd_vel(self, vx: float, vy: float, vyaw: float, duration_s: float = 0.0) -> Dict[str, Any]:
+        err = self._check_ready()
+        if err:
+            return {"ok": False, "ros_available": False, "reason": err}
+        with self._vel_lock:
+            self._vel_stop.set()
+            prev = self._vel_thread
+            self._vel_thread = None
+        if prev is not None and prev.is_alive() and prev is not threading.current_thread():
+            prev.join(timeout=0.5)
+
+        ok, topic, reason = self._publish_cmd_vel_once(vx, vy, vyaw)
+        dur = max(0.0, min(10.0, float(duration_s)))
+        if ok and dur > 0.12 and (abs(vx) > 1e-4 or abs(vy) > 1e-4 or abs(vyaw) > 1e-4):
+            stop_ev = threading.Event()
+            with self._vel_lock:
+                self._vel_stop = stop_ev
+                def _hold_loop() -> None:
+                    deadline = time.monotonic() + dur
+                    while not stop_ev.wait(0.1) and time.monotonic() < deadline:
+                        self._publish_cmd_vel_once(vx, vy, vyaw)
+                    if not stop_ev.is_set():
+                        self._publish_cmd_vel_once(0.0, 0.0, 0.0)
+                t = threading.Thread(target=_hold_loop, daemon=True, name="RosVelHold")
+                self._vel_thread = t
+                t.start()
         return {
-            "ok": rc == 0,
+            "ok": ok,
             "ros_available": True,
-            "topic": ROS_TOPICS["cmd_vel"]["topic"],
-            "cmd_vel": {"vx": vx, "vy": vy, "vyaw": vyaw},
-            "stdout": out,
-            "reason": "" if rc == 0 else (err_s or f"rostopic pub cmd_vel 退出码 {rc}"),
+            "topic": topic,
+            "cmd_vel": {"vx": vx, "vy": vy, "vyaw": vyaw, "duration": dur},
+            "reason": reason,
         }
 
     def cancel_planning(self) -> Dict[str, Any]:

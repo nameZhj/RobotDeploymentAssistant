@@ -50,6 +50,17 @@ class PlaybackCoordinator(QObject):
         self.stateChanged.emit(False)
         self.state.bus.publish(StudioEvent.PLAYBACK_STATE_CHANGED, False)
 
+    def reset_preview(self) -> None:
+        """Reset local preview playhead to origin without commanding physical robots."""
+        self.is_playing = False
+        self._timer.stop()
+        self.state.playhead_s = 0.0
+        self.stateChanged.emit(False)
+        self.timeChanged.emit(0.0)
+        self.state.bus.publish(StudioEvent.PLAYBACK_STATE_CHANGED, False)
+        self.state.bus.publish(StudioEvent.PLAYHEAD_MOVED, 0.0)
+        self.state.notify("已停止本地预览并复位游标（未触发真机移动）", "info")
+
     def stop_and_return_origin(self) -> None:
         """Immediately halt playback, reset all 2D/3D robots to (init_x, init_y, init_yaw), and notify lower HTTP."""
         self.is_playing = False

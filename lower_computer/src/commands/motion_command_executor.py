@@ -56,35 +56,78 @@ class MotionCommandExecutor:
         self.ros_bridge = ros_bridge
         self._dds_hook = dds_action_hook
         self._vel_hook = velocity_hook
-        self._active_motion: Dict[str, Any] = {"state": "PASSIVE", "vx": 0.0, "vy": 0.0, "vyaw": 0.0}
+        self._active_motion: Dict[str, Any] = {
+            "state": "PASSIVE", "vx": 0.0, "vy": 0.0, "vyaw": 0.0, "active_dance": "",
+        }
+
+    def get_state(self) -> Dict[str, Any]:
+        """Return live control authority and active motion snapshot."""
+        return {
+            "authority": self.arbiter.state.value,
+            "motion": dict(self._active_motion),
+        }
+
+    def execute_posture(self, posture: str) -> CommandExecutionResult:
+        p = (posture or "").strip().upper()
+        if p not in ("STAND", "GAIT", "PASSIVE", "RELEASE"):
+            return CommandExecutionResult(False, p, [], "REJECTED", self.arbiter.state.value, f"不支持的姿态模式: {posture}")
+        return self.execute(p)
+
+    def execute_velocity(
+        self,
+        direction: str = "",
+        duration: float = 1.0,
+        vx: Optional[float] = None,
+        vy: Optional[float] = None,
+        vyaw: Optional[float] = None,
+    ) -> CommandExecutionResult:
+        if direction:
+            return self.execute(direction.strip().upper(), [str(duration)])
+        lim = self.config_reader.read_dance_registry()["motion_limits"]
+        rx = max(-1.0, min(1.0, (vx or 0.0) / max(0.05, lim["forward_axis"])))
+        ry = max(-1.0, min(1.0, (vy or 0.0) / max(0.05, lim["lateral_axis"])))
+        rz = max(-1.0, min(1.0, (vyaw or 0.0) / max(0.05, lim["turn_axis"])))
+        return self.execute("MOVE", [str(rx), str(ry), str(rz), str(duration)])
+
+    def execute_dance(self, alias: str) -> CommandExecutionResult:
+        return self.execute("DANCE", [alias])
+
+    def execute_stop(self, emergency: bool = False) -> CommandExecutionResult:
+        return self.execute("EMERGENCY" if emergency else "STOP")
 
     def execute(self, command: str, params: Optional[List[str]] = None) -> CommandExecutionResult:
-        cmd = (command or "").strip().upper()
+        raw_cmd = (command or "").strip()
         args = [str(p).strip() for p in (params or []) if str(p).strip()]
+        if "," in raw_cmd and not args:
+            parts = [p.strip() for p in raw_cmd.split(",") if p.strip()]
+            raw_cmd = parts[0] if parts else ""
+            args = parts[1:]
+        cmd = raw_cmd.upper()
         decision = self.arbiter.evaluate_and_apply(cmd)
         if not decision.allowed:
             return CommandExecutionResult(False, cmd, args, "REJECTED", decision.authority.value, decision.reason)
 
         if cmd in ("STAND", "GAIT", "PASSIVE"):
-            self._active_motion = {"state": cmd, "vx": 0.0, "vy": 0.0, "vyaw": 0.0}
-            return CommandExecutionResult(True, cmd, args, "REAL", decision.authority.value, f"已切换运动状态至 {cmd}", dict(self._active_motion))
+            self._active_motion = {"state": cmd, "vx": 0.0, "vy": 0.0, "vyaw": 0.0, "active_dance": ""}
+            extra: Dict[str, Any] = dict(self._active_motion)
+            if self._dds_hook is not None:
+                extra["dds"] = self._dds_hook(cmd, args, {})
+            return CommandExecutionResult(True, cmd, args, "REAL", decision.authority.value, f"已切换运动状态至 {cmd}", extra)
 
         if cmd == "STOP":
-            self._active_motion["vx"] = 0.0
-            self._active_motion["vy"] = 0.0
-            self._active_motion["vyaw"] = 0.0
+            self._active_motion.update({"vx": 0.0, "vy": 0.0, "vyaw": 0.0, "active_dance": ""})
             cancel_res = self.ros_bridge.cancel_planning()
-            vel_res = self.ros_bridge.publish_cmd_vel(0.0, 0.0, 0.0)
+            vel_res = self.ros_bridge.stop_cmd_vel()
             return CommandExecutionResult(True, cmd, args, "REAL", decision.authority.value, "已执行软停 STOP", {"ros_cancel": cancel_res, "ros_cmd_vel": vel_res})
 
         if cmd == "EMERGENCY":
-            self._active_motion = {"state": "PASSIVE", "vx": 0.0, "vy": 0.0, "vyaw": 0.0}
+            self._active_motion = {"state": "PASSIVE", "vx": 0.0, "vy": 0.0, "vyaw": 0.0, "active_dance": ""}
             cancel_res = self.ros_bridge.cancel_planning()
-            vel_res = self.ros_bridge.publish_cmd_vel(0.0, 0.0, 0.0)
+            vel_res = self.ros_bridge.stop_cmd_vel()
             return CommandExecutionResult(True, cmd, args, "REAL", decision.authority.value, "已执行硬急停 EMERGENCY（零轴并取消规划）", {"ros_cancel": cancel_res, "ros_cmd_vel": vel_res})
 
         if cmd == "RELEASE":
-            self._active_motion = {"state": "STAND", "vx": 0.0, "vy": 0.0, "vyaw": 0.0}
+            self._active_motion = {"state": "STAND", "vx": 0.0, "vy": 0.0, "vyaw": 0.0, "active_dance": ""}
             return CommandExecutionResult(True, cmd, args, "REAL", decision.authority.value, "已安全释放控制权至 FREE")
 
         if cmd in ("PREP", "PLAY", "BARRIER"):
@@ -99,6 +142,16 @@ class MotionCommandExecutor:
 
         if cmd == "STATUS":
             return self._execute_status(args, decision.authority.value)
+
+        if cmd == "DISCOVER":
+            return CommandExecutionResult(
+                True, cmd, args, "REAL", decision.authority.value, "设备在线发现响应",
+                {
+                    "robot_id": self.config_reader.read_robot_id(),
+                    "network": self.config_reader.read_network_summary(),
+                    "motion": dict(self._active_motion),
+                },
+            )
 
         if cmd == "GETDANCELIST":
             reg = self.config_reader.read_dance_registry()
@@ -143,7 +196,7 @@ class MotionCommandExecutor:
             return CommandExecutionResult(False, cmd, args, "REJECTED", auth, f"运动参数错误: {ex}")
 
         self._active_motion = {"state": "GAIT", "vx": round(vx, 3), "vy": round(vy, 3), "vyaw": round(vyaw, 3), "duration": dur}
-        hook_res = self._vel_hook(vx, vy, vyaw, dur) if self._vel_hook else self.ros_bridge.publish_cmd_vel(vx, vy, vyaw)
+        hook_res = self._vel_hook(vx, vy, vyaw, dur) if self._vel_hook else self.ros_bridge.publish_cmd_vel(vx, vy, vyaw, duration_s=dur)
         return CommandExecutionResult(True, cmd, args, "REAL", auth, f"已映射速度指令 ({vx:.2f}, {vy:.2f}, {vyaw:.2f}, {dur:.1f}s)", {**self._active_motion, "ros_cmd_vel": hook_res})
 
     def _execute_status(self, args: List[str], auth: str) -> CommandExecutionResult:
@@ -165,18 +218,22 @@ class MotionCommandExecutor:
         if cmd == "DANCE":
             if not args:
                 return CommandExecutionResult(False, cmd, args, "REJECTED", auth, "DANCE 指令缺少动作别名参数")
-            alias = args[0].upper()
+            req_alias = args[0].strip()
             reg = self.config_reader.read_dance_registry()
-            entry = reg["alias_map"].get(alias)
+            alias_map = reg["alias_map"]
+            lookup = {k.upper(): v for k, v in alias_map.items()}
+            entry = alias_map.get(req_alias) or lookup.get(req_alias.upper())
+            canonical = entry["alias"] if entry else req_alias.upper()
             if reg["available"] and entry is None:
-                return CommandExecutionResult(False, cmd, args, "REJECTED", auth, f"动作 '{alias}' 未在机载 dance_map 中注册")
+                return CommandExecutionResult(False, cmd, args, "REJECTED", auth, f"动作 '{req_alias}' 未在机载 dance_map 中注册")
+            self._active_motion["active_dance"] = canonical
             if self._dds_hook is not None:
-                hook_out = self._dds_hook(cmd, args, entry or {"alias": alias})
-                return CommandExecutionResult(True, cmd, args, "REAL", auth, f"已通过 DDS 钩子执行舞蹈 {alias}", hook_out)
+                hook_out = self._dds_hook(cmd, [canonical, *args[1:]], entry or {"alias": canonical})
+                return CommandExecutionResult(True, cmd, [canonical], "REAL", auth, f"已通过 DDS 钩子执行舞蹈 {canonical}", hook_out)
             return CommandExecutionResult(
-                ok=True, command=cmd, params=args, execution_mode="RESERVED_SLOT", authority=auth,
-                message=f"舞蹈 [{alias}] 已通过白名单校验，当前处于预留执行槽位（等待底层 DDS 手柄桥接挂载）",
-                details={"alias": alias, "mapped_keys": entry["keys"] if entry else [], "slot_status": "RESERVED"},
+                ok=True, command=cmd, params=[canonical], execution_mode="RESERVED_SLOT", authority=auth,
+                message=f"舞蹈 [{canonical}] 已通过白名单校验，当前处于预留执行槽位（等待底层 DDS 手柄桥接挂载）",
+                details={"alias": canonical, "mapped_keys": entry["keys"] if entry else [], "slot_status": "RESERVED"},
             )
 
         if self._dds_hook is not None:

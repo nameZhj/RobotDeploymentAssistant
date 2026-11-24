@@ -41,13 +41,23 @@ def dispatch_system_route(
         )
         return (200 if res["ok"] else 400), res, "application/json"
 
+    if m == "GET" and path == "/api/v1/system/docker":
+        return 200, ctx.system_ops.get_docker_status(), "application/json"
+
+    if m == "POST" and path == "/api/v1/system/container":
+        res = ctx.system_ops.control_container(
+            str(data.get("action", "")), str(data.get("container_name", "vsis_g1"))
+        )
+        return (200 if res["ok"] else 400), res, "application/json"
+
     if m == "GET" and path == "/api/v1/system/logs":
         log_type = query.get("type", ["sec_run"])[0]
+        container = query.get("container", ["vsis_g1"])[0]
         try:
             lines = int(query.get("lines", ["200"])[0] or "200")
         except (ValueError, TypeError):
             return 400, {"ok": False, "message": "lines 参数必须为整数"}, "application/json"
-        res = ctx.system_ops.fetch_logs(log_type=log_type, lines=lines)
+        res = ctx.system_ops.fetch_logs(log_type=log_type, lines=lines, container=container)
         return (200 if res["ok"] else 404), res, "application/json"
 
     if m == "GET" and path == "/api/v1/system/clock":

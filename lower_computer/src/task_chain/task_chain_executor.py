@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 import math
@@ -35,30 +35,19 @@ class TaskChainState:
     saved_path: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "status": self.status, "plan_id": self.plan_id, "run_id": self.run_id,
-            "target_id": self.target_id, "current_step_index": self.current_step_index,
-            "current_node_title": self.current_node_title, "total_nodes": self.total_nodes,
-            "waiting_barrier_id": self.waiting_barrier_id, "origin_pose": dict(self.origin_pose),
-            "last_error": self.last_error, "sha256": self.sha256, "saved_path": self.saved_path,
-        }
+        return asdict(self)
 
 
 class TaskChainExecutor:
     """Executes uploaded robot task chains node-by-node waiting for real goal arrival before next step."""
 
     def __init__(
-        self,
-        cfg: RosEnvConfig,
-        arbiter: ControlArbiter,
-        ros_bridge: RosTopicServiceBridge,
-        motion_exec: MotionCommandExecutor,
-        webhook: WebhookDispatcher,
+        self, cfg: RosEnvConfig, arbiter: ControlArbiter, ros_bridge: RosTopicServiceBridge,
+        motion_exec: MotionCommandExecutor, webhook: WebhookDispatcher,
     ) -> None:
         self.cfg, self.arbiter = cfg, arbiter
         self.ros_bridge, self.motion_exec, self.webhook = ros_bridge, motion_exec, webhook
-        self._lock = threading.Lock()
-        self._stop_event = threading.Event()
+        self._lock, self._stop_event = threading.Lock(), threading.Event()
         self._barrier_cond = threading.Condition(self._lock)
         self._released_barriers: Set[str] = set()
         self._worker: Optional[threading.Thread] = None
@@ -171,25 +160,18 @@ class TaskChainExecutor:
         cb = callback_url or self._callback_url
         with self._lock:
             if origin_pose:
-                self.state.origin_pose = {
-                    "x": float(origin_pose.get("x", 0.0)),
-                    "y": float(origin_pose.get("y", 0.0)),
-                    "yaw": float(origin_pose.get("yaw", 0.0)),
-                }
+                self.state.origin_pose = {k: float(origin_pose.get(k, 0.0)) for k in ("x", "y", "yaw")}
             ox, oy, oyaw = self.state.origin_pose["x"], self.state.origin_pose["y"], self.state.origin_pose["yaw"]
         cancel_res = self.ros_bridge.cancel_planning()
         stop_res = self.motion_exec.execute("STOP")
         goal_res = self.ros_bridge.publish_nav_goal(ox, oy, oyaw)
         with self._lock:
             self.state.status = "RETURNING_TO_ORIGIN" if goal_res.get("ok") else "STOPPED"
-            self.state.current_step_index = 0
-            self.state.current_node_title = "返回原点"
+            self.state.current_step_index, self.state.current_node_title = 0, "返回原点"
             self.state.waiting_barrier_id = ""
             self.state.last_error = "" if goal_res.get("ok") else str(goal_res.get("reason", ""))
         self.arbiter.release_choreo_on_finish()
-        self.webhook.emit(cb, "STOPPED_RETURNING_ORIGIN", {
-            "state": self.state.to_dict(), "cancel_result": cancel_res, "return_goal_result": goal_res,
-        })
+        self.webhook.emit(cb, "STOPPED_RETURNING_ORIGIN", {"state": self.state.to_dict(), "cancel_result": cancel_res, "return_goal_result": goal_res})
         return {
             "ok": True, "status_code": 200, "message": "已中止任务链并下发回到原点指令",
             "cancel_result": cancel_res, "stop_result": stop_res.to_dict(),
@@ -225,17 +207,14 @@ class TaskChainExecutor:
 
                 if ntype == "trajectory":
                     ok, err = self._execute_nav_node(idx, title, node)
-                elif ntype == "barrier":
-                    ok, err = True, ""
                 else:
-                    ok, err = self._execute_action_node(idx, title, node)
+                    ok, err = (True, "") if ntype == "barrier" else self._execute_action_node(idx, title, node)
 
                 if self._stop_event.is_set():
                     return
                 if not ok:
                     with self._lock:
-                        self.state.status = "ERROR"
-                        self.state.last_error = err
+                        self.state.status, self.state.last_error = "ERROR", err
                     self.webhook.emit(self._callback_url, "TASK_ERROR", {"step_index": idx, "title": title, "error": err, "state": self.state.to_dict()})
                     return
                 self.webhook.emit(self._callback_url, "STEP_COMPLETED", {"step_index": idx, "title": title, "node_type": ntype, "state": self.state.to_dict()})
@@ -246,15 +225,13 @@ class TaskChainExecutor:
         finally:
             self.arbiter.release_choreo_on_finish()
 
-    def _execute_nav_node(self, idx: int, title: str, node: Dict[str, Any]) -> tuple[bool, str]:
-        tx = float(node.get("target_x", node.get("targetX", 0.0)))
-        ty = float(node.get("target_y", node.get("targetY", 0.0)))
-        tyaw = float(node.get("target_yaw", node.get("targetYaw", 0.0)))
+    def _navigate_to_pose(
+        self, idx: int, title: str, tx: float, ty: float, tyaw: float,
+        tol: float, is_final: bool, wp_i: int, wp_n: int, deadline: float,
+    ) -> tuple[bool, str]:
         pub_res = self.ros_bridge.publish_nav_goal(tx, ty, tyaw)
         if not pub_res.get("ok"):
             return False, str(pub_res.get("reason", "发布导航目标点失败"))
-
-        deadline = time.monotonic() + self.cfg.nav_goal_timeout_s
         while not self._stop_event.is_set():
             snap = self.ros_bridge.read_telemetry_snapshot()
             if self._stop_event.is_set():
@@ -264,20 +241,39 @@ class TaskChainExecutor:
             if snap.pose is not None:
                 dist = math.hypot(snap.pose[0] - tx, snap.pose[1] - ty)
                 self.webhook.emit(self._callback_url, "STEP_PROGRESS", {
-                    "step_index": idx, "title": title,
+                    "step_index": idx, "title": title, "waypoint_index": wp_i + 1, "waypoint_total": wp_n,
                     "pose": {"x": snap.pose[0], "y": snap.pose[1], "yaw": snap.pose[2]},
                     "localization_confidence": snap.localization_confidence,
                     "localization_delay_ms": snap.localization_delay_ms,
-                    "remaining_distance_m": round(dist, 3),
-                    "local_nav_status": snap.local_nav_status,
+                    "remaining_distance_m": round(dist, 3), "local_nav_status": snap.local_nav_status,
                 })
-                nav_ok = (snap.local_nav_status or "").upper() in ("", "SUCCEEDED", "REACHED", "ARRIVED", "IDLE")
-                if dist <= self.cfg.arrival_xy_tolerance_m and nav_ok:
+                nav_ok = True if not is_final else (snap.local_nav_status or "").upper() in ("", "SUCCEEDED", "REACHED", "ARRIVED", "IDLE")
+                if dist <= tol and nav_ok:
                     return True, ""
             if time.monotonic() >= deadline:
                 return False, f"导航至 '{title}' ({tx:.2f}, {ty:.2f}) 超时"
             time.sleep(self.cfg.nav_poll_interval_s)
         return False, "任务已中止"
+
+    def _execute_nav_node(self, idx: int, title: str, node: Dict[str, Any]) -> tuple[bool, str]:
+        tx = float(node.get("target_x", node.get("targetX", 0.0)))
+        ty = float(node.get("target_y", node.get("targetY", 0.0)))
+        tyaw = float(node.get("target_yaw", node.get("targetYaw", 0.0)))
+        raw_wps = node.get("waypoints") if isinstance(node.get("waypoints"), list) else []
+        targets = [
+            (float(w["x"]), float(w["y"]), float(w.get("yaw", 0.0)))
+            for w in raw_wps if isinstance(w, dict) and "x" in w and "y" in w
+        ]
+        if not targets or math.hypot(targets[-1][0] - tx, targets[-1][1] - ty) > 0.05:
+            targets.append((tx, ty, tyaw))
+        deadline = time.monotonic() + self.cfg.nav_goal_timeout_s
+        for wi, (wx, wy, wyaw) in enumerate(targets):
+            is_final = (wi == len(targets) - 1)
+            tol = self.cfg.arrival_xy_tolerance_m if is_final else max(0.45, self.cfg.arrival_xy_tolerance_m * 1.8)
+            ok, err = self._navigate_to_pose(idx, title, wx, wy, wyaw, tol, is_final, wi, len(targets), deadline)
+            if not ok:
+                return False, err
+        return True, ""
 
     def _execute_action_node(self, _idx: int, title: str, node: Dict[str, Any]) -> tuple[bool, str]:
         raw = str(node.get("lrmp_code") or node.get("lrmpCode") or node.get("code_no") or title).strip().upper()

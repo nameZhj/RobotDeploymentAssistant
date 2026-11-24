@@ -1,57 +1,40 @@
 /**
- * VSISLAB 机器人群控控制台 (RobotControl 模块)
- * 遵循《群控商业化补充说明.md》：
- * 1. 机器人 ID 为用户在 lora_robot_id.txt 中自定义配置的任意标识（不仅限于 A/B/C/D）；
- * 2. 统一使用全屏模态弹窗添加机器人 ID，移除冗余重复按钮；
- * 3. 自由选择与多选组合：支持鼠标左键单选、Ctrl+左键任意多选排列组合、全选 (ALL)；
- * 4. 严格按照 TARGET|COMMAND\\n 协议下发指令（多选组合按序列寻址下发，全选使用 ALL 广播下发）；
- * 5. 零点击串口自动连接与 5Hz 运控。
+ * VSISLAB 机器人群控控制台 (纯 Wi-Fi 局域网 HTTP 通信模式)
+ * 规范：
+ * 1. 本页面及全部非无线配网业务均通过 Wi-Fi 局域网 HTTP (http://<IP>:<Port>/api/v1/...) 与下位机通信，不再使用串口；
+ * 2. 支持单选、Ctrl+左键多选组合、全选，按各机器人绑定的局域网 IP 并发下发 HTTP 控制指令；
+ * 3. 支持一键扫描当前 Wi-Fi 局域网中在线的下位机 HTTP 服务并自动加入编队；
+ * 4. 动作列表通过 GET /api/v1/actions/list 实时从下位机拉取，多机编队自动求共有动作交集。
  */
 
 const RobotControl = {
-  // 用户自定义配置的受控机器人 ID 列表（无添加时为空列表，不设默认机器人）
-  activeRobots: [],
+  // 受控机器人列表: [{ id: 'A', ip: '192.168.50.101', port: 8090 }]
+  fleet: [],
+  // 兼容旧代码读取 ID 数组
+  get activeRobots() {
+    return this.fleet.map(r => r.id);
+  },
 
-  // 当前选中的目标集合：Set(['ALL']) 或 Set(['A']) 或 Set(['A', 'C'])
+  // 当前选中的目标集合
   selectedTargets: new Set(),
+  // 实时 HTTP 健康状态映射 { A: { online: true, latency_ms: 12.3, authority: 'FREE' } }
+  healthMap: {},
 
-  isConnected: false,
-  activePort: '',
-  activeBaud: 9600,
-  activeDesc: '',
-
-  // Dual-Track Movement State
+  // 双轨 5Hz 运控按键状态
   activeTranslationKeys: new Set(),
   activeRotationKeys: new Set(),
   movementTimer: null,
+  healthPollTimer: null,
+  _danceSyncDebounceTimer: null,
+  _danceRequestId: 0,
+  currentDanceGroups: [],
 
-  // Port Polling Timer for Zero-Click Auto-Connect
-  autoConnectInterval: null,
-
-  // Key mappings matching 《群控商业化补充说明.md》
-  ONE_SHOT_KEYS: {
-    '1': 'STAND',
-    '2': 'GAIT',
-    'x': 'STOP',
-    'X': 'STOP',
-    '0': 'PASSIVE'
-  },
+  ONE_SHOT_KEYS: { '1': 'STAND', '2': 'GAIT', 'x': 'STOP', 'X': 'STOP', '0': 'PASSIVE' },
   TRANSLATION_KEYS: {
-    'w': 'FORWARD,2',
-    'W': 'FORWARD,2',
-    's': 'BACKWARD,2',
-    'S': 'BACKWARD,2',
-    'a': 'MOVE_LEFT,2',
-    'A': 'MOVE_LEFT,2',
-    'd': 'MOVE_RIGHT,2',
-    'D': 'MOVE_RIGHT,2'
+    'w': 'FORWARD,2', 'W': 'FORWARD,2', 's': 'BACKWARD,2', 'S': 'BACKWARD,2',
+    'a': 'MOVE_LEFT,2', 'A': 'MOVE_LEFT,2', 'd': 'MOVE_RIGHT,2', 'D': 'MOVE_RIGHT,2'
   },
-  ROTATION_KEYS: {
-    'q': 'TURN_LEFT,1',
-    'Q': 'TURN_LEFT,1',
-    'e': 'TURN_RIGHT,1',
-    'E': 'TURN_RIGHT,1'
-  },
+  ROTATION_KEYS: { 'q': 'TURN_LEFT,1', 'Q': 'TURN_LEFT,1', 'e': 'TURN_RIGHT,1', 'E': 'TURN_RIGHT,1' },
 
   async init() {
     this.loadStoredFleet();
@@ -59,54 +42,50 @@ const RobotControl = {
     this.bindKeyboardListeners();
     this.renderTargetCards();
 
-    // 核心保障：从后端本地持久化文件恢复机队（彻底解决打包 EXE 或重启后 LocalStorage 丢失问题）
     await this.syncFleetFromBackend();
     this.renderTargetCards();
 
-    this.logTerminal('system', '[SYSTEM] 机器人群控控制台已就绪。正在自动检测串口通信通道...');
-
-    // 0. 初始化加载并渲染舞蹈列表
+    this.logTerminal('system', '[SYSTEM] 机器人群控控制台已就绪（Wi-Fi 局域网 HTTP 通信模式，仅修改 Wi-Fi 配网使用 LoRa）。');
+    await this.refreshFleetHealth(false);
     this.fetchAndRenderDanceList(false);
+    this.startHttpHealthMonitor();
+  },
 
-    // 1. 自动检测并连接最佳串口（零点击自动连接 CH340/CH341）
-    await this.autoDetectAndConnectSerial(false);
-
-    // 2. 启动后台串口热插拔与状态监听（每 4 秒检测一次，若插入新串口自动连接）
-    this.startAutoPortMonitor();
-
-    // 3. 启动实时串口 TX/RX 字符串双向监听与控制台打印
-    this.startMessagePolling();
+  _normalizeRobotItem(item) {
+    if (typeof item === 'string') {
+      const id = item.trim().toUpperCase();
+      return id && id !== 'ALL' ? { id, ip: '', port: 8090 } : null;
+    }
+    if (item && typeof item === 'object' && item.id) {
+      const id = String(item.id).trim().toUpperCase();
+      if (!id || id === 'ALL') return null;
+      return { id, ip: String(item.ip || '').trim(), port: parseInt(item.port, 10) || 8090 };
+    }
+    return null;
   },
 
   loadStoredFleet() {
     try {
-      const stored = localStorage.getItem('g1_custom_robot_fleet');
-      if (stored !== null) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          this.activeRobots = parsed.map(r => String(r).trim().toUpperCase()).filter(r => r && r !== 'ALL');
-          const storedSel = localStorage.getItem('g1_custom_selected_targets');
-          if (storedSel !== null) {
-            const parsedSel = JSON.parse(storedSel);
-            if (Array.isArray(parsedSel) && parsedSel.length > 0) {
-              this.selectedTargets = new Set(parsedSel);
-              return;
-            }
-          }
-          if (this.activeRobots.length === 1) {
-            this.selectedTargets = new Set([this.activeRobots[0]]);
-          } else if (this.activeRobots.length > 1) {
-            this.selectedTargets = new Set(['ALL']);
-          } else {
-            this.selectedTargets = new Set();
-          }
+      const raw = localStorage.getItem('g1_http_robot_fleet') || localStorage.getItem('g1_custom_robot_fleet');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          this.fleet = parsed.map(x => this._normalizeRobotItem(x)).filter(Boolean);
+        }
+      }
+      const storedSel = localStorage.getItem('g1_custom_selected_targets');
+      if (storedSel) {
+        const sel = JSON.parse(storedSel);
+        if (Array.isArray(sel) && sel.length > 0) {
+          this.selectedTargets = new Set(sel.filter(s => s === 'ALL' || this.activeRobots.includes(s)));
           return;
         }
       }
-    } catch (_) { }
-    // 若暂无记录则初始化为空
-    this.activeRobots = [];
-    this.selectedTargets = new Set();
+      this.selectedTargets = this.fleet.length === 1 ? new Set([this.fleet[0].id]) : (this.fleet.length > 1 ? new Set(['ALL']) : new Set());
+    } catch (_) {
+      this.fleet = [];
+      this.selectedTargets = new Set();
+    }
   },
 
   async syncFleetFromBackend() {
@@ -115,93 +94,73 @@ const RobotControl = {
       const res = await API.getFleet();
       if (res && res.success && Array.isArray(res.robots)) {
         if (res.robots.length > 0) {
-          this.activeRobots = res.robots;
+          this.fleet = res.robots.map(x => this._normalizeRobotItem(x)).filter(Boolean);
           if (Array.isArray(res.selected) && res.selected.length > 0) {
             this.selectedTargets = new Set(res.selected);
           } else {
-            this.selectedTargets = (this.activeRobots.length === 1) ? new Set([this.activeRobots[0]]) : new Set(['ALL']);
+            this.selectedTargets = this.fleet.length === 1 ? new Set([this.fleet[0].id]) : new Set(['ALL']);
           }
-          try {
-            localStorage.setItem('g1_custom_robot_fleet', JSON.stringify(this.activeRobots));
-            localStorage.setItem('g1_custom_selected_targets', JSON.stringify(Array.from(this.selectedTargets)));
-          } catch (_) { }
-        } else if (this.activeRobots.length > 0) {
-          // 本地缓存有但后端尚未保存时，主动向后端同步落盘
-          API.saveFleet(this.activeRobots, Array.from(this.selectedTargets)).catch(() => {});
+          this._persistLocalOnly();
+        } else if (this.fleet.length > 0) {
+          API.saveFleet(this.fleet, Array.from(this.selectedTargets)).catch(() => {});
         }
       }
     } catch (e) {
-      console.warn('从后端同步机队配置失败:', e);
+      console.warn('从后端同步 Wi-Fi HTTP 机队失败:', e);
     }
+  },
+
+  _persistLocalOnly() {
+    try {
+      localStorage.setItem('g1_http_robot_fleet', JSON.stringify(this.fleet));
+      localStorage.setItem('g1_custom_selected_targets', JSON.stringify(Array.from(this.selectedTargets)));
+    } catch (_) { }
   },
 
   saveStoredFleet() {
-    try {
-      localStorage.setItem('g1_custom_robot_fleet', JSON.stringify(this.activeRobots));
-      localStorage.setItem('g1_custom_selected_targets', JSON.stringify(Array.from(this.selectedTargets)));
-    } catch (_) { }
-
-    // 核心保障：同步写入本地持久化文件 robot_fleet.json，抵御 EXE 重启、缓存丢失等任何异常
+    this._persistLocalOnly();
     if (typeof API !== 'undefined' && typeof API.saveFleet === 'function') {
-      API.saveFleet(this.activeRobots, Array.from(this.selectedTargets)).catch(err => {
-        console.warn('持久化保存机队配置到本地文件失败:', err);
+      API.saveFleet(this.fleet, Array.from(this.selectedTargets)).catch(err => {
+        console.warn('持久化保存 HTTP 机队配置失败:', err);
       });
     }
   },
 
+  getTargetsMap() {
+    const map = {};
+    this.fleet.forEach(r => { map[r.id] = { ip: r.ip, port: r.port || 8090 }; });
+    return map;
+  },
+
+  upsertRobotEndpoint(id, ip, port = 8090) {
+    const cleanId = String(id || 'A').trim().toUpperCase();
+    const cleanIp = String(ip || '').trim();
+    const usePort = parseInt(port, 10) || 8090;
+    const existing = this.fleet.find(r => r.id === cleanId);
+    if (existing) {
+      existing.ip = cleanIp;
+      existing.port = usePort;
+    } else {
+      this.fleet.push({ id: cleanId, ip: cleanIp, port: usePort });
+      if (this.fleet.length === 1) this.selectedTargets = new Set([cleanId]);
+    }
+    this.saveStoredFleet();
+    this.renderTargetCards();
+    this.refreshFleetHealth(false);
+  },
+
   bindEvents() {
-    // 串口连接/断开按钮
-    const connectBtn = document.getElementById('ctrl-serial-connect-btn');
-    if (connectBtn) {
-      connectBtn.addEventListener('click', () => {
-        if (this.isConnected) {
-          this.disconnectSerial();
-        } else {
-          this.autoDetectAndConnectSerial(true);
-        }
-      });
-    }
-
-    // 刷新串口按钮
-    const refreshBtn = document.getElementById('ctrl-serial-refresh-btn');
-    if (refreshBtn) {
-      refreshBtn.addEventListener('click', () => {
-        this.logTerminal('system', '[SERIAL] 正在重新扫描可用串口设备...');
-        this.refreshPortList();
-      });
-    }
-
-    // 串口下拉框切换
-    const portSelect = document.getElementById('ctrl-serial-port-select');
-    if (portSelect) {
-      portSelect.addEventListener('change', () => {
-        const val = portSelect.value;
-        if (val) {
-          this.connectSpecificPort(val);
-        }
-      });
-    }
-
-    // 全选 (ALL) 按钮
     const btnSelectAll = document.getElementById('btn-select-all-action');
-    if (btnSelectAll) {
-      btnSelectAll.addEventListener('click', () => {
-        this.toggleSelectAll();
-      });
-    }
+    if (btnSelectAll) btnSelectAll.addEventListener('click', () => this.toggleSelectAll());
 
-    // 统一添加机器人按钮（唤起自定义模态弹窗）
     const btnAddRobot = document.getElementById('btn-add-robot-action');
-    if (btnAddRobot) {
-      btnAddRobot.addEventListener('click', () => {
-        this.openAddRobotModal();
-      });
-    }
+    if (btnAddRobot) btnAddRobot.addEventListener('click', () => this.openAddRobotModal());
 
-    // 模态弹窗内部事件绑定
+    const btnScanLan = document.getElementById('btn-scan-http-robots');
+    if (btnScanLan) btnScanLan.addEventListener('click', () => this.scanLanRobots());
+
     this.bindModalEvents();
 
-    // 清空日志按钮
     const clearLogBtn = document.getElementById('ctrl-clear-log-btn');
     if (clearLogBtn) {
       clearLogBtn.addEventListener('click', () => {
@@ -211,7 +170,6 @@ const RobotControl = {
       });
     }
 
-    // 自定义指令发送
     const sendCustomBtn = document.getElementById('ctrl-send-custom-btn');
     const customInput = document.getElementById('ctrl-custom-cmd-input');
     if (sendCustomBtn && customInput) {
@@ -223,157 +181,154 @@ const RobotControl = {
         }
       };
       sendCustomBtn.addEventListener('click', doSend);
-      customInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') doSend();
-      });
+      customInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSend(); });
     }
 
-    // 刷新舞蹈列表按钮 (严格由选中状态决定，支持单机 A 或多机编队 A,B，未选中时不发，绝不发送 ALL)
     const refreshDanceBtn = document.getElementById('ctrl-refresh-dance-btn');
     if (refreshDanceBtn) {
       refreshDanceBtn.addEventListener('click', () => {
         const effective = this.getEffectiveSelectedRobots();
         if (effective.length === 0) {
-          if (typeof showToast === 'function') {
-            showToast('请先在上方勾选受控机器人后再刷新动作列表', 'warning');
-          }
-          this.logTerminal('system', '[DANCE] 请先在上方选择受控机器人后再刷新动作列表');
+          if (typeof showToast === 'function') showToast('请先在上方勾选受控机器人后再刷新动作列表', 'warning');
           this.renderUnselectedTargetState();
           return;
         }
         const targetStr = effective.join(',');
-        this.logTerminal('system', `[DANCE] 正在向机器人发送 ${targetStr}|GETDANCELIST 重新同步舞蹈列表...`);
+        this.logTerminal('system', `[HTTP DANCE] 正在通过 Wi-Fi HTTP 从 [${targetStr}] 拉取动作列表...`);
         this.fetchAndRenderDanceList(true, targetStr);
       });
     }
 
-    // 绑定动作按钮 (D-pad & Posture & Dance)
     this.bindCommandButtons();
   },
 
-  // --- 自定义添加机器人模态框 (无原生 prompt，完全兼容所有环境) ---
+  async scanLanRobots() {
+    const btn = document.getElementById('btn-scan-http-robots');
+    if (btn) btn.disabled = true;
+    this.logTerminal('system', '[HTTP SCAN] 正在并发扫描 Wi-Fi 局域网中在线的下位机 HTTP 服务 (端口 8090)...');
+    try {
+      const res = await API.scanLanHttpRobots('', 8090);
+      const devices = (res && Array.isArray(res.devices)) ? res.devices : [];
+      if (devices.length === 0) {
+        this.logTerminal('error', `[HTTP SCAN] 未在网段 ${res?.subnet || '局域网'} 发现运行下位机 HTTP(8090) 的机器人，请确认已连入同一 Wi-Fi 或手动添加 IP。`);
+        if (typeof showToast === 'function') showToast('未扫描到在线 Wi-Fi HTTP 机器人，可点击「+ 添加机器人」手动填入 IP', 'warning');
+      } else {
+        let added = 0;
+        devices.forEach(dev => {
+          const rid = (dev.robot_id && dev.robot_id !== 'UNCONFIGURED') ? dev.robot_id : this.getNextSuggestedId();
+          const exists = this.fleet.find(r => r.ip === dev.ip);
+          if (!exists) {
+            this.fleet.push({ id: rid, ip: dev.ip, port: dev.port || 8090 });
+            added++;
+          } else {
+            exists.port = dev.port || 8090;
+          }
+          this.healthMap[exists ? exists.id : rid] = { online: true, ip: dev.ip, port: dev.port || 8090, authority: dev.authority };
+        });
+        if (this.fleet.length === 1) this.selectedTargets = new Set([this.fleet[0].id]);
+        else if (this.selectedTargets.size === 0 && this.fleet.length > 0) this.selectedTargets = new Set(['ALL']);
+        this.saveStoredFleet();
+        this.renderTargetCards();
+        this.updateNavbarHttpStatus();
+        this.logTerminal('rx', `[HTTP SCAN] 发现 ${devices.length} 台在线下位机（新增 ${added} 台）: ${devices.map(d => `${d.robot_id}@${d.ip}:${d.port}`).join(', ')}`);
+        this.fetchAndRenderDanceList(true);
+      }
+    } catch (e) {
+      this.logTerminal('error', `[HTTP SCAN] 局域网扫描异常: ${e.message || e}`);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  },
+
+  // --- 添加机器人模态弹窗 (ID + Wi-Fi 局域网 IP + 端口) ---
   bindModalEvents() {
     const modal = document.getElementById('modal-add-robot');
     const btnClose = document.getElementById('btn-close-add-robot-modal');
     const btnCancel = document.getElementById('btn-cancel-add-robot');
     const btnSubmit = document.getElementById('btn-submit-add-robot');
     const inputField = document.getElementById('input-new-robot-id');
+    const ipField = document.getElementById('input-new-robot-ip');
 
     if (btnClose) btnClose.addEventListener('click', () => this.closeAddRobotModal());
     if (btnCancel) btnCancel.addEventListener('click', () => this.closeAddRobotModal());
-    if (modal) {
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) this.closeAddRobotModal();
-      });
-    }
-
+    if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) this.closeAddRobotModal(); });
     if (btnSubmit) btnSubmit.addEventListener('click', () => this.submitAddRobot());
+
+    const onEnter = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); this.submitAddRobot(); }
+      else if (e.key === 'Escape') this.closeAddRobotModal();
+    };
     if (inputField) {
       inputField.addEventListener('input', () => {
         const errEl = document.getElementById('add-robot-id-error');
-        if (errEl && errEl.style.display !== 'none') {
-          this.validateInputId(true);
-        }
+        if (errEl && errEl.style.display !== 'none') this.validateInputId(true);
       });
-      inputField.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          this.submitAddRobot();
-        } else if (e.key === 'Escape') {
-          this.closeAddRobotModal();
-        }
-      });
+      inputField.addEventListener('keydown', onEnter);
     }
+    if (ipField) ipField.addEventListener('keydown', onEnter);
   },
 
   validateInputId(showIfInvalid = false) {
     const inputField = document.getElementById('input-new-robot-id');
     const errEl = document.getElementById('add-robot-id-error');
     if (!inputField) return { valid: false, error: '输入框未就绪' };
-
     const valResult = window.validateRobotId ? window.validateRobotId(inputField.value) : { valid: true, cleanId: inputField.value.trim().toUpperCase(), error: '' };
     if (!valResult.valid) {
       if (showIfInvalid) {
-        if (errEl) {
-          errEl.innerHTML = `⚠️ ${valResult.error}`;
-          errEl.style.display = 'block';
-        }
+        if (errEl) { errEl.innerHTML = `⚠️ ${valResult.error}`; errEl.style.display = 'block'; }
         inputField.classList.add('input-invalid');
       }
       return valResult;
     }
-
-    const cleanId = valResult.cleanId;
-    if (this.activeRobots.includes(cleanId)) {
-      const dupError = `机器人 ID [${cleanId}] 已存在于受控列表中！`;
+    if (this.activeRobots.includes(valResult.cleanId)) {
+      const dupError = `机器人 ID [${valResult.cleanId}] 已存在于受控列表中！`;
       if (showIfInvalid) {
-        if (errEl) {
-          errEl.innerHTML = `⚠️ ${dupError}`;
-          errEl.style.display = 'block';
-        }
+        if (errEl) { errEl.innerHTML = `⚠️ ${dupError}`; errEl.style.display = 'block'; }
         inputField.classList.add('input-invalid');
       }
-      return { valid: false, cleanId, error: dupError };
+      return { valid: false, cleanId: valResult.cleanId, error: dupError };
     }
-
-    if (errEl) {
-      errEl.innerHTML = '';
-      errEl.style.display = 'none';
-    }
+    if (errEl) { errEl.innerHTML = ''; errEl.style.display = 'none'; }
     inputField.classList.remove('input-invalid');
-    return { valid: true, cleanId, error: '' };
+    return { valid: true, cleanId: valResult.cleanId, error: '' };
   },
 
   openAddRobotModal() {
     const modal = document.getElementById('modal-add-robot');
     const inputField = document.getElementById('input-new-robot-id');
+    const ipField = document.getElementById('input-new-robot-ip');
     const chipsContainer = document.getElementById('add-robot-chips-container');
     if (!modal) return;
 
     this.validateInputId(false);
+    if (inputField) inputField.value = this.getNextSuggestedId();
+    if (ipField && !ipField.value.trim()) ipField.value = `192.168.50.${101 + this.fleet.length}`;
 
-    // 计算下一个推荐 ID
-    const nextId = this.getNextSuggestedId();
-    if (inputField) {
-      inputField.value = nextId;
-    }
-
-    // 生成快捷推荐 Chips
     if (chipsContainer) {
       chipsContainer.innerHTML = '';
       const suggestions = [];
       for (let i = 0; i < 26; i++) {
-        const char = String.fromCharCode(65 + i);
-        if (!this.activeRobots.includes(char)) {
-          suggestions.push(char);
+        const ch = String.fromCharCode(65 + i);
+        if (!this.activeRobots.includes(ch)) {
+          suggestions.push(ch);
           if (suggestions.length >= 4) break;
         }
       }
-      suggestions.push(`R${this.activeRobots.length + 1}`, 'G1_02');
-
+      suggestions.push(`R${this.fleet.length + 1}`, 'G1_02');
       suggestions.forEach(s => {
         const chip = document.createElement('button');
         chip.className = 'chip-btn';
         chip.textContent = `+${s}`;
         chip.type = 'button';
         chip.addEventListener('click', () => {
-          if (inputField) {
-            inputField.value = s;
-            this.validateInputId(false);
-            inputField.focus();
-          }
+          if (inputField) { inputField.value = s; this.validateInputId(false); inputField.focus(); }
         });
         chipsContainer.appendChild(chip);
       });
     }
 
     modal.style.display = 'flex';
-    setTimeout(() => {
-      if (inputField) {
-        inputField.focus();
-        inputField.select();
-      }
-    }, 50);
+    setTimeout(() => { if (inputField) { inputField.focus(); inputField.select(); } }, 50);
   },
 
   closeAddRobotModal() {
@@ -382,633 +337,328 @@ const RobotControl = {
     if (modal) modal.style.display = 'none';
   },
 
-  submitAddRobot() {
+  async submitAddRobot() {
     const inputField = document.getElementById('input-new-robot-id');
+    const ipField = document.getElementById('input-new-robot-ip');
+    const portField = document.getElementById('input-new-robot-port');
     if (!inputField) return;
 
     const valResult = this.validateInputId(true);
     if (!valResult.valid) {
-      if (typeof showToast === 'function') {
-        showToast(valResult.error, 'error');
-      }
+      if (typeof showToast === 'function') showToast(valResult.error, 'error');
       inputField.focus();
       return;
     }
     const cleanId = valResult.cleanId;
-    const isFirstRobot = (this.activeRobots.length === 0);
+    const ip = ipField ? ipField.value.trim() : '';
+    const port = portField ? (parseInt(portField.value, 10) || 8090) : 8090;
+    if (!ip) {
+      if (typeof showToast === 'function') showToast('请输入机器人 Wi-Fi 局域网 IP 地址', 'warning');
+      if (ipField) ipField.focus();
+      return;
+    }
 
-    // 无论在线或离线，立即将机器人加入受控列表并持久化保存至本地 localStorage
-    this.activeRobots.push(cleanId);
-    this.saveStoredFleet();
-
-    // 立即关闭模态窗并清空输入框，保证交互无卡顿、绝无阻塞
-    this.closeAddRobotModal();
-    if (inputField) inputField.value = '';
-
-    if (isFirstRobot) {
-      // 1. 添加第一台机器人：默认选中，且通知更新目标卡片
+    const isFirst = this.fleet.length === 0;
+    this.fleet.push({ id: cleanId, ip, port });
+    if (isFirst) {
       this.selectedTargets = new Set([cleanId]);
-      this.renderTargetCards();
-      if (typeof showToast === 'function') {
-        showToast(`成功添加受控机器人 [${cleanId}]`, 'success');
-      }
-      this.logTerminal('system', `[FLEET] 成功添加首台受控机器人: [${cleanId}] (已缓存至本地)`);
-      this.logSelectionChange();
+    } else if (this.selectedTargets.has('ALL')) {
+      this.selectedTargets = new Set(this.activeRobots.filter(r => r !== cleanId));
+    }
+    this.saveStoredFleet();
+    API.bindHttpRobot(cleanId, ip, port).catch(() => {});
 
-      // 仅在串口已连接时立即下发拉取动作；若离线则直接呈现离线状态，绝不阻塞界面
-      if (this.isConnected) {
-        if (this._danceSyncDebounceTimer) {
-          clearTimeout(this._danceSyncDebounceTimer);
-          this._danceSyncDebounceTimer = null;
-        }
-        this.fetchAndRenderDanceList(true, cleanId);
-      } else {
-        this.renderDisconnectedState();
-      }
-    } else {
-      // 2. 已有机器人时：再添加时不应该默认被选中，保持原有选中状态不变
-      if (this.selectedTargets.has('ALL')) {
-        const oldRobots = this.activeRobots.filter(r => r !== cleanId);
-        this.selectedTargets = new Set(oldRobots);
-      }
-      this.renderTargetCards();
-      if (typeof showToast === 'function') {
-        showToast(`成功添加受控机器人 [${cleanId}] (未选中)`, 'success');
-      }
-      this.logTerminal('system', `[FLEET] 成功添加受控机器人: [${cleanId}] (当前共 ${this.activeRobots.length} 台，已缓存至本地)`);
+    this.closeAddRobotModal();
+    inputField.value = '';
+    this.renderTargetCards();
+    this.logTerminal('system', `[HTTP FLEET] 已添加机器人 [${cleanId}] -> http://${ip}:${port}`);
+    await this.refreshFleetHealth(false);
+    if (isFirst) {
+      this.logSelectionChange();
     }
   },
 
   getNextSuggestedId() {
     for (let i = 0; i < 26; i++) {
-      const candidate = String.fromCharCode(65 + i);
-      if (!this.activeRobots.includes(candidate)) {
-        return candidate;
-      }
+      const c = String.fromCharCode(65 + i);
+      if (!this.activeRobots.includes(c)) return c;
     }
-    return `R${this.activeRobots.length + 1}`;
+    return `R${this.fleet.length + 1}`;
   },
 
   removeRobot(robotId) {
-    // 允许用户删除所有机器人，不再强制保留 1 台
-    this.activeRobots = this.activeRobots.filter(r => r !== robotId);
+    this.fleet = this.fleet.filter(r => r.id !== robotId);
+    delete this.healthMap[robotId];
     this.saveStoredFleet();
 
-    // 更新选中状态
     this.selectedTargets.delete(robotId);
-    if (this.activeRobots.length === 0) {
-      this.selectedTargets.clear();
-    } else if (this.selectedTargets.size === 0) {
-      // 若还有剩余机器且未选中任何目标，默认选中第一台
-      this.selectedTargets = new Set([this.activeRobots[0]]);
-    }
+    if (this.fleet.length === 0) this.selectedTargets.clear();
+    else if (this.selectedTargets.size === 0) this.selectedTargets = new Set([this.fleet[0].id]);
 
     this.renderTargetCards();
-    this.logTerminal('system', `[FLEET] 已移除机器人: [${robotId}] (当前共 ${this.activeRobots.length} 台)`);
+    this.updateNavbarHttpStatus();
+    this.logTerminal('system', `[HTTP FLEET] 已移除机器人: [${robotId}] (当前共 ${this.fleet.length} 台)`);
     this.logSelectionChange();
   },
 
-  // --- 核心：获取当前实际生效的选中机器人列表 ---
   getEffectiveSelectedRobots() {
-    if (this.activeRobots.length === 0) {
-      return [];
-    }
-    // 如果选中了广播 ALL，或者勾选了 activeRobots 中的所有机器人
-    if (this.selectedTargets.has('ALL') || (this.activeRobots.length > 0 && this.activeRobots.every(r => this.selectedTargets.has(r)))) {
-      return [...this.activeRobots];
-    }
-    return this.activeRobots.filter(r => this.selectedTargets.has(r));
+    if (this.fleet.length === 0) return [];
+    const ids = this.activeRobots;
+    if (this.selectedTargets.has('ALL') || ids.every(r => this.selectedTargets.has(r))) return [...ids];
+    return ids.filter(r => this.selectedTargets.has(r));
   },
 
-  // --- 自由单选、Ctrl+左键多选组合、全选控制 ---
   handleCardClick(robotId, isCtrlKey) {
-    if (this.activeRobots.length === 0) return;
-
+    if (this.fleet.length === 0) return;
+    const ids = this.activeRobots;
     if (isCtrlKey) {
-      // Ctrl + 鼠标左键：多选与排列组合切换
       if (this.selectedTargets.has('ALL')) {
-        // 原本是全选 -> 降级为除点击机之外的所有机器（取消该机）
-        this.selectedTargets = new Set(this.activeRobots);
+        this.selectedTargets = new Set(ids);
         this.selectedTargets.delete(robotId);
-        if (this.selectedTargets.size === 0) {
-          this.selectedTargets = new Set([robotId]);
-        }
+        if (this.selectedTargets.size === 0) this.selectedTargets = new Set([robotId]);
+      } else if (this.selectedTargets.has(robotId)) {
+        this.selectedTargets.delete(robotId);
       } else {
-        if (this.selectedTargets.has(robotId)) {
-          this.selectedTargets.delete(robotId);
-          // 取消后若变空，保留空选
-        } else {
-          this.selectedTargets.add(robotId);
-          // 若包含所有机器且数量 > 1，升级为 ALL
-          if (this.activeRobots.length > 1 && this.activeRobots.every(r => this.selectedTargets.has(r))) {
-            this.selectedTargets = new Set(['ALL']);
-          }
-        }
+        this.selectedTargets.add(robotId);
+        if (ids.length > 1 && ids.every(r => this.selectedTargets.has(r))) this.selectedTargets = new Set(['ALL']);
       }
     } else {
-      // 普通左键单击：单选该机器
       this.selectedTargets = new Set([robotId]);
     }
-
     this.renderTargetCards();
     this.logSelectionChange();
   },
 
   toggleSelectAll() {
-    if (this.activeRobots.length === 0) {
-      this.logTerminal('system', '[TARGET] 当前尚未添加机器人，请先点击「+ 添加机器人」');
+    if (this.fleet.length === 0) {
+      this.logTerminal('system', '[TARGET] 当前尚未添加机器人，请先点击「+ 添加机器人」或「🔍 扫描局域网」');
       return;
     }
-
     const effective = this.getEffectiveSelectedRobots();
-    const isAllMode = effective.length === this.activeRobots.length;
-
-    if (isAllMode) {
-      // 再次点击全选 -> 取消全选
-      this.selectedTargets.clear();
-    } else {
-      // 全选：若仅有 1 台机器人，直接选中该机器单机；若有多台，使用 ALL 标识
-      if (this.activeRobots.length === 1) {
-        this.selectedTargets = new Set([this.activeRobots[0]]);
-      } else {
-        this.selectedTargets = new Set(['ALL']);
-      }
-    }
+    if (effective.length === this.fleet.length) this.selectedTargets.clear();
+    else this.selectedTargets = this.fleet.length === 1 ? new Set([this.fleet[0].id]) : new Set(['ALL']);
     this.renderTargetCards();
     this.logSelectionChange();
   },
 
   selectAll() {
-    if (this.activeRobots.length === 0) return;
-    if (this.activeRobots.length === 1) {
-      this.selectedTargets = new Set([this.activeRobots[0]]);
-    } else {
-      this.selectedTargets = new Set(['ALL']);
-    }
+    if (this.fleet.length === 0) return;
+    this.selectedTargets = this.fleet.length === 1 ? new Set([this.fleet[0].id]) : new Set(['ALL']);
     this.renderTargetCards();
     this.logSelectionChange();
   },
 
-  _danceSyncDebounceTimer: null,
-
   logSelectionChange() {
-    const summary = this.getSelectionSummaryText();
-    this.logTerminal('system', `[TARGET] 控制目标已切换: ${summary}`);
-    this.onTargetSelectionChanged();
-  },
-
-  // 选中机器人后自动发送 获取对应机器人的舞蹈列表 (支持单机与多机共有动作交集)
-  onTargetSelectionChanged() {
-    if (this._danceSyncDebounceTimer) {
-      clearTimeout(this._danceSyncDebounceTimer);
-    }
-
+    this.logTerminal('system', `[TARGET] 控制目标已切换: ${this.getSelectionSummaryText()}`);
+    if (this._danceSyncDebounceTimer) clearTimeout(this._danceSyncDebounceTimer);
     this._danceSyncDebounceTimer = setTimeout(() => {
       const effective = this.getEffectiveSelectedRobots();
-      if (effective.length === 0) {
-        this.renderUnselectedTargetState();
-        return;
-      }
-      const targetStr = effective.join(',');
-      if (!this.isConnected) {
-        this.currentDanceGroups = [];
-        this.renderDisconnectedState();
-        return;
-      }
-      this.logTerminal('system', `[DANCE AUTO] 已选择目标 [${targetStr}]，正在自动发送 ${targetStr}|GETDANCELIST 同步动作列表...`);
-      this.fetchAndRenderDanceList(true, targetStr);
-    }, 250);
+      if (effective.length === 0) { this.renderUnselectedTargetState(); return; }
+      this.fetchAndRenderDanceList(true, effective.join(','));
+    }, 200);
   },
 
   getSelectionSummaryText() {
-    if (this.activeRobots.length === 0) {
-      return '暂无机器人 (请先添加)';
+    if (this.fleet.length === 0) return '暂无机器人 (请先添加)';
+    const eff = this.getEffectiveSelectedRobots();
+    if (eff.length === 0) return '未选择机器 (请点击卡片勾选)';
+    if (eff.length === 1) {
+      const r = this.fleet.find(x => x.id === eff[0]);
+      return `Robot ${eff[0]} (${r?.ip || '未配IP'})`;
     }
-    const effective = this.getEffectiveSelectedRobots();
-    if (effective.length === 0) {
-      return '未选择机器 (请点击卡片或勾选目标)';
-    }
-    // 有且仅有一台机器人被选中
-    if (effective.length === 1) {
-      return `Robot ${effective[0]} (单机)`;
-    }
-    // 全部选中且机队大于 1 台
-    if (effective.length === this.activeRobots.length) {
-      return `全选 [${effective.join(',')}] (共 ${effective.length} 台)`;
-    }
-    return `多选 [${effective.join(',')}] (共 ${effective.length} 台)`;
+    if (eff.length === this.fleet.length) return `全选 [${eff.join(',')}] (共 ${eff.length} 台)`;
+    return `多选 [${eff.join(',')}] (共 ${eff.length} 台)`;
   },
 
   getCommandPrefixText() {
-    if (this.activeRobots.length === 0) {
-      return 'NONE|';
-    }
-    const effective = this.getEffectiveSelectedRobots();
-    if (effective.length === 0) {
-      return 'NONE|';
-    }
-    // 无论是单选、多选还是全选，目标均以逗号隔开 (如 A| 或 A,B|)，不再发送 ALL
-    return `${effective.join(',')}|`;
+    const eff = this.getEffectiveSelectedRobots();
+    return eff.length === 0 ? 'HTTP|' : `${eff.join(',')}|`;
   },
 
-  // --- 动态渲染目标控制卡片流 ---
   renderTargetCards() {
     const container = document.getElementById('ctrl-target-grid-container');
     if (!container) return;
-
     container.innerHTML = '';
 
-    // 0. 若未添加任何机器人，展示友好引导空状态
-    if (this.activeRobots.length === 0) {
+    if (this.fleet.length === 0) {
       const emptyDiv = document.createElement('div');
       emptyDiv.className = 'empty-fleet-hint';
       emptyDiv.innerHTML = `
-        <div class="empty-fleet-title">暂无受控机器人</div>
-        <div class="empty-fleet-desc">请点击右上角「+ 添加机器人」输入唯一机身标识（如 A、B、R1）即可纳入实时群控</div>
+        <div class="empty-fleet-title">暂无在线机器人</div>
+        <div class="empty-fleet-desc">点击右上角扫描或添加设备</div>
       `;
       container.appendChild(emptyDiv);
-
       const btnSelectAll = document.getElementById('btn-select-all-action');
-      if (btnSelectAll) {
-        btnSelectAll.className = 'btn btn-secondary btn-sm';
-        btnSelectAll.disabled = true;
-        btnSelectAll.innerHTML = '<span>👑</span> 全选';
-        btnSelectAll.title = '暂无机器人可用';
-      }
-
+      if (btnSelectAll) { btnSelectAll.disabled = true; btnSelectAll.innerHTML = '<span>👑</span> 全选'; }
       const summaryEl = document.getElementById('ctrl-selected-summary');
-      if (summaryEl) summaryEl.textContent = '已选: 暂无机器人 (请先添加)';
-
+      if (summaryEl) summaryEl.textContent = '已选: 无';
       const prefixEl = document.getElementById('ctrl-active-target-prefix');
-      if (prefixEl) prefixEl.textContent = 'NONE|';
+      if (prefixEl) prefixEl.textContent = 'HTTP|';
       return;
     }
 
     const effective = this.getEffectiveSelectedRobots();
-    const isAllMode = effective.length === this.activeRobots.length;
+    const isAllMode = effective.length === this.fleet.length;
 
-    // 1. 渲染每台机器人卡片
-    this.activeRobots.forEach((robotId, index) => {
-      const card = document.createElement('div');
+    this.fleet.forEach((robot, index) => {
+      const robotId = robot.id;
       const isSelected = effective.includes(robotId);
+      const h = this.healthMap[robotId];
+      const onlineTag = h ? (h.online ? `🟢 ${h.latency_ms ?? 0}ms` : '🔴 离线') : '⚪ 检测中';
+
+      const card = document.createElement('div');
       card.className = `target-card ${isSelected ? 'active' : ''}`;
       card.setAttribute('data-target', robotId);
 
-      // Top Bar: Badge (with Checkbox) + Delete Button
       const topBar = document.createElement('div');
       topBar.className = 'target-card-top';
-
       const badge = document.createElement('div');
       badge.className = 'target-badge';
 
-      // 多选复选框
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.className = 'target-card-checkbox';
       checkbox.checked = isSelected;
-      checkbox.title = `多选勾选 Robot ${robotId}`;
-      checkbox.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.handleCardClick(robotId, true);
-      });
+      checkbox.addEventListener('click', (e) => { e.stopPropagation(); this.handleCardClick(robotId, true); });
 
       const labelSpan = document.createElement('span');
       labelSpan.textContent = `Robot ${robotId}`;
-
       badge.appendChild(checkbox);
       badge.appendChild(labelSpan);
       topBar.appendChild(badge);
 
-      // 允许删除（包括只有 1 台时也能删除）
       const removeBtn = document.createElement('button');
       removeBtn.className = 'btn-card-remove';
       removeBtn.innerHTML = '✕';
       removeBtn.title = `移除 Robot ${robotId}`;
-      removeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.removeRobot(robotId);
-      });
+      removeBtn.addEventListener('click', (e) => { e.stopPropagation(); this.removeRobot(robotId); });
       topBar.appendChild(removeBtn);
 
-      // Center: Big Target ID
       const idDiv = document.createElement('div');
       idDiv.className = 'target-id';
-      idDiv.textContent = `T ${robotId}`;
+      idDiv.style.fontSize = '1.05rem';
+      idDiv.textContent = robot.ip ? `${robot.ip}:${robot.port || 8090}` : `T ${robotId} (未配IP)`;
 
-      // Bottom: Shortcut & Mode Desc
       const desc = document.createElement('div');
       desc.className = 'target-desc';
-      desc.innerHTML = `<span>${isSelected ? '✓ 已选中' : '单击选中'}</span><span>Ctrl+${index + 1}</span>`;
+      desc.innerHTML = `<span>${onlineTag}</span><span>Ctrl+${index + 1}</span>`;
 
       card.appendChild(topBar);
       card.appendChild(idDiv);
       card.appendChild(desc);
-
-      // 监听左键与 Ctrl+左键
-      card.addEventListener('click', (e) => {
-        this.handleCardClick(robotId, e.ctrlKey || e.metaKey);
-      });
-
+      card.addEventListener('click', (e) => this.handleCardClick(robotId, e.ctrlKey || e.metaKey));
       container.appendChild(card);
     });
 
-    // 2. 更新工具栏全选按钮状态
     const btnSelectAll = document.getElementById('btn-select-all-action');
     if (btnSelectAll) {
       btnSelectAll.disabled = false;
-      if (isAllMode && this.activeRobots.length > 0) {
-        btnSelectAll.className = 'btn btn-primary btn-sm';
-        btnSelectAll.innerHTML = '<span>👑</span> 取消全选';
-        btnSelectAll.title = '当前已全选，再次点击取消全选';
-      } else {
-        btnSelectAll.className = 'btn btn-secondary btn-sm';
-        btnSelectAll.innerHTML = '<span>👑</span> 全选';
-        btnSelectAll.title = '全选所有受控机器人 (Ctrl+A)';
-      }
+      btnSelectAll.className = isAllMode ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm';
+      btnSelectAll.innerHTML = isAllMode ? '<span>👑</span> 取消全选' : '<span>👑</span> 全选';
     }
-
-    // 3. 更新已选摘要与指令前缀
-    const summaryText = this.getSelectionSummaryText();
     const summaryEl = document.getElementById('ctrl-selected-summary');
-    if (summaryEl) {
-      summaryEl.textContent = `已选: ${summaryText}`;
-    }
-
+    if (summaryEl) summaryEl.textContent = `已选: ${this.getSelectionSummaryText()}`;
     const prefixEl = document.getElementById('ctrl-active-target-prefix');
-    if (prefixEl) {
-      prefixEl.textContent = this.getCommandPrefixText();
+    if (prefixEl) prefixEl.textContent = this.getCommandPrefixText();
+  },
+
+  // --- Wi-Fi 局域网 HTTP 健康轮询 ---
+  startHttpHealthMonitor() {
+    if (this.healthPollTimer) clearInterval(this.healthPollTimer);
+    this.healthPollTimer = setInterval(() => {
+      if (this.fleet.length > 0) this.refreshFleetHealth(true);
+    }, 4000);
+  },
+
+  async refreshFleetHealth(silent = true) {
+    if (this.fleet.length === 0) {
+      this.updateNavbarHttpStatus();
+      return;
+    }
+    try {
+      const res = await API.checkHttpHealth(this.fleet);
+      if (res && res.robots) {
+        this.healthMap = res.robots;
+        this.renderTargetCards();
+        this.updateNavbarHttpStatus();
+        if (!silent) {
+          this.logTerminal('system', `[HTTP HEALTH] 局域网在线检测完成: ${res.online_count}/${res.total_count} 台在线`);
+        }
+      }
+    } catch (_) {
+      this.updateNavbarHttpStatus();
     }
   },
 
-  // --- 指令发送 (支持单机与多机逗号隔开下发) ---
+  updateNavbarHttpStatus() {
+    const statusBadge = document.getElementById('ctrl-serial-status-badge');
+    const statusText = document.getElementById('ctrl-serial-status-text');
+    if (!statusBadge || !statusText) return;
+    if (this.fleet.length === 0) {
+      statusBadge.className = 'status-badge disconnected';
+      statusText.textContent = 'HTTP 待添加';
+      return;
+    }
+    const onlineCnt = Object.values(this.healthMap).filter(h => h && h.online).length;
+    if (onlineCnt > 0) {
+      statusBadge.className = 'status-badge connected';
+      statusText.textContent = `HTTP 在线 (${onlineCnt}/${this.fleet.length})`;
+    } else {
+      statusBadge.className = 'status-badge disconnected';
+      statusText.textContent = `HTTP 离线 (0/${this.fleet.length})`;
+    }
+  },
+
+  // --- 纯 Wi-Fi 局域网 HTTP 指令下发 ---
   async sendCommand(commandStr) {
     if (!commandStr) return;
     const command = commandStr.trim().toUpperCase();
-
     const effective = this.getEffectiveSelectedRobots();
-
-    // 安全检查：未选择任何目标时拦截提示
     if (effective.length === 0) {
-      this.logTerminal('error', `[TX WARN] 未选中任何受控目标！请先添加或勾选机器人卡片（拟下发: ${command}）`);
+      this.logTerminal('error', `[HTTP WARN] 未选中任何受控目标！请先添加或勾选机器人（拟下发: ${command}）`);
       return;
     }
-
-    // 规范：单选、多选或全选，均采用逗号隔开的目标格式 (如 "A" 或 "A,B")，单次发送，不再发送 ALL，也不必发送多次
     const target = effective.join(',');
-    await this.sendSinglePacket(target, command);
-  },
-
-  async sendSinglePacket(target, command) {
-    const packet = `${target}|${command}\n`;
-
     try {
-      const res = await API.sendSerialCmd(target, command);
+      const res = await API.sendHttpCommand(target, command, '', null, this.getTargetsMap());
       if (res && res.success) {
-        this.logTerminal('tx', `[TX] ${packet.trim()}`);
+        const list = Array.isArray(res.results) ? res.results : [];
+        const hasReserved = list.some(r => r?.data?.execution_mode === 'RESERVED_SLOT');
+        const tag = hasReserved ? ' [RESERVED_SLOT·待DDS挂载]' : '';
+        this.logTerminal('tx', `[HTTP TX] ${target}|${command}${tag} -> ${res.msg || 'OK'}`);
       } else {
-        this.logTerminal('error', `[TX WARN] 发送未成功: ${res?.msg || '串口未连接'} (拟发送: ${packet.trim()})`);
+        this.logTerminal('error', `[HTTP FAIL] ${target}|${command} -> ${res?.msg || '下位机 HTTP 不可达'}`);
       }
     } catch (e) {
-      this.logTerminal('error', `[TX ERROR] 串口发送异常: ${e.message || e}`);
+      this.logTerminal('error', `[HTTP ERROR] ${target}|${command}: ${e.message || e}`);
     }
-  },
-
-  // --- 零点击串口自动检测与连接 ---
-  async autoDetectAndConnectSerial(isUserTriggered = false) {
-    const statusBadge = document.getElementById('ctrl-serial-status-badge');
-    const statusText = document.getElementById('ctrl-serial-status-text');
-    const connectBtn = document.getElementById('ctrl-serial-connect-btn');
-
-    if (statusBadge) statusBadge.className = 'status-badge warning';
-    if (statusText) statusText.textContent = '连接中';
-
-    try {
-      await this.refreshPortList();
-
-      const baudSelect = document.getElementById('ctrl-baud-rate-select');
-      const baud = baudSelect ? parseInt(baudSelect.value, 10) : 9600;
-
-      const res = await API.autoConnectSerial(baud);
-      if (res && res.success && res.connected) {
-        this.isConnected = true;
-        this.activePort = res.port;
-        this.activeBaud = res.baudrate || baud;
-        this.activeDesc = res.description || '';
-
-        if (statusBadge) statusBadge.className = 'status-badge connected';
-        if (statusText) statusText.textContent = '已连接';
-        if (connectBtn) {
-          const btnText = connectBtn.querySelector('.btn-text');
-          if (btnText) btnText.textContent = '断开串口';
-        }
-
-        const portSelect = document.getElementById('ctrl-serial-port-select');
-        if (portSelect && this.activePort) {
-          portSelect.value = this.activePort;
-        }
-
-        this.logTerminal('system', `[SERIAL AUTO] 成功自动识别并连接串口: ${this.activePort} (${this.activeDesc}) @ ${this.activeBaud} Baud`);
-        // 首次连接成功后后台已触发一次同步，前端读取缓存渲染，避免二次发送 GETDANCELIST
-        const effectiveRobots = this.getEffectiveSelectedRobots();
-        if (effectiveRobots.length > 0) {
-          this.fetchAndRenderDanceList(false, effectiveRobots.join(','));
-        } else {
-          this.renderUnselectedTargetState();
-        }
-      } else {
-        this.isConnected = false;
-        if (statusBadge) statusBadge.className = 'status-badge disconnected';
-        if (statusText) statusText.textContent = '未连接';
-        if (connectBtn) {
-          const btnText = connectBtn.querySelector('.btn-text');
-          if (btnText) btnText.textContent = '连接串口';
-        }
-
-        if (isUserTriggered) {
-          this.logTerminal('error', `[SERIAL WARN] ${res?.msg || '未找到可连接的串口设备'}`);
-        }
-      }
-    } catch (e) {
-      this.isConnected = false;
-      if (statusBadge) statusBadge.className = 'status-badge disconnected';
-      if (statusText) statusText.textContent = '未连接';
-      if (isUserTriggered) {
-        this.logTerminal('error', `[SERIAL ERROR] 串口检测异常: ${e.message || e}`);
-      }
-    }
-  },
-
-  async refreshPortList() {
-    const portSelect = document.getElementById('ctrl-serial-port-select');
-    if (!portSelect) return;
-
-    try {
-      const res = await API.getSerialPorts();
-      const ports = (res && res.ports) ? res.ports : [];
-
-      portSelect.innerHTML = '';
-      if (ports.length === 0) {
-        const opt = document.createElement('option');
-        opt.value = '';
-        opt.textContent = '未检测到串口';
-        portSelect.appendChild(opt);
-      } else {
-        ports.forEach(p => {
-          const opt = document.createElement('option');
-          opt.value = p.port;
-          opt.textContent = `${p.port} - ${p.description}`;
-          if (p.port === this.activePort || (p.is_ch341 && !this.activePort)) {
-            opt.selected = true;
-          }
-          portSelect.appendChild(opt);
-        });
-      }
-    } catch (e) {
-      console.warn('Refresh port list failed:', e);
-    }
-  },
-
-  async connectSpecificPort(portName) {
-    const baudSelect = document.getElementById('ctrl-baud-rate-select');
-    const baud = baudSelect ? parseInt(baudSelect.value, 10) : 9600;
-
-    const statusBadge = document.getElementById('ctrl-serial-status-badge');
-    const statusText = document.getElementById('ctrl-serial-status-text');
-    if (statusBadge) statusBadge.className = 'status-badge warning';
-    if (statusText) statusText.textContent = '连接中';
-
-    this.logTerminal('system', `[SERIAL] 正在连接指定串口: ${portName}...`);
-    try {
-      const res = await API.connectSerial(portName, baud);
-      if (res && res.success && res.connected) {
-        this.isConnected = true;
-        this.activePort = portName;
-        this.activeBaud = baud;
-
-        if (statusBadge) statusBadge.className = 'status-badge connected';
-        if (statusText) statusText.textContent = '已连接';
-        const connectBtn = document.getElementById('ctrl-serial-connect-btn');
-        if (connectBtn) {
-          const btnText = connectBtn.querySelector('.btn-text');
-          if (btnText) btnText.textContent = '断开串口';
-        }
-
-        this.logTerminal('system', `[SERIAL SUCCESS] 成功连接串口: ${portName}`);
-        await this.refreshPortList();
-        const currentRobots = this.getEffectiveSelectedRobots();
-        if (currentRobots.length > 0) {
-          this.fetchAndRenderDanceList(false, currentRobots.join(','));
-        } else {
-          this.renderUnselectedTargetState();
-        }
-      } else {
-        if (statusBadge) statusBadge.className = 'status-badge disconnected';
-        if (statusText) statusText.textContent = '未连接';
-        this.logTerminal('error', `[SERIAL ERROR] 连接失败: ${res?.msg || '未知原因'}`);
-      }
-    } catch (e) {
-      if (statusBadge) statusBadge.className = 'status-badge disconnected';
-      if (statusText) statusText.textContent = '未连接';
-      this.logTerminal('error', `[SERIAL ERROR] ${e.message || e}`);
-    }
-  },
-
-
-  async disconnectSerial() {
-    const target = this.activeRobots.length > 0 ? this.activeRobots.join(',') : 'ALL';
-    this.logTerminal('system', `[SERIAL] 断开前主动下发安全复位 (${target}|GAIT)...`);
-
-    // 断开连接时自动发安全复位 (优先当前受控机器人，若无则 ALL)
-    try {
-      await API.sendSerialCmd(target, 'GAIT');
-      this.logTerminal('tx', `[TX] ${target}|GAIT  (断开保护)`);
-    } catch (_) {
-      this.logTerminal('error', '[TX WARN] 断开前指令下发失败（串口可能已离线）');
-    }
-
-    try {
-      await API.disconnectSerial(true);
-    } catch (_) { }
-
-    this.isConnected = false;
-    this.activePort = '';
-    const statusBadge = document.getElementById('ctrl-serial-status-badge');
-    const statusText = document.getElementById('ctrl-serial-status-text');
-    const connectBtn = document.getElementById('ctrl-serial-connect-btn');
-
-    if (statusBadge) statusBadge.className = 'status-badge disconnected';
-    if (statusText) statusText.textContent = '未连接';
-    if (connectBtn) {
-      const btnText = connectBtn.querySelector('.btn-text');
-      if (btnText) btnText.textContent = '连接串口';
-    }
-
-    this.logTerminal('system', '[SERIAL] 串口连接已安全断开释放。');
-    await this.refreshPortList();
-  },
-
-  startAutoPortMonitor() {
-    if (this.autoConnectInterval) clearInterval(this.autoConnectInterval);
-    this.autoConnectInterval = setInterval(async () => {
-      if (!this.isConnected) {
-        try {
-          const res = await API.getSerialPorts();
-          if (res && res.ports && res.ports.some(p => p.is_ch341)) {
-            await this.autoDetectAndConnectSerial(false);
-          }
-        } catch (_) { }
-      } else {
-        try {
-          const statusRes = await API.getSerialStatus();
-          if (statusRes && statusRes.data && !statusRes.data.connected) {
-            this.isConnected = false;
-            this.activePort = '';
-            const statusBadge = document.getElementById('ctrl-serial-status-badge');
-            const statusText = document.getElementById('ctrl-serial-status-text');
-            if (statusBadge) statusBadge.className = 'status-badge disconnected';
-            if (statusText) statusText.textContent = '未连接';
-          }
-        } catch (_) { }
-      }
-    }, 4000);
   },
 
   // --- 双轨 5Hz 运控循环与按键绑定 ---
   tickMovementLoop() {
     if (this.activeTranslationKeys.size > 0) {
-      const activeKey = Array.from(this.activeTranslationKeys).pop();
-      const cmd = this.TRANSLATION_KEYS[activeKey];
-      if (cmd) this.sendCommand(cmd);
+      const k = Array.from(this.activeTranslationKeys).pop();
+      if (this.TRANSLATION_KEYS[k]) this.sendCommand(this.TRANSLATION_KEYS[k]);
     }
     if (this.activeRotationKeys.size > 0) {
-      const activeKey = Array.from(this.activeRotationKeys).pop();
-      const cmd = this.ROTATION_KEYS[activeKey];
-      if (cmd) this.sendCommand(cmd);
+      const k = Array.from(this.activeRotationKeys).pop();
+      if (this.ROTATION_KEYS[k]) this.sendCommand(this.ROTATION_KEYS[k]);
     }
   },
 
   startMovementTimerIfNeeded() {
     this.tickMovementLoop();
-    if (!this.movementTimer) {
-      this.movementTimer = setInterval(() => {
-        this.tickMovementLoop();
-      }, 200); // 5Hz 运控频率
-    }
+    if (!this.movementTimer) this.movementTimer = setInterval(() => this.tickMovementLoop(), 200);
   },
 
   stopMovementTimerIfEmpty() {
     if (this.activeTranslationKeys.size === 0 && this.activeRotationKeys.size === 0) {
-      if (this.movementTimer) {
-        clearInterval(this.movementTimer);
-        this.movementTimer = null;
-      }
+      if (this.movementTimer) { clearInterval(this.movementTimer); this.movementTimer = null; }
       document.querySelectorAll('.btn-cmd').forEach(btn => {
         const key = btn.getAttribute('data-key');
-        if (key && (this.TRANSLATION_KEYS[key] || this.ROTATION_KEYS[key])) {
-          btn.classList.remove('key-active');
-        }
+        if (key && (this.TRANSLATION_KEYS[key] || this.ROTATION_KEYS[key])) btn.classList.remove('key-active');
       });
-      this.logTerminal('system', '[MOVEMENT] 抬手松开所有移动/旋转按键，下发停止指令 (STOP)');
+      this.logTerminal('system', '[MOVEMENT] 松开移动/转向按键，通过 HTTP 下发停止指令 (STOP)');
       this.sendCommand('STOP');
     }
   },
@@ -1016,16 +666,7 @@ const RobotControl = {
   clearAllMovement() {
     this.activeTranslationKeys.clear();
     this.activeRotationKeys.clear();
-    if (this.movementTimer) {
-      clearInterval(this.movementTimer);
-      this.movementTimer = null;
-    }
-    document.querySelectorAll('.btn-cmd').forEach(btn => {
-      const key = btn.getAttribute('data-key');
-      if (key && (this.TRANSLATION_KEYS[key] || this.ROTATION_KEYS[key])) {
-        btn.classList.remove('key-active');
-      }
-    });
+    if (this.movementTimer) { clearInterval(this.movementTimer); this.movementTimer = null; }
     this.sendCommand('STOP');
   },
 
@@ -1033,38 +674,27 @@ const RobotControl = {
     document.querySelectorAll('.tab-robot-control .btn-cmd').forEach(btn => {
       const key = btn.getAttribute('data-key');
       const cmd = btn.getAttribute('data-cmd');
-
-      // WASD / QE 连续按压
       if (key && (this.TRANSLATION_KEYS[key] || this.ROTATION_KEYS[key])) {
-        const handlePress = (e) => {
+        const onPress = (e) => {
           e.preventDefault();
           btn.classList.add('key-active');
-          if (this.TRANSLATION_KEYS[key]) {
-            this.activeTranslationKeys.add(key);
-          } else {
-            this.activeRotationKeys.add(key);
-          }
+          if (this.TRANSLATION_KEYS[key]) this.activeTranslationKeys.add(key);
+          else this.activeRotationKeys.add(key);
           this.startMovementTimerIfNeeded();
         };
-
-        const handleRelease = (e) => {
+        const onRel = (e) => {
           e.preventDefault();
           btn.classList.remove('key-active');
-          if (this.TRANSLATION_KEYS[key]) {
-            this.activeTranslationKeys.delete(key);
-          } else {
-            this.activeRotationKeys.delete(key);
-          }
+          if (this.TRANSLATION_KEYS[key]) this.activeTranslationKeys.delete(key);
+          else this.activeRotationKeys.delete(key);
           this.stopMovementTimerIfEmpty();
         };
-
-        btn.addEventListener('mousedown', handlePress);
-        btn.addEventListener('mouseup', handleRelease);
-        btn.addEventListener('mouseleave', handleRelease);
-        btn.addEventListener('touchstart', handlePress);
-        btn.addEventListener('touchend', handleRelease);
+        btn.addEventListener('mousedown', onPress);
+        btn.addEventListener('mouseup', onRel);
+        btn.addEventListener('mouseleave', onRel);
+        btn.addEventListener('touchstart', onPress);
+        btn.addEventListener('touchend', onRel);
       } else {
-        // 单击按钮 (STAND, GAIT, EMERGENCY, DANCE 等)
         btn.addEventListener('click', () => {
           if (cmd) {
             this.sendCommand(cmd);
@@ -1080,181 +710,68 @@ const RobotControl = {
     document.addEventListener('keydown', (e) => {
       if (App.activeTab !== 'tab-robot-control') return;
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
-
-      // Ctrl + A 或 Ctrl + 0 或 Ctrl + G -> 全选 (ALL)
       if (e.ctrlKey && !e.shiftKey && !e.altKey) {
-        if (e.key.toLowerCase() === 'a' || e.key === '0' || e.key.toLowerCase() === 'g' || e.key === '`') {
-          e.preventDefault();
-          this.selectAll();
-          return;
-        }
-
-        // Ctrl + 1..N 切换至单机
+        if (['a', '0', 'g', '`'].includes(e.key.toLowerCase())) { e.preventDefault(); this.selectAll(); return; }
         const num = parseInt(e.key, 10);
-        if (!isNaN(num) && num >= 1 && num <= this.activeRobots.length) {
+        if (!isNaN(num) && num >= 1 && num <= this.fleet.length) {
           e.preventDefault();
-          const targetId = this.activeRobots[num - 1];
-          this.handleCardClick(targetId, false);
+          this.handleCardClick(this.fleet[num - 1].id, false);
           return;
         }
       }
-
-      const rawKey = e.key;
-
-      // WASD
-      if (this.TRANSLATION_KEYS[rawKey]) {
-        e.preventDefault();
-        if (e.repeat) return;
-        this.activeTranslationKeys.add(rawKey);
-        this.highlightBtn(rawKey);
-        this.startMovementTimerIfNeeded();
-        return;
-      }
-
-      // QE
-      if (this.ROTATION_KEYS[rawKey]) {
-        e.preventDefault();
-        if (e.repeat) return;
-        this.activeRotationKeys.add(rawKey);
-        this.highlightBtn(rawKey);
-        this.startMovementTimerIfNeeded();
-        return;
-      }
-
-      // One-shot keys (1, 2, 0, X)
-      if (this.ONE_SHOT_KEYS[rawKey]) {
-        e.preventDefault();
-        if (e.repeat) return;
-        const cmd = this.ONE_SHOT_KEYS[rawKey];
-        this.sendCommand(cmd);
-        this.highlightBtn(rawKey);
-      }
+      const k = e.key;
+      if (this.TRANSLATION_KEYS[k]) { e.preventDefault(); if (e.repeat) return; this.activeTranslationKeys.add(k); this.highlightBtn(k); this.startMovementTimerIfNeeded(); return; }
+      if (this.ROTATION_KEYS[k]) { e.preventDefault(); if (e.repeat) return; this.activeRotationKeys.add(k); this.highlightBtn(k); this.startMovementTimerIfNeeded(); return; }
+      if (this.ONE_SHOT_KEYS[k]) { e.preventDefault(); if (e.repeat) return; this.sendCommand(this.ONE_SHOT_KEYS[k]); this.highlightBtn(k); }
     });
-
     document.addEventListener('keyup', (e) => {
       if (App.activeTab !== 'tab-robot-control') return;
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
-
-      const rawKey = e.key;
-      if (this.TRANSLATION_KEYS[rawKey] || this.ROTATION_KEYS[rawKey]) {
+      const k = e.key;
+      if (this.TRANSLATION_KEYS[k] || this.ROTATION_KEYS[k]) {
         e.preventDefault();
-        if (this.TRANSLATION_KEYS[rawKey]) this.activeTranslationKeys.delete(rawKey);
-        if (this.ROTATION_KEYS[rawKey]) this.activeRotationKeys.delete(rawKey);
-        this.unhighlightBtn(rawKey);
+        this.activeTranslationKeys.delete(k);
+        this.activeRotationKeys.delete(k);
+        this.unhighlightBtn(k);
         this.stopMovementTimerIfEmpty();
       }
     });
-
     window.addEventListener('blur', () => {
-      if (this.activeTranslationKeys.size > 0 || this.activeRotationKeys.size > 0 || this.movementTimer) {
-        this.clearAllMovement();
-      }
+      if (this.activeTranslationKeys.size > 0 || this.activeRotationKeys.size > 0 || this.movementTimer) this.clearAllMovement();
     });
   },
 
   highlightBtn(key) {
     document.querySelectorAll('.tab-robot-control .btn-cmd').forEach(b => {
-      if (b.getAttribute('data-key') && b.getAttribute('data-key').toLowerCase() === key.toLowerCase()) {
-        b.classList.add('key-active');
-      }
+      if (b.getAttribute('data-key') && b.getAttribute('data-key').toLowerCase() === key.toLowerCase()) b.classList.add('key-active');
     });
   },
 
   unhighlightBtn(key) {
     document.querySelectorAll('.tab-robot-control .btn-cmd').forEach(b => {
-      if (b.getAttribute('data-key') && b.getAttribute('data-key').toLowerCase() === key.toLowerCase()) {
-        b.classList.remove('key-active');
-      }
+      if (b.getAttribute('data-key') && b.getAttribute('data-key').toLowerCase() === key.toLowerCase()) b.classList.remove('key-active');
     });
   },
 
   logTerminal(type, text) {
     const terminal = document.getElementById('ctrl-terminal-output');
     if (!terminal) return;
-
     const timeStr = new Date().toLocaleTimeString('zh-CN', { hour12: false });
     const line = document.createElement('div');
     line.className = `log-line ${type}`;
-
     const timeSpan = document.createElement('span');
     timeSpan.className = 'timestamp';
     timeSpan.textContent = `[${timeStr}]`;
-
     line.appendChild(timeSpan);
     line.appendChild(document.createTextNode(text));
-
     terminal.appendChild(line);
     terminal.scrollTop = terminal.scrollHeight;
-
-    while (terminal.children.length > 200) {
-      terminal.removeChild(terminal.firstChild);
-    }
+    while (terminal.children.length > 200) terminal.removeChild(terminal.firstChild);
   },
 
-  // --- 实时串口 TX / RX 字符串消息双向轮询与实时展示 ---
-  lastMsgTimestamp: 0,
-  msgPollingTimer: null,
-  _lastRenderedDanceCount: 0,
-
-  startMessagePolling() {
-    if (this.msgPollingTimer) clearInterval(this.msgPollingTimer);
-    let pollCount = 0;
-    this.msgPollingTimer = setInterval(async () => {
-      // 仅在当前处于群控页面且串口处于连接时轮询
-      if (App.activeTab !== 'tab-robot-control' || !this.isConnected) return;
-      pollCount++;
-      try {
-        const res = await API.getSerialMessages(this.lastMsgTimestamp);
-        let hasDanceMsg = false;
-        if (res && res.success && Array.isArray(res.messages) && res.messages.length > 0) {
-          res.messages.forEach(msg => {
-            if (msg.timestamp > this.lastMsgTimestamp) {
-              this.lastMsgTimestamp = msg.timestamp;
-            }
-            // 仅在监视器中打印下位机回传 (RX) 消息（TX 指令已在发送时即时打印，避免重复记录）
-            if (msg.type === 'rx') {
-              this.logTerminal('rx', `[RX] ${msg.text}`);
-              if (msg.text.includes(':') || msg.text.includes('Group') || msg.text.includes('[')) {
-                hasDanceMsg = true;
-              }
-            }
-          });
-        }
-
-        // 若收到动作列表相关回传，或每 3 秒检测一次后端最新解析缓存（自动同步全部舞蹈）
-        if (hasDanceMsg || pollCount % 6 === 0) {
-          this.syncDanceListFromCache();
-        }
-      } catch (_) { }
-    }, 500);
-  },
-
-  async syncDanceListFromCache() {
-    if (!this.isConnected) return;
-    try {
-      const effective = this.getEffectiveSelectedRobots();
-      if (effective.length === 0) return;
-      const targetStr = effective.join(',');
-      const res = await API.getSerialDanceList(false, targetStr);
-      if (res && res.success && Array.isArray(res.groups) && res.groups.length > 0) {
-        const total = res.total_count || res.groups.reduce((acc, g) => acc + (g.items ? g.items.length : 0), 0);
-        if (total !== this._lastRenderedDanceCount || this.currentDanceGroups.length === 0) {
-          this._lastRenderedDanceCount = total;
-          this.currentDanceGroups = res.groups;
-          this.renderDanceGroups(res.groups, targetStr, total, res.per_robot_counts);
-        }
-      }
-    } catch (_) { }
-  },
-
-  // --- 动态串口舞蹈列表状态与渲染逻辑 (严格由串口 {target}|GETDANCELIST 驱动，绝不硬编码) ---
-  _danceRequestId: 0,
-  currentDanceGroups: [],
-  currentTargetRobots: '',
-
+  // --- 纯 Wi-Fi 局域网 HTTP 动作列表拉取与渲染 ---
   async fetchAndRenderDanceList(isForceRefresh = false, targetStr = null) {
     const countTag = document.getElementById('ctrl-dance-count-tag');
-
     if (!targetStr) {
       const effective = this.getEffectiveSelectedRobots();
       if (effective.length === 0) {
@@ -1264,168 +781,99 @@ const RobotControl = {
       }
       targetStr = effective.join(',');
     }
-    this.currentTargetRobots = targetStr;
 
-    // 1. 若串口未连接，直接渲染未连接状态
-    if (!this.isConnected) {
-      this.currentDanceGroups = [];
-      this.renderDisconnectedState();
-      return;
-    }
-
-    // 递增请求序列号，保证异步刷新不阻塞，且旧请求返回时不会覆盖新请求
-    const currentReqId = ++this._danceRequestId;
-
-    // 2. 串口已连接，展示同步等待态
-    this.renderLoadingState(isForceRefresh, targetStr);
-    if (countTag) {
-      countTag.textContent = isForceRefresh ? `正在下发 ${targetStr}|GETDANCELIST...` : `正在同步动作列表 [${targetStr}]...`;
-    }
+    const reqId = ++this._danceRequestId;
+    this.renderLoadingState(targetStr);
+    if (countTag) countTag.textContent = `HTTP 正在拉取 [${targetStr}] 动作...`;
 
     try {
-      let res;
-      if (isForceRefresh) {
-        res = await API.refreshSerialDanceList(5.5, targetStr);
-      } else {
-        res = await API.getSerialDanceList(false, targetStr);
-      }
-
-      // 如果在等待过程中有新的刷新请求，则丢弃当前旧响应
-      if (currentReqId !== this._danceRequestId) {
-        return;
-      }
-
-      if (res && res.success && res.groups && res.groups.length > 0) {
+      const res = await API.getHttpDanceList(targetStr, this.getTargetsMap());
+      if (reqId !== this._danceRequestId) return;
+      if (res && res.success && Array.isArray(res.groups) && res.groups.length > 0) {
         this.currentDanceGroups = res.groups;
         const total = res.total_count || res.groups.reduce((acc, g) => acc + (g.items ? g.items.length : 0), 0);
         this.renderDanceGroups(res.groups, targetStr, total, res.per_robot_counts);
-        const isMulti = targetStr.includes(',');
-        const modeDesc = isMulti ? '多机共有' : `单机 [${targetStr}]`;
-        this.logTerminal('system', `[DANCE SYNC] 成功从串口接收并动态解析 ${total} 支${modeDesc}动作 (来源: ${targetStr}|GETDANCELIST)`);
+        this.logTerminal('rx', `[HTTP DANCE] 成功通过 Wi-Fi HTTP 从 [${targetStr}] 同步 ${total} 项动作`);
         return;
-      } else if (res && res.success && (!res.groups || res.groups.length === 0)) {
-        // 多机编队目标但无共有动作
-        const isMulti = targetStr.includes(',');
-        if (isMulti) {
-          this.currentDanceGroups = [];
-          this.renderNoCommonDancesState(targetStr, res.per_robot_counts);
-          return;
-        }
       }
+      if (res && res.success && targetStr.includes(',')) {
+        this.currentDanceGroups = [];
+        this.renderNoCommonDancesState(targetStr, res.per_robot_counts);
+        return;
+      }
+      this.renderNoDataState(targetStr, res?.msg || '下位机 HTTP 不可达');
     } catch (e) {
-      if (currentReqId !== this._danceRequestId) return;
-      console.warn('获取串口舞蹈列表失败:', e);
-      this.logTerminal('error', `[DANCE ERROR] 串口动作列表同步异常: ${e.message || e}`);
+      if (reqId !== this._danceRequestId) return;
+      this.logTerminal('error', `[HTTP DANCE] 动作列表拉取异常: ${e.message || e}`);
+      this.renderNoDataState(targetStr, e.message || String(e));
     }
-
-    if (currentReqId !== this._danceRequestId) return;
-    // 3. 串口已连接但机载端暂无响应或未返回 dance_map
-    this.renderNoDataState(targetStr);
   },
 
-  renderDisconnectedState() {
-    const container = document.getElementById('ctrl-dance-scroll-container');
-    const countTag = document.getElementById('ctrl-dance-count-tag');
-    if (countTag) countTag.textContent = '🔌 串口未连接';
-    if (!container) return;
-
-    container.innerHTML = `
-      <div class="dance-status-card">
-        <div class="dance-status-icon">🔌</div>
-        <div class="dance-status-title">LoRa 串口通信未连接</div>
-        <div class="dance-status-desc">
-          动作与特技列表完全由目标机器人机载主控动态提供。<br>
-          请插入 USB LoRa 串口发射器 (CH340/CH341) 并连接，系统将自动向所选机器人下发 <code>GETDANCELIST</code> 实时拉取机载动作映射表。
-        </div>
-      </div>
-    `;
-  },
-
-  renderLoadingState(isForce = false, targetStr = 'ALL') {
+  renderLoadingState(targetStr) {
     const container = document.getElementById('ctrl-dance-scroll-container');
     if (!container) return;
-
     container.innerHTML = `
       <div class="dance-status-card">
         <div class="dance-loading-spinner"></div>
-        <div class="dance-status-title">正在同步 [${targetStr}] 机载动作列表...</div>
-        <div class="dance-status-desc">
-          正在向机器人发送 <code>${targetStr}|GETDANCELIST</code>，等待机载端 <code>lora_recv_group</code> 回传 <code>dance_map</code> 并计算动作交集...
-        </div>
-      </div>
-    `;
-  },
-
-  renderNoCommonDancesState(targetStr, perRobotCounts = null) {
-    const container = document.getElementById('ctrl-dance-scroll-container');
-    const countTag = document.getElementById('ctrl-dance-count-tag');
-    if (countTag) countTag.textContent = `⚠️ [${targetStr}] 无共有动作`;
-    if (!container) return;
-
-    let perInfo = '';
-    if (perRobotCounts) {
-      const parts = Object.entries(perRobotCounts).filter(([k]) => targetStr.split(',').includes(k)).map(([k, v]) => `<b>Robot ${k}</b>: ${v} 首`);
-      if (parts.length > 0) perInfo = `<div style="margin-top: 8px; font-size: 0.82rem; color: var(--accent-cyan);">${parts.join('  |  ')}</div>`;
-    }
-
-    container.innerHTML = `
-      <div class="dance-status-card">
-        <div class="dance-status-icon">🤝</div>
-        <div class="dance-status-title">多机编队 [${targetStr}] 无共有动作</div>
-        <div class="dance-status-desc">
-          已成功拉取编队中各机器人的动作列表，但未发现各机均支持的共同动作别名 (alias)。${perInfo}
-          <br>请单独选择单台机器人控制，或更新各机动作配置包保持一致。
-        </div>
-      </div>
-    `;
+        <div class="dance-status-title">正在同步 [${targetStr}] 动作列表...</div>
+      </div>`;
   },
 
   renderUnselectedTargetState() {
     const container = document.getElementById('ctrl-dance-scroll-container');
     const countTag = document.getElementById('ctrl-dance-count-tag');
-    if (countTag) countTag.textContent = '🎯 请先选择受控目标';
+    if (countTag) countTag.textContent = '请选择目标';
     if (!container) return;
-
     container.innerHTML = `
       <div class="dance-status-card">
-        <div class="dance-status-icon">🎯</div>
-        <div class="dance-status-title">未选择受控机器人</div>
-        <div class="dance-status-desc">
-          请在上方「控制目标选择与多机编队」中点击勾选单台机器人（如 A）或多选编队（如 A、B），系统将自动下发 <code>GETDANCELIST</code> 获取动作映射。
-        </div>
-      </div>
-    `;
+        <div class="dance-status-icon">🌐</div>
+        <div class="dance-status-title">未选择控制目标</div>
+        <div class="dance-status-desc">请在上方添加或勾选机器人后自动同步动作。</div>
+      </div>`;
   },
 
-  renderNoDataState(targetStr = 'ALL') {
+  renderNoCommonDancesState(targetStr, perRobotCounts = null) {
     const container = document.getElementById('ctrl-dance-scroll-container');
     const countTag = document.getElementById('ctrl-dance-count-tag');
-    if (countTag) countTag.textContent = `⚠️ 暂未获取到 [${targetStr}] 动作`;
+    if (countTag) countTag.textContent = `[${targetStr}] 无共有动作`;
     if (!container) return;
+    let perInfo = '';
+    if (perRobotCounts) {
+      const parts = Object.entries(perRobotCounts).map(([k, v]) => `<b>Robot ${k}</b>: ${v} 首`);
+      if (parts.length > 0) perInfo = `<div style="margin-top: 8px; font-size: 0.82rem; color: var(--accent-cyan);">${parts.join('  |  ')}</div>`;
+    }
+    container.innerHTML = `
+      <div class="dance-status-card">
+        <div class="dance-status-icon">🤝</div>
+        <div class="dance-status-title">[${targetStr}] 无共有动作</div>
+        <div class="dance-status-desc">所选设备动作交集为空。${perInfo}</div>
+      </div>`;
+  },
 
+  renderNoDataState(targetStr, reason = '') {
+    const container = document.getElementById('ctrl-dance-scroll-container');
+    const countTag = document.getElementById('ctrl-dance-count-tag');
+    if (countTag) countTag.textContent = `[${targetStr}] 未就绪`;
+    if (!container) return;
     container.innerHTML = `
       <div class="dance-status-card">
         <div class="dance-status-icon">📡</div>
-        <div class="dance-status-title">暂未收到 [${targetStr}] 机载响应</div>
+        <div class="dance-status-title">未获取到 [${targetStr}] 动作列表</div>
         <div class="dance-status-desc">
-          串口已连接，但目标机器人 [${targetStr}] 暂未返回有效的动作配置。<br>
-          请确认对应机器人机载程序处于正常运行状态且 LoRa 频段一致。
+          ${reason ? `${reason} · ` : ''}请检查局域网连通性与下位机服务状态。
         </div>
-      </div>
-    `;
+      </div>`;
   },
 
-  renderDanceGroups(groups, targetStr = 'ALL', totalCount = 0, perRobotCounts = null) {
+  renderDanceGroups(groups, targetStr, totalCount = 0, perRobotCounts = null) {
     const container = document.getElementById('ctrl-dance-scroll-container');
     if (!container) return;
-
     container.innerHTML = '';
     let count = 0;
 
     groups.forEach(group => {
       const catDiv = document.createElement('div');
       catDiv.className = 'dance-category';
-
       const titleDiv = document.createElement('div');
       titleDiv.className = 'category-title';
       titleDiv.textContent = group.title || `${group.group_id} 动作组`;
@@ -1433,28 +881,15 @@ const RobotControl = {
 
       const gridDiv = document.createElement('div');
       gridDiv.className = 'dance-grid';
-
       (group.items || []).forEach(item => {
         count++;
         const btn = document.createElement('button');
         btn.className = 'btn-cmd btn-dance';
         btn.setAttribute('data-cmd', item.cmd || `DANCE,${item.alias}`);
-
-        const keyInfo = (item.keys && item.keys.length > 0) ? ` [${item.keys.join(', ')}]` : '';
-        btn.title = `${item.name} (${item.alias})${keyInfo} - 目标: ${targetStr}`;
-
-        const titleSpan = document.createElement('span');
-        titleSpan.className = 'dance-title';
-        titleSpan.textContent = item.name;
-
-        const codeSpan = document.createElement('span');
-        codeSpan.className = 'dance-code';
-        codeSpan.textContent = item.short_code || item.alias;
-
-        btn.appendChild(titleSpan);
-        btn.appendChild(codeSpan);
-
-        // 绑定点击发送与高亮反馈 (通过 sendCommand 自动采用当前选中的目标 A 或 A,B 下发)
+        btn.title = `${item.name} (${item.alias}) - HTTP 目标: ${targetStr}`;
+        btn.innerHTML = `<span class="dance-title"></span><span class="dance-code"></span>`;
+        btn.querySelector('.dance-title').textContent = item.name;
+        btn.querySelector('.dance-code').textContent = item.short_code || item.alias;
         btn.addEventListener('click', () => {
           const cmd = btn.getAttribute('data-cmd');
           if (cmd) {
@@ -1463,27 +898,17 @@ const RobotControl = {
             setTimeout(() => btn.classList.remove('key-active'), 200);
           }
         });
-
         gridDiv.appendChild(btn);
       });
-
       catDiv.appendChild(gridDiv);
       container.appendChild(catDiv);
     });
 
     const countTag = document.getElementById('ctrl-dance-count-tag');
     if (countTag) {
-      const isMulti = targetStr && targetStr.includes(',');
-      if (isMulti) {
-        let perCountsStr = '';
-        if (perRobotCounts && Object.keys(perRobotCounts).length > 0) {
-          const parts = Object.entries(perRobotCounts).filter(([k]) => targetStr.split(',').includes(k)).map(([k, v]) => `${k}:${v}`);
-          if (parts.length > 0) perCountsStr = ` (${parts.join(', ')})`;
-        }
-        countTag.textContent = `🟢 多机共有 (${count} 项动作${perCountsStr})`;
-      } else {
-        countTag.textContent = `🟢 [${targetStr}] 动作 (共 ${count} 项)`;
-      }
+      countTag.textContent = targetStr.includes(',')
+        ? `🟢 多机 HTTP 共有 (${count} 项)`
+        : `🟢 [${targetStr}] HTTP 动作 (${count} 项)`;
     }
   }
 };

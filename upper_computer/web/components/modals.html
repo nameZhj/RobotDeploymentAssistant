@@ -40,26 +40,36 @@
     </div>
   </div>
 
-  <!-- 添加受控机器人模态弹窗 (自定义 ID 对应 lora_robot_id.txt) -->
+  <!-- 添加受控机器人模态弹窗 (Wi-Fi 局域网 HTTP 寻址) -->
   <div id="modal-add-robot" class="custom-modal-overlay" style="display: none;">
     <div class="custom-modal-container">
       <div class="custom-modal-header">
         <div class="custom-modal-title">
           <span class="icon">🤖</span>
-          <span>添加受控机器人 (Add Target Robot)</span>
+          <span>添加机器人</span>
         </div>
-        <button class="custom-modal-close" id="btn-close-add-robot-modal" title="关闭 (Esc)">✕</button>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div class="help-tooltip-wrapper align-right">
+            <span class="help-icon-circle" tabindex="0" role="button" aria-label="添加机器人说明">?</span>
+            <div class="help-tooltip-bubble">
+              <div class="help-bubble-header">Wi-Fi HTTP 通信说明</div>
+              <div class="help-bubble-item">
+                <div class="help-item-desc">机器人 ID 需与下位机 <code>robot_id</code> 一致；HTTP 服务默认端口 <code>8090</code>。接入后所有动作、编舞与运维指令均通过 Wi-Fi HTTP 通信。</div>
+              </div>
+            </div>
+          </div>
+          <button class="custom-modal-close" id="btn-close-add-robot-modal" title="关闭 (Esc)">✕</button>
+        </div>
       </div>
       <div class="custom-modal-body">
         <div class="modal-field-group">
           <label class="modal-label" for="input-new-robot-id">
             <span>机器人 ID (唯一标识):</span>
-            <span class="label-hint">需与机器人 <code>lora_robot_id.txt</code> 一致</span>
+            <span class="label-hint">与下位机一致（如 A、R1）</span>
           </label>
           <div class="modal-input-wrapper">
             <input type="text" id="input-new-robot-id" class="form-input modal-input"
-              placeholder="输入 ID (如 B, C, R1, G1_02, 01...)" maxlength="20" autocomplete="off">
-            <button class="btn btn-primary" id="btn-submit-add-robot">✓ 确认添加</button>
+              placeholder="输入 ID (如 A, B, R1, G1_02...)" maxlength="20" autocomplete="off">
           </div>
           <div id="add-robot-id-error" class="field-error-hint"></div>
           <div class="modal-quick-suggestions">
@@ -69,13 +79,22 @@
             </div>
           </div>
         </div>
-        <div class="modal-note-box">
-          <div class="note-title">📖 《群控商业化补充说明》规范：</div>
-          <div class="note-desc">
-            每台机器人部署时在 <code>/home/ubuntu/vsis_mimic_deploy/group/lora_robot_id.txt</code> 写入唯一 ID，LoRa 广播将按此 ID
-            寻址（<code>TARGET|COMMAND\n</code>）。
+
+        <div class="modal-field-group" style="margin-top: 12px;">
+          <label class="modal-label" for="input-new-robot-ip">
+            <span>无线 Wi-Fi 局域网 IP 与 HTTP 端口:</span>
+            <span class="label-hint">默认端口 <code>8090</code></span>
+          </label>
+          <div class="modal-input-wrapper" style="display: flex; gap: 8px;">
+            <input type="text" id="input-new-robot-ip" class="form-input modal-input"
+              placeholder="输入局域网 IP (如 192.168.50.101)" value="192.168.50.101" autocomplete="off" style="flex: 2;">
+            <input type="number" id="input-new-robot-port" class="form-input modal-input"
+              value="8090" min="80" max="65535" style="width: 92px; flex: 0 0 92px;">
+            <button class="btn btn-primary" id="btn-submit-add-robot">✓ 确认添加</button>
           </div>
         </div>
+
+
       </div>
       <div class="custom-modal-footer">
         <button class="btn btn-secondary" id="btn-cancel-add-robot">取消</button>

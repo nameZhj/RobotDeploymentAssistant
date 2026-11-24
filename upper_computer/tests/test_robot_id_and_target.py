@@ -115,26 +115,34 @@ class TestRobotIdAndTargetControl(unittest.TestCase):
             self.assertEqual(data_ok.get("robot_id"), "R1")
 
     def test_serial_send_multi_target_format(self):
-        """测试串口指令发送接口接受逗号隔开的多机目标 (如 A,B|STAND)"""
-        with patch.object(serial_manager, 'send_command') as mock_send:
-            mock_send.return_value = {"success": True, "target": "A,B", "command": "STAND", "msg": "OK"}
-            
-            # 客户端发送 A,B 多选目标
-            res = self.client.post('/api/serial/send', json={
-                "target": "A,B",
-                "command": "STAND"
-            })
+        """测试纯 Wi-Fi HTTP 多机目标下发 (A,B|STAND)，且禁止 /api/serial/send 回退串口"""
+        from backend.http_lower_bridge import http_lower_bridge
+        with patch.object(http_lower_bridge, 'send_command_multi') as mock_http, \
+                patch.object(serial_manager, 'send_command') as mock_serial:
+            mock_http.return_value = {"ok": True, "success": True, "target": "A,B", "command": "STAND", "msg": "OK"}
+            res = self.client.post('/api/http/command', json={"target": "A,B", "command": "STAND"})
             self.assertEqual(res.status_code, 200)
-            mock_send.assert_called_with("A,B", "STAND")
+            mock_http.assert_called_once()
+            mock_serial.assert_not_called()
 
-            # 客户端发送 A,B,C 全选多机目标
-            mock_send.return_value = {"success": True, "target": "A,B,C", "command": "GAIT", "msg": "OK"}
-            res_all = self.client.post('/api/serial/send', json={
-                "target": "A,B,C",
-                "command": "GAIT"
-            })
+            mock_http.return_value = {"ok": True, "success": True, "target": "A,B,C", "command": "GAIT", "msg": "OK"}
+            res_all = self.client.post('/api/http/command', json={"target": "A,B,C", "command": "GAIT"})
             self.assertEqual(res_all.status_code, 200)
-            mock_send.assert_called_with("A,B,C", "GAIT")
+            self.assertEqual(mock_http.call_count, 2)
+            mock_serial.assert_not_called()
+
+            # Legacy /api/serial/send must never invoke serial_manager.send_command
+            old_map = dict(http_lower_bridge.robot_ip_map)
+            old_active = http_lower_bridge.active_robot_ip
+            try:
+                http_lower_bridge.robot_ip_map.clear()
+                http_lower_bridge.active_robot_ip = ""
+                res_legacy = self.client.post('/api/serial/send', json={"target": "A", "command": "STAND"})
+                self.assertEqual(res_legacy.status_code, 400)
+                mock_serial.assert_not_called()
+            finally:
+                http_lower_bridge.robot_ip_map.update(old_map)
+                http_lower_bridge.active_robot_ip = old_active
 
     def test_robot_id_error_hint_elements_exist_in_html(self):
         """测试所有涉及写入/添加 ID 的输入框下方均存在对应的校验错误提示节点"""

@@ -20,7 +20,15 @@ class CoordTransformModal(UDialog):
     """Solves 2D rigid alignment (R, t, RMSE) between stage markers and PCD map coordinates."""
 
     def __init__(self, state: StudioStateService, parent: QWidget | None = None) -> None:
-        super().__init__("舞台-点云坐标系 SVD 标定", width=620, height=400, confirm_text="关闭", cancel_text="", parent=parent)
+        super().__init__(
+            "坐标系 SVD 标定",
+            width=620,
+            height=430,
+            confirm_text="关闭",
+            cancel_text="",
+            parent=parent,
+            help_text="该 SVD 标定仅用于调整上位机本地 2D/3D 点云底图对齐；实机 ROS /initialpose 与目标点始终使用 ROS map 原坐标系。",
+        )
         self.state = state
         self.table = UTable(["点云 X", "点云 Y", "舞台目标 X", "舞台目标 Y"], self)
         defaults = [(0.0, 0.0, 0.0, 0.0), (4.0, 0.0, 4.0, 0.0), (4.0, 3.0, 4.0, 3.0)]
