@@ -1,9 +1,9 @@
 ---
 name: robot-deployment-assistant
-description: Core architectural, protocol, algorithm, and UI/UX engineering specification for RobotDeploymentAssistant (UniUni v3 Stage Choreography, Swarm Formation Potential-Field Planning, Dance Timeline Editor, 3D G1 29-DOF Skeletal Preview, PCD Map Management, and G1 Wi-Fi Setup). Read before any step.
+description: Core architectural, protocol, algorithm, and UI/UX engineering specification for RobotDeploymentAssistant (Stage Choreography, Swarm Formation Potential-Field Planning, Dance Timeline Editor, 3D G1 29-DOF Skeletal Preview, PCD Map Management, and G1 Wi-Fi Setup). Read before any step.
 ---
 
-# RobotDeploymentAssistant Core Engineering Skill (UniUni v3 Specification)
+# RobotDeploymentAssistant Core Engineering Skill
 
 ## 1. Prime Directives & Non-Regression Boundary
 
@@ -32,7 +32,7 @@ description: Core architectural, protocol, algorithm, and UI/UX engineering spec
    - **Workspace Partitioning**:
      - `src/`: Pure domain, math, algorithms, protocol, persistence, services, and PySide6/OpenGL UI modules.
      - `utils/` & `scripts/`: Stateless helpers and verification scripts.
-     - `.agent_workspace/`: All agent caches, runtime SQLite DBs (`.agent_workspace/runtime/uniuni_studio.db`), user settings overrides (`.agent_workspace/runtime/user_settings.yaml`), logs, and `.agent_workspace/INDEX.md`. Never create `runtime/` or `cache/` in the project root.
+     - `.agent_workspace/`: All agent caches, runtime SQLite DBs (`.agent_workspace/runtime/stage_studio.db`), user settings overrides (`.agent_workspace/runtime/user_settings.yaml`), logs, and `.agent_workspace/INDEX.md`. Never create `runtime/` or `cache/` in the project root.
 
 4. **Zero-Demo Startup & Mandatory Closed-Loop Standards**:
    - **Never auto-seed Demo robots**: `ensure_seeded(db)` creates ONLY the blank active scene, blank task, and LRMP action catalog (`0` tracks by default). All robots on stage MUST be explicitly added by the user via `+ 轨道` or `DeviceOverviewModal` (or explicit on-demand `seed_demo_swarm_preset(db)`).
@@ -41,7 +41,7 @@ description: Core architectural, protocol, algorithm, and UI/UX engineering spec
 
 ---
 
-## 2. UniUni v3 Design System (`design-system/LAYOUT.md` & `COMPONENTS.md`)
+## 2. Desktop Design System (`design-system/LAYOUT.md` & `COMPONENTS.md`)
 
 ### 2.1 Color & Surface Tokens (`ugc-v3.css`)
 - **Surfaces**:
@@ -66,7 +66,7 @@ description: Core architectural, protocol, algorithm, and UI/UX engineering spec
 
 ### 2.2 Canonical App Shell & Choreography Page Layout (`choreography.html`)
 - **Top `UTitlebar` (`32px` fixed height)**:
-  - Left: `uniswarm` logo + Horizontal Page Menu (`舞蹈编排`, `轨迹规划`, `导航地图`, `表演监测`, `雷达监控`, `系统设置`).
+  - Left: Horizontal Page Menu (`舞蹈编排`, `队形规划`, `导航地图`, `表演监测` — the duplicate `系统设置` page was removed; network provisioning/license/settings live in the homepage `网络管理` console).
   - Right: Global actions (`设备总览`, `场景▾`, `帮助▾`).
 - **Center `ChoreographyPage` (2-Column Split)**:
   - **`col-left` (`flex: 1`)**:

@@ -1,5 +1,5 @@
 # @file: src/persistence/csv_point_codec.py
-# @brief: Encoder and decoder for UniUni trajectoryPointData CSV strings ("t,x,y,yaw\n...").
+# @brief: Encoder and decoder for stage trajectoryPointData CSV strings ("t,x,y,yaw\n...").
 # @exports: CsvPointCodec
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import numpy as np
 
 
 class CsvPointCodec:
-    """Converts between (t, x, y, yaw) point arrays and UniUni CSV strings."""
+    """Converts between (t, x, y, yaw) point arrays and stage CSV strings."""
 
     @staticmethod
     def encode_points(samples: Iterable[Tuple[float, float, float, float]]) -> str:

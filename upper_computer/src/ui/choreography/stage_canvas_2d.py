@@ -27,11 +27,12 @@ from src.ui.choreography.stage_painters import (
 
 
 class StageCanvas2D(QWidget):
-    """Z-up metric top-down 2D stage canvas supporting inline UniUni trajectory drawing & sketch brush."""
+    """Z-up metric top-down 2D stage canvas supporting trajectory drawing, sketch brush & robot origin dragging."""
 
     hoverCoordChanged = Signal(float, float)
     draftPointsChanged = Signal(int)
     trajectoryFinishRequested = Signal(list)  # List[ControlPoint2D]
+    exitDrawModeRequested = Signal()
     robotSelected = Signal(int)
     initialPoseRequested = Signal(float, float, float)
     navGoalRequested = Signal(float, float, float)
@@ -42,13 +43,12 @@ class StageCanvas2D(QWidget):
         self.ppm: float = 42.0
         self.pan_offset = QPointF(0.0, 0.0)
         self.show_trajectories: bool = True
-        self.draw_mode: str = "view"  # "view" | "draw_traj" | "sketch"
+        self.draw_mode: str = "view"
         self.draft_points: List[ControlPoint2D] = []
         self._draft_samples = None
         self.sketch_strokes: List[List[Tuple[float, float]]] = []
         self._active_stroke: List[Tuple[float, float]] = []
         self._hover_world: Optional[Tuple[float, float]] = None
-
         self._grid_img: Optional[QImage] = None
         self._grid_meta = (0.0, 0.0, 0.05)
         self._last_mouse: Optional[QPointF] = None
@@ -59,15 +59,10 @@ class StageCanvas2D(QWidget):
         self._panning: bool = False
         self.highlighted_track_id: Optional[int] = None
         self._live_nav = LiveNavOverlayState()
-
         self.setMinimumSize(240, 180)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        for ev in (
-            StudioEvent.PLAYHEAD_MOVED, StudioEvent.SCENE_CHANGED,
-            StudioEvent.TIMELINE_UPDATED, StudioEvent.TRACKS_UPDATED,
-            StudioEvent.TRAJECTORY_LIB_UPDATED,
-        ):
+        for ev in (StudioEvent.PLAYHEAD_MOVED, StudioEvent.SCENE_CHANGED, StudioEvent.TIMELINE_UPDATED, StudioEvent.TRACKS_UPDATED, StudioEvent.TRAJECTORY_LIB_UPDATED):
             state.bus.subscribe(ev, lambda _p: self.update())
         state.bus.subscribe(StudioEvent.MAP_LOADED, self._on_map_loaded)
         self._sync_active_map()
@@ -75,6 +70,8 @@ class StageCanvas2D(QWidget):
     def set_draw_mode(self, mode: str) -> None:
         valid = ("view", "draw_traj", "sketch", "set_initialpose", "set_nav_goal")
         self.draw_mode = mode if mode in valid else "view"
+        self._active_stroke.clear()
+        self._drag_draft_idx = None
         self.setCursor(Qt.CursorShape.CrossCursor if self.draw_mode != "view" else Qt.CursorShape.ArrowCursor)
         self.update()
 
@@ -112,8 +109,7 @@ class StageCanvas2D(QWidget):
 
     def _rebuild_draft_preview(self) -> None:
         if len(self.draft_points) >= 2:
-            arr, _ = sample_trajectory_50fps(TrajectoryEntity(control_points=self.draft_points, duration=max(2.0, len(self.draft_points) * 1.5)))
-            self._draft_samples = arr
+            self._draft_samples, _ = sample_trajectory_50fps(TrajectoryEntity(control_points=self.draft_points, duration=max(2.0, len(self.draft_points) * 1.5)))
         else:
             self._draft_samples = None
         self.draftPointsChanged.emit(len(self.draft_points))
@@ -145,6 +141,19 @@ class StageCanvas2D(QWidget):
     def _origin_px(self) -> QPointF:
         return QPointF(self.width() * 0.5 + self.pan_offset.x(), self.height() * 0.5 + self.pan_offset.y())
 
+    def _hit_robot_index(self, pos: QPointF, origin: QPointF) -> Optional[int]:
+        hit_r = max(18.0, 0.45 * self.ppm)
+        for idx, tr in enumerate(self.state.tracks):
+            px, py, _ = self.state.evaluate_robot_pose(tr, self.state.playhead_s)
+            sc = world_to_screen(px, py, origin, self.ppm)
+            if math.hypot(sc.x() - pos.x(), sc.y() - pos.y()) <= hit_r:
+                return idx
+            if self.state.playhead_s > 1e-6:
+                sc0 = world_to_screen(tr.init_x, tr.init_y, origin, self.ppm)
+                if math.hypot(sc0.x() - pos.x(), sc0.y() - pos.y()) <= hit_r:
+                    return idx
+        return None
+
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -159,9 +168,12 @@ class StageCanvas2D(QWidget):
         paint_empty_stage_hint(p, self.width(), self.height(), len(self.state.tracks))
 
     def keyPressEvent(self, e: QKeyEvent) -> None:
-        if e.matches(e.StandardKey.Undo) or (e.modifiers() & Qt.KeyboardModifier.ControlModifier and e.key() == Qt.Key.Key_Z):
-            if self.undo_draw_step():
-                return
+        if e.key() == Qt.Key.Key_Escape and self.draw_mode != "view":
+            self.set_draw_mode("view")
+            self.exitDrawModeRequested.emit()
+            return
+        if (e.matches(e.StandardKey.Undo) or (e.modifiers() & Qt.KeyboardModifier.ControlModifier and e.key() == Qt.Key.Key_Z)) and self.undo_draw_step():
+            return
         super().keyPressEvent(e)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
@@ -169,88 +181,66 @@ class StageCanvas2D(QWidget):
         self._last_mouse = pos
         origin = self._origin_px()
         wx, wy = screen_to_world(pos.x(), pos.y(), origin, self.ppm)
-
         if event.button() == Qt.MouseButton.RightButton and self.draw_mode == "draw_traj":
             if len(self.draft_points) >= 2:
                 self.trajectoryFinishRequested.emit(copy.deepcopy(self.draft_points))
             else:
-                self.clear_draft()
+                self.clear_draft(); self.set_draw_mode("view"); self.exitDrawModeRequested.emit()
             return
-        if (
-            event.button() in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton)
-            or (event.modifiers() & Qt.KeyboardModifier.AltModifier)
-        ):
-            self._panning = True
-            return
+        if event.button() in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton) or (event.modifiers() & Qt.KeyboardModifier.AltModifier):
+            self._panning = True; return
         if self.draw_mode == "draw_traj":
             for idx, cp in enumerate(self.draft_points):
                 sc = world_to_screen(cp.x, cp.y, origin, self.ppm)
                 if math.hypot(sc.x() - pos.x(), sc.y() - pos.y()) <= 11.0:
-                    self._drag_draft_idx = idx
-                    return
+                    self._drag_draft_idx = idx; return
             yaw = math.atan2(wy - self.draft_points[-1].y, wx - self.draft_points[-1].x) if self.draft_points else 0.0
             self.draft_points.append(ControlPoint2D(round(wx, 3), round(wy, 3), round(yaw, 4)))
-            self._rebuild_draft_preview()
-            return
+            self._rebuild_draft_preview(); return
         if self.draw_mode in ("set_initialpose", "set_nav_goal"):
             self._live_nav.drag_kind = self.draw_mode
-            self._live_nav.drag_start = (round(wx, 3), round(wy, 3))
-            self._live_nav.drag_end = (round(wx, 3), round(wy, 3))
-            self.update()
-            return
+            self._live_nav.drag_start = self._live_nav.drag_end = (round(wx, 3), round(wy, 3))
+            self.update(); return
         if self.draw_mode == "sketch":
             self._active_stroke = [(round(wx, 3), round(wy, 3))]
-            self.update()
-            return
+            self.update(); return
 
-        hit_r = max(14.0, 0.35 * self.ppm)
-        for idx, tr in enumerate(self.state.tracks):
-            px, py, _ = self.state.evaluate_robot_pose(tr, self.state.playhead_s)
-            sc = world_to_screen(px, py, origin, self.ppm)
-            if math.hypot(sc.x() - pos.x(), sc.y() - pos.y()) <= hit_r:
-                self.highlighted_track_id = tr.id
-                self._drag_robot_idx = idx
-                self._drag_robot_origin = (tr.init_x, tr.init_y)
-                self._drag_robot_offset = (tr.init_x - wx, tr.init_y - wy)
-                self.robotSelected.emit(tr.id or 0)
-                self.state.notify(f"选中 [{tr.name}] 初始坐标 ({tr.init_x:.2f}, {tr.init_y:.2f}) — 拖动可调整", "info")
-                self.update()
-                return
+        hit_idx = self._hit_robot_index(pos, origin)
+        if hit_idx is not None:
+            tr = self.state.tracks[hit_idx]
+            if self.state.playhead_s > 1e-6:
+                self.state.playhead_s = 0.0; self.state.bus.publish(StudioEvent.PLAYHEAD_MOVED, 0.0)
+            self.highlighted_track_id, self._drag_robot_idx, self._drag_robot_origin = tr.id, hit_idx, (tr.init_x, tr.init_y)
+            snapped = math.hypot(tr.init_x - wx, tr.init_y - wy) > 0.5
+            self._drag_robot_offset = (0.0, 0.0) if snapped else (tr.init_x - wx, tr.init_y - wy)
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            self.robotSelected.emit(tr.id or 0)
+            self.state.notify(f"选中 [{tr.name}] 初始坐标 ({tr.init_x:.2f}, {tr.init_y:.2f}) — 拖动可调整", "info")
+            self.update(); return
         self._panning = True
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        pos = event.position()
-        wx, wy = screen_to_world(pos.x(), pos.y(), self._origin_px(), self.ppm)
-        self._hover_world = (round(wx, 2), round(wy, 2))
-        self.hoverCoordChanged.emit(wx, wy)
-
+        pos = event.position(); origin = self._origin_px()
+        wx, wy = screen_to_world(pos.x(), pos.y(), origin, self.ppm)
+        self._hover_world = (round(wx, 2), round(wy, 2)); self.hoverCoordChanged.emit(wx, wy)
         if self._panning and self._last_mouse is not None:
-            self.pan_offset += pos - self._last_mouse
-            self._last_mouse = pos
-            self.update()
-            return
+            self.pan_offset += pos - self._last_mouse; self._last_mouse = pos; self.update(); return
         if self._drag_draft_idx is not None:
             cp = self.draft_points[self._drag_draft_idx]
-            cp.x, cp.y = round(wx, 3), round(wy, 3)
-            self._rebuild_draft_preview()
-            return
+            cp.x, cp.y = round(wx, 3), round(wy, 3); self._rebuild_draft_preview(); return
         if self._live_nav.drag_start is not None:
-            self._live_nav.drag_end = (round(wx, 3), round(wy, 3))
-            self.update()
-            return
+            self._live_nav.drag_end = (round(wx, 3), round(wy, 3)); self.update(); return
         if self.draw_mode == "sketch" and (event.buttons() & Qt.MouseButton.LeftButton):
             if not self._active_stroke or math.hypot(wx - self._active_stroke[-1][0], wy - self._active_stroke[-1][1]) >= 0.06:
-                self._active_stroke.append((round(wx, 3), round(wy, 3)))
-                self.update()
+                self._active_stroke.append((round(wx, 3), round(wy, 3))); self.update()
             return
         if self._drag_robot_idx is not None and 0 <= self._drag_robot_idx < len(self.state.tracks):
-            tr = self.state.tracks[self._drag_robot_idx]
-            ox, oy = self._drag_robot_offset
-            tr.init_x, tr.init_y = self.state.clamp_robot_drag_xy(tr, wx + ox, wy + oy)
-            self.update()
-            return
+            tr = self.state.tracks[self._drag_robot_idx]; ox, oy = self._drag_robot_offset
+            tr.init_x, tr.init_y = self.state.clamp_robot_drag_xy(tr, wx + ox, wy + oy); self.update(); return
         if self.draw_mode == "draw_traj" and self.draft_points:
             self.update()
+        elif self.draw_mode == "view":
+            self.setCursor(Qt.CursorShape.OpenHandCursor if self._hit_robot_index(pos, origin) is not None else Qt.CursorShape.ArrowCursor)
 
     def mouseReleaseEvent(self, _event: QMouseEvent) -> None:
         self._panning = False
@@ -283,6 +273,7 @@ class StageCanvas2D(QWidget):
                         self.state.bus.publish(StudioEvent.TRACKS_UPDATED, tid)
                 self.state.undo_stack.push(CallableUndoCommand(f"调整 {tr.name} 初始站位", lambda: _apply(new_xy), lambda: _apply(old_xy)), execute_redo=True)
         self._drag_robot_idx = self._drag_robot_origin = None
+        self.setCursor(Qt.CursorShape.CrossCursor if self.draw_mode != "view" else Qt.CursorShape.ArrowCursor)
         self.update()
 
     def wheelEvent(self, event: QWheelEvent) -> None:

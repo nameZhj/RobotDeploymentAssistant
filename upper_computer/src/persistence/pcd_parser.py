@@ -178,7 +178,7 @@ def load_pcd(path: Path, max_points: int = 180000) -> PcdPointCloud:
 
     bmin = tuple(float(v) for v in xyz.min(axis=0))
     bmax = tuple(float(v) for v in xyz.max(axis=0))
-    # Height-mapped cyan-teal color ramp matching UniUni dark aesthetics
+    # Height-mapped cyan-teal color ramp matching standard stage specs dark aesthetics
     z_norm = np.clip((xyz[:, 2] - bmin[2]) / max(0.25, bmax[2] - bmin[2]), 0.0, 1.0)
     colors = np.column_stack([0.16 + 0.35 * z_norm, 0.58 + 0.30 * z_norm, 0.65 + 0.25 * (1.0 - z_norm)]).astype(np.float32)
     return PcdPointCloud(hdr, np.ascontiguousarray(xyz), colors, bmin, bmax)

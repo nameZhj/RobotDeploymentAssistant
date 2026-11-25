@@ -215,13 +215,14 @@ class SystemOpsService:
                 if len(parts) >= 3:
                     images.append({"name": parts[0].strip(), "id": parts[1].strip(), "size": parts[2].strip()})
         running = [c for c in containers if c["status"].lower().startswith("up")]
+        rid = self.reader.read_robot_id()
+        http_robot_id = str(rid.get("robot_id") or "").strip() if rid.get("configured") else ""
         return {
-            "ok": rc_c == 0 or rc_i == 0,
-            "containers": containers,
-            "running_containers": running,
-            "images": images,
-            "is_container_running": bool(running),
+            "ok": rc_c == 0 or rc_i == 0, "containers": containers, "running_containers": running,
+            "images": images, "is_container_running": bool(running), "running": bool(running),
+            "container_exists": any(c["name"] == "vsis_g1" for c in containers),
             "autostart_configured": Path("/docker_config/custom_startup.sh").exists(),
+            "robot_id": http_robot_id or "A",
         }
 
     def control_container(self, action: str, container_name: str = "vsis_g1") -> Dict[str, Any]:

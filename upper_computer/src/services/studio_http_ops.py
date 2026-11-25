@@ -1,6 +1,6 @@
 # @file: src/services/studio_http_ops.py
-# @brief: Wi-Fi HTTP operations for action sync, task-chain upload/prep/start, stop-to-origin, and commands.
-# @exports: sync_actions_from_http_op, dispatch_command_http_op, compile_and_upload_chains_http_op, start_task_chains_http_op, stop_all_robots_to_origin_http_op
+# @brief: Wi-Fi HTTP operations for action sync, fleet health, task-chain upload/prep/start, barrier, stop-to-origin, and commands (all blocking; run via BackgroundTaskRunner).
+# @exports: sync_actions_from_http_op, fleet_health_op, dispatch_command_http_op, dispatch_targets_http_op, compile_and_upload_chains_http_op, start_task_chains_http_op, barrier_task_chains_http_op, stop_all_robots_to_origin_http_op
 
 from __future__ import annotations
 
@@ -47,6 +47,23 @@ def sync_actions_from_http_op(svc: StudioStateService) -> Tuple[bool, int, str]:
     return True, cnt, msg
 
 
+def fleet_health_op(svc: StudioStateService, timeout_s: float = 1.2) -> Dict[str, RobotHttpResponse]:
+    """Probe GET /api/v1/health on every configured track in parallel; keyed by upper-cased target_id."""
+    fast_client = RobotHttpClient(timeout_s=timeout_s)
+    targets = [tr for tr in svc.tracks if (tr.robot_ip or "").strip()]
+
+    def _probe(tr):
+        return tr.target_id.upper(), fast_client.health(tr.robot_ip)
+
+    results: Dict[str, RobotHttpResponse] = {}
+    if not targets:
+        return results
+    with ThreadPoolExecutor(max_workers=min(8, len(targets))) as pool:
+        for tid, resp in pool.map(_probe, targets):
+            results[tid] = resp
+    return results
+
+
 def dispatch_command_http_op(
     svc: StudioStateService,
     target_id: str,
@@ -90,12 +107,14 @@ def compile_and_upload_chains_http_op(
             "robot_ip": tr.robot_ip,
             "upload_ok": up.ok,
             "prep_ok": False,
+            "status_code": up.status_code,
             "message": up.message,
         }
         if up.ok and prep:
             cb_url = svc.callback_listener.callback_url_for(tr.robot_ip)
             pr = svc.http_rpc.prep_task_chain(tr.robot_ip, run_id, callback_url=cb_url)
             item["prep_ok"] = pr.ok
+            item["status_code"] = pr.status_code
             item["message"] = pr.message
         results.append(item)
     return results
@@ -119,6 +138,53 @@ def start_task_chains_http_op(svc: StudioStateService, run_id: str = "9001") -> 
     return results
 
 
+def barrier_task_chains_http_op(svc: StudioStateService, run_id: str, barrier_id: str = "1") -> List[Dict[str, Any]]:
+    """Release the named barrier on every unmuted track in parallel over Wi-Fi HTTP."""
+    fast_client = RobotHttpClient(timeout_s=2.5)
+    targets = [tr for tr in svc.tracks if not tr.muted]
+
+    def _release(tr):
+        res = fast_client.barrier_task_chain(tr.robot_ip, run_id, barrier_id=barrier_id)
+        return {"target_id": tr.target_id, "robot_ip": tr.robot_ip, "ok": res.ok, "message": res.message}
+
+    if not targets:
+        return []
+    with ThreadPoolExecutor(max_workers=min(8, len(targets))) as pool:
+        return list(pool.map(_release, targets))
+
+
+def dispatch_targets_http_op(
+    svc: StudioStateService, commands: List[Tuple[str, str, List[str]]]
+) -> List[Dict[str, Any]]:
+    """Send one LRMP command per target (e.g. EMERGENCY) in parallel; order inside the list is preserved."""
+    fast_client = RobotHttpClient(timeout_s=2.5)
+
+    def _send(item):
+        target_id, cmd, params = item
+        resp = fast_client.send_command(
+            _robot_ip_of(svc, target_id), target_id.strip().upper(), cmd, params or []
+        )
+        return {
+            "target_id": target_id,
+            "robot_ip": _robot_ip_of(svc, target_id),
+            "ok": resp.ok,
+            "status_code": resp.status_code,
+            "message": resp.message,
+            "data": resp.data,
+        }
+
+    if not commands:
+        return []
+    with ThreadPoolExecutor(max_workers=min(8, len(commands))) as pool:
+        return list(pool.map(_send, commands))
+
+
+def _robot_ip_of(svc: StudioStateService, target_id: str) -> str:
+    norm = target_id.strip().upper()
+    tr = next((t for t in svc.tracks if t.target_id.upper() == norm), None)
+    return (tr.robot_ip if tr else "") or ""
+
+
 def stop_all_robots_to_origin_http_op(svc: StudioStateService) -> List[Dict[str, Any]]:
     """Send HTTP stop + return_to_origin=(init_x, init_y, init_yaw) to every robot track in parallel."""
     if not svc.tracks:
@@ -127,7 +193,7 @@ def stop_all_robots_to_origin_http_op(svc: StudioStateService) -> List[Dict[str,
 
     def _stop_one(tr) -> Dict[str, Any]:
         origin = {"x": float(tr.init_x), "y": float(tr.init_y), "yaw": float(tr.init_yaw)}
-        cb_url = svc.callback_listener.callback_url_for(tr.robot_ip) if svc.callback_listener.is_running else ""
+        cb_url = svc.callback_listener.callback_url_for(tr.robot_ip)
         res = fast_client.stop_and_return_origin(tr.robot_ip, origin, callback_url=cb_url)
         return {
             "target_id": tr.target_id,

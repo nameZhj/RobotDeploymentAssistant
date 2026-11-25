@@ -1,8 +1,9 @@
 # @file: src/ros_bridge/__init__.py
-# @brief: Exports for real ROS 1.17.4 navctl runner, runtime discovery, live SLAM tap, topic bridge, and diagnostics.
-# @exports: NavctlRunner, NavctlResult, RosRuntimeDiscovery, RosDiscoveredEndpoints, RosLiveSlamTap, RosTopicServiceBridge, RosTelemetrySnapshot, RosNavDiagnostics
+# @brief: Exports for real ROS 1.17.4 navctl runner, runtime discovery, live SLAM tap, relocalizer, topic bridge, and diagnostics.
+# @exports: NavctlRunner, NavctlResult, RosRuntimeDiscovery, RosDiscoveredEndpoints, RosLiveSlamTap, RosRelocalizer, RosTopicServiceBridge, RosTelemetrySnapshot, RosNavDiagnostics
 
 from src.ros_bridge.navctl_runner import NavctlResult, NavctlRunner
+from src.ros_bridge.relocalize_helper import RosRelocalizer
 from src.ros_bridge.ros_live_slam_tap import RosLiveSlamTap
 from src.ros_bridge.ros_nav_diagnostics import RosNavDiagnostics
 from src.ros_bridge.ros_runtime_discovery import RosDiscoveredEndpoints, RosRuntimeDiscovery
@@ -14,6 +15,7 @@ __all__ = [
     "RosRuntimeDiscovery",
     "RosDiscoveredEndpoints",
     "RosLiveSlamTap",
+    "RosRelocalizer",
     "RosTelemetrySnapshot",
     "RosTopicServiceBridge",
     "RosNavDiagnostics",

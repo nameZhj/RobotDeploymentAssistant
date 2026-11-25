@@ -7,27 +7,44 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import json
+import logging
 from pathlib import Path
 import socket
 import time
 from typing import Any, Dict, List, Optional
 
+from src.core.paths import get_paths
+from src.core.settings import get_settings
 from src.protocol.robot_http_client import RobotHttpClient
+
+logger = logging.getLogger("HttpLowerBridge")
 
 
 class HttpLowerBridge:
     """Bridges Flask Web Console APIs exclusively to lower-computer HTTP REST services over Wi-Fi LAN."""
 
-    def __init__(self, default_port: int = 8090, storage_file: Optional[Path] = None) -> None:
+    def __init__(self, default_port: Optional[int] = None, storage_file: Optional[Path] = None) -> None:
         self.client = RobotHttpClient(timeout_s=2.5)
-        self.default_port = default_port
+        self._default_port_override = int(default_port) if default_port else None
         self.robot_ip_map: Dict[str, str] = {}
         self.robot_port_map: Dict[str, int] = {}
         self.active_robot_ip: str = ""
         self._fleet_robots: List[Dict[str, Any]] = []
         self._fleet_selected: List[str] = []
-        self._storage_file = storage_file or (Path(__file__).resolve().parents[1] / "cache" / "http_robot_fleet.json")
+        # R-5: fleet 持久化收敛至 paths.runtime_dir，不再在 upper_computer 根下创建 cache/
+        self._storage_file = storage_file or (get_paths().runtime_dir / "http_robot_fleet.json")
         self._load_fleet_from_disk()
+
+    @property
+    def default_port(self) -> int:
+        """R-6: 无显式端口时统一读 YAML 配置 virtual_interfaces.http_default_port（与 RobotHttpClient 同源），显式构造参数优先。"""
+        if self._default_port_override:
+            return self._default_port_override
+        try:
+            return int(get_settings().virtual_interfaces.http_default_port)
+        except (AttributeError, TypeError, ValueError) as ex:
+            logger.warning(f"读取 virtual_interfaces.http_default_port 配置失败，回退 8090: {ex}")
+            return 8090
 
     def _load_fleet_from_disk(self) -> None:
         if not self._storage_file.exists():
@@ -142,8 +159,65 @@ class HttpLowerBridge:
             "authority": str(resp.data.get("authority", "")),
             "motion_state": str(resp.data.get("motion_state", "")),
             "active_dance": str(resp.data.get("active_dance", "")),
+            "nav_input": str(resp.data.get("nav_input", "")),
+            "nav_status": str(resp.data.get("nav_status", "")),
+            "nav_reason": str(resp.data.get("nav_reason", "")),
+            "active_faults": list(resp.data.get("active_faults") or []),
+            "safety_locked": bool(resp.data.get("safety_locked", False)),
+            "lock_reason": str(resp.data.get("lock_reason", "")),
+            "relocalize_status": resp.data.get("relocalize_status") if isinstance(resp.data.get("relocalize_status"), dict) else {},
             "ros_master_reachable": bool(resp.data.get("ros_master_reachable", False)),
+            "motion_udp_enabled": bool(resp.data.get("motion_udp_enabled", False)),
+            "motion_udp": resp.data.get("motion_udp") if isinstance(resp.data.get("motion_udp"), dict) else {},
             "msg": resp.message,
+        }
+
+    def probe_motion(
+        self, target: str = "", robot_ip: str = "", port: Optional[int] = None,
+        targets_map: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        tmap = targets_map or {}
+        targets = [t.strip().upper() for t in (target or "").split(",") if t.strip()]
+        if targets == ["ALL"]:
+            targets = [r["id"] for r in self._fleet_robots] or ["A"]
+        if len(targets) <= 1 and not tmap:
+            tgt = targets[0] if targets else ""
+            ip, use_port = self.resolve_endpoint(tgt, robot_ip, port)
+            if not ip:
+                return {"ok": False, "success": False, "reachable": False, "http_used": True, "msg": "未配置无线 Wi-Fi IP"}
+            resp = self.client.probe_motion(ip, target_id=tgt, port=use_port)
+            return {
+                "ok": resp.ok, "success": resp.ok, "reachable": bool(resp.data.get("reachable", False)),
+                "status_code": resp.status_code, "http_used": True, "msg": resp.message, "data": resp.data,
+            }
+        if not targets:
+            targets = [r["id"] for r in self._fleet_robots]
+        if not targets:
+            return {"ok": False, "success": False, "reachable": False, "http_used": True, "msg": "尚未添加或选择任何机器人"}
+
+        def _probe_one(tgt: str) -> Dict[str, Any]:
+            meta = tmap.get(tgt) or {}
+            m_ip = str(meta.get("ip", "")).strip() if isinstance(meta, dict) else ""
+            m_port = meta.get("port") if isinstance(meta, dict) else None
+            use_ip, use_port = self.resolve_endpoint(tgt, m_ip or robot_ip, m_port or port)
+            if not use_ip:
+                return {"target": tgt, "ok": False, "reachable": False, "msg": f"{tgt} 未配置 IP", "data": {}}
+            resp = self.client.probe_motion(use_ip, target_id=tgt, port=use_port)
+            return {
+                "target": tgt, "robot_ip": use_ip, "port": use_port, "ok": resp.ok,
+                "reachable": bool(resp.data.get("reachable", False)), "status_code": resp.status_code,
+                "msg": resp.message, "data": resp.data,
+            }
+
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(targets)))) as pool:
+            results = list(pool.map(_probe_one, targets))
+        ok_cnt = sum(1 for r in results if r.get("ok"))
+        summary = "; ".join(f"{r['target']}: {r['msg']}" for r in results)
+        return {
+            "ok": ok_cnt > 0, "success": ok_cnt > 0, "all_ok": ok_cnt == len(results),
+            "reachable": any(r.get("reachable") for r in results), "http_used": True,
+            "ok_count": ok_cnt, "total_count": len(results), "results": results,
+            "data": results[0].get("data", {}) if len(results) == 1 else {}, "msg": summary,
         }
 
     def check_fleet_health(self, robots: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
@@ -344,18 +418,22 @@ class HttpLowerBridge:
         resp = self.client.set_robot_id(ip, robot_id, port=use_port)
         return {"ok": resp.ok, "success": resp.ok, "http_used": True, "msg": resp.message, "data": resp.data}
 
-    def get_control_state(self, target: str = "", robot_ip: str = "", port: Optional[int] = None) -> Dict[str, Any]:
+    def get_control_state(
+        self, target: str = "", robot_ip: str = "", port: Optional[int] = None, sync: bool = False,
+    ) -> Dict[str, Any]:
         ip, use_port = self.resolve_endpoint(target, robot_ip, port)
         if not ip:
             return {"ok": False, "success": False, "http_used": True, "msg": "未配置机器人 Wi-Fi 局域网 IP"}
-        resp = self.client.get_control_state(ip, port=use_port)
+        resp = self.client.get_control_state(ip, sync=sync, port=use_port)
         return {"ok": resp.ok, "success": resp.ok, "http_used": True, "robot_ip": ip, "port": use_port, "data": resp.data, "msg": resp.message}
 
-    def send_posture(self, target: str, posture: str, robot_ip: str = "", port: Optional[int] = None) -> Dict[str, Any]:
+    def send_posture(
+        self, target: str, posture: str, robot_ip: str = "", port: Optional[int] = None, wait_ready: bool = False,
+    ) -> Dict[str, Any]:
         ip, use_port = self.resolve_endpoint(target, robot_ip, port)
         if not ip:
             return {"ok": False, "success": False, "http_used": True, "msg": f"机器人 [{target or '?'}] 未配置 Wi-Fi 局域网 IP"}
-        resp = self.client.send_posture(ip, posture, port=use_port)
+        resp = self.client.send_posture(ip, posture, wait_ready=wait_ready, port=use_port)
         return {"ok": resp.ok, "success": resp.ok, "http_used": True, "status_code": resp.status_code, "data": resp.data, "msg": resp.message}
 
     def send_velocity(self, target: str, payload: Dict[str, Any], robot_ip: str = "", port: Optional[int] = None) -> Dict[str, Any]:
@@ -372,8 +450,39 @@ class HttpLowerBridge:
         resp = self.client.send_dance(ip, alias, port=use_port)
         return {"ok": resp.ok, "success": resp.ok, "http_used": True, "status_code": resp.status_code, "data": resp.data, "msg": resp.message}
 
-    def send_stop(self, target: str = "", emergency: bool = False, robot_ip: str = "", port: Optional[int] = None) -> Dict[str, Any]:
-        ip, use_port = self.resolve_endpoint(target, robot_ip, port)
+    def send_stop(
+        self, target: str = "", emergency: bool = False, robot_ip: str = "", port: Optional[int] = None,
+        targets_map: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        tmap = targets_map or {}
+        raw_tgt = (target or "").strip().upper()
+        if ("," in raw_tgt) or raw_tgt == "ALL" or len(tmap) > 1:
+            targets = [t.strip().upper() for t in raw_tgt.split(",") if t.strip() and t.strip().upper() != "ALL"]
+            if not targets:
+                targets = list(tmap.keys()) or [r["id"] for r in self._fleet_robots] or (["A"] if robot_ip or self.active_robot_ip else [])
+            if not targets:
+                return {"ok": False, "success": False, "http_used": True, "msg": "尚未添加或选择任何 Wi-Fi 局域网机器人"}
+
+            def _stop_one(tgt: str) -> Dict[str, Any]:
+                meta = tmap.get(tgt) or {}
+                m_ip = str(meta.get("ip", "")).strip() if isinstance(meta, dict) else ""
+                m_p = meta.get("port") if isinstance(meta, dict) else None
+                res = self.send_stop(tgt, emergency=emergency, robot_ip=m_ip or robot_ip, port=m_p or port)
+                return {"target": tgt, **res}
+
+            with ThreadPoolExecutor(max_workers=min(8, max(1, len(targets)))) as pool:
+                results = list(pool.map(_stop_one, targets))
+            ok_cnt = sum(1 for r in results if r.get("ok"))
+            summary = "; ".join(f"{r['target']}: {r.get('msg', '')}" for r in results)
+            return {
+                "ok": ok_cnt > 0, "success": ok_cnt > 0, "all_ok": ok_cnt == len(results),
+                "http_used": True, "target": ",".join(targets), "ok_count": ok_cnt,
+                "total_count": len(results), "results": results, "msg": summary,
+            }
+        meta = tmap.get(raw_tgt) or {}
+        m_ip = str(meta.get("ip", "")).strip() if isinstance(meta, dict) else ""
+        m_p = meta.get("port") if isinstance(meta, dict) else None
+        ip, use_port = self.resolve_endpoint(raw_tgt, m_ip or robot_ip, m_p or port)
         if not ip:
             return {"ok": False, "success": False, "http_used": True, "msg": f"机器人 [{target or '?'}] 未配置 Wi-Fi 局域网 IP"}
         resp = self.client.send_stop(ip, emergency=emergency, port=use_port)
@@ -443,10 +552,27 @@ class HttpLowerBridge:
         if not ip:
             return {"ok": False, "http_used": False}
         resp = self.client.fetch_license_status(ip, port=use_port)
+        license_data = resp.data
+        has_license = bool(license_data.get("present"))
+        # W-4: license_valid 不再降级为文件存在性——取实机机器码 digest 与授权 machine_id_prefix 前缀比对
+        license_valid = False
+        msg = resp.message
+        if has_license:
+            prefix = str(license_data.get("machine_id_prefix", "")).strip()
+            mid_resp = self.client.fetch_machine_id(ip, port=use_port)
+            digest = str(mid_resp.data.get("digest", "")).strip() if mid_resp.ok else ""
+            if digest and prefix and digest.lower().startswith(prefix.lower()):
+                license_valid = True
+            elif not digest:
+                msg = f"{msg}；机器码不可得，无法核验授权有效性"
+            elif not prefix:
+                msg = f"{msg}；授权文件缺少机器码前缀，无法核验授权有效性"
+            else:
+                msg = f"{msg}；实机机器码与授权不匹配，授权未生效"
         return {
             "ok": resp.ok, "success": resp.ok, "http_used": True, "connected": resp.status_code > 0,
-            "has_license": bool(resp.data.get("present")), "license_valid": bool(resp.data.get("present")),
-            "license_data": resp.data, "msg": resp.message,
+            "has_license": has_license, "license_valid": license_valid,
+            "license_data": license_data, "msg": msg,
         }
 
     def deploy_license(self, content: str | Dict[str, Any], robot_ip: str = "") -> Dict[str, Any]:

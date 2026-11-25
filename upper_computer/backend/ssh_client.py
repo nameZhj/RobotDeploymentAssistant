@@ -20,8 +20,9 @@ class SSHManager:
     def __init__(self):
         self.host = "192.168.123.164"
         self.port = 22
-        self.username = "unitree"
-        self.password = "123"
+        # W-7: 不再内置默认凭据 unitree/123，凭据必须由用户显式提供（/api/connect 或凭据存储）
+        self.username = ""
+        self.password = ""
         self.client: Optional[paramiko.SSHClient] = None
         self._is_connected = False
         self._lock = threading.Lock()
@@ -40,7 +41,7 @@ class SSHManager:
             "error_msg": "",
         }
 
-    def set_credentials(self, host: str = "192.168.123.164", port: int = 22, username: str = "unitree", password: str = "123"):
+    def set_credentials(self, host: str = "192.168.123.164", port: int = 22, username: str = "", password: str = ""):
         self.host = host.strip()
         self.port = int(port)
         self.username = username.strip()
@@ -54,6 +55,9 @@ class SSHManager:
 
             if paramiko is None:
                 return False, "Python 环境缺少 paramiko 库，请安装 paramiko"
+
+            if not self.username or not self.password:
+                return False, "未配置 SSH 用户名或密码，请先填写机器人连接凭据"
 
             last_err = ""
             for attempt in range(2):
@@ -80,7 +84,7 @@ class SSHManager:
                     return False, f"连接超时：无法访问 {self.host}:{self.port}，请检查网线与网段"
                 except paramiko.AuthenticationException:
                     self._is_connected = False
-                    return False, f"认证失败：用户名或密码错误 ({self.username}/{self.password})"
+                    return False, f"认证失败：用户名或密码错误 ({self.username})"
                 except Exception as e:
                     last_err = str(e)
                     time.sleep(0.3)
@@ -144,7 +148,8 @@ class SSHManager:
             cmd = command
             if sudo:
                 escaped_command = command.replace("'", "'\\''")
-                cmd = f"echo '{self.password}' | sudo -S -p '' bash -c '{escaped_command}'"
+                escaped_pw = self.password.replace("'", "'\\''")
+                cmd = f"echo '{escaped_pw}' | sudo -S -p '' bash -c '{escaped_command}'"
 
             stdin, stdout, stderr = self.client.exec_command(cmd, timeout=timeout)
             exit_code = stdout.channel.recv_exit_status()
@@ -169,7 +174,8 @@ class SSHManager:
             cmd = command
             if sudo:
                 escaped_command = command.replace("'", "'\\''")
-                cmd = f"echo '{self.password}' | sudo -S -p '' bash -c '{escaped_command}'"
+                escaped_pw = self.password.replace("'", "'\\''")
+                cmd = f"echo '{escaped_pw}' | sudo -S -p '' bash -c '{escaped_command}'"
 
             stdin, stdout, stderr = self.client.exec_command(cmd, get_pty=True, timeout=timeout)
 

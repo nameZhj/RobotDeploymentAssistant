@@ -1,6 +1,6 @@
 # @file: tests/test_lower_computer.py
-# @brief: Comprehensive tests for lower computer ROS bridge, real 503 honesty, arrival-driven task chain, barrier, system ops, diagnostics, and LoRa agent.
-# @exports: test_health_and_honest_503_when_ros_absent, test_motion_commands_and_reserved_dance_slot, test_task_chain_arrival_progression_and_stop_to_origin, test_system_ops_diagnostics_barrier_and_lora_agent
+# @brief: Comprehensive tests for lower computer ROS bridge, 503 honesty, task chain, UDP closed-loop safety/nav/relocalize, and regression guards.
+# @exports: test_health_and_honest_503_when_ros_absent, test_motion_commands_and_reserved_dance_slot, test_task_chain_arrival_progression_and_stop_to_origin, test_system_ops_diagnostics_barrier_and_lora_agent, test_dynamic_ros_discovery_sse_stream_binary_cloud_and_maps, test_udp_motion_bridge_probe_commands_and_dance_done, test_g1_full_closure_state_faults_nav_and_relocalize, test_regression_fixes_d1_d2_d3_d4_d7
 
 from __future__ import annotations
 
@@ -268,7 +268,7 @@ def test_system_ops_diagnostics_barrier_and_lora_agent(tmp_path: Path) -> None:
         assert c_rid == 200 and rid["robot_id"] == "B"
 
         c_lic, lic = _http_call(f"{base}/api/v1/license/deploy", "POST", {
-            "content": {"machine_id": "MACHINE-ID-G1-8899", "customer": "UnitreeG1", "dances": ["G1_TAIJI"]},
+            "content": {"machine_id": "MACHINE-ID-G1-8899", "customer": "StageG1", "dances": ["G1_TAIJI"]},
         })
         assert c_lic == 200 and lic["ok"] is True
 
@@ -416,4 +416,555 @@ def test_dynamic_ros_discovery_sse_stream_binary_cloud_and_maps(tmp_path: Path) 
     finally:
         ros_bridge.stop_cmd_vel()
         srv.stop()
+
+
+def test_udp_motion_bridge_probe_commands_and_dance_done(tmp_path: Path) -> None:
+    import socket
+    from src.commands.g1_udp_motion_bridge import build_motion_udp_packet
+
+    # Frame validation matches g1_motion.py rules
+    assert build_motion_udp_packet("a", "stand") == b"A|STAND\n"
+    for bad in ("GETDANCELIST", "STAND|EXTRA", "X" * 200):
+        try:
+            build_motion_udp_packet("A", bad)
+            assert False, f"expected ValueError for {bad}"
+        except ValueError:
+            pass
+
+    rx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    rx_sock.bind(("127.0.0.1", 0))
+    rx_sock.settimeout(0.1)
+    udp_port = rx_sock.getsockname()[1]
+
+    received: List[str] = []
+    pong_enabled = [True]
+    ack_enabled = [True]
+    dance_done_mode = ["OK"]  # "OK" | "ABORTED" | "NONE"
+    stop_rx = threading.Event()
+
+    def _fake_g1_rx() -> None:
+        while not stop_rx.is_set():
+            try:
+                data, addr = rx_sock.recvfrom(512)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            for raw_line in data.decode("ascii", errors="ignore").splitlines():
+                received.append(raw_line)
+                _, _, cmd_part = raw_line.partition("|")
+                cmd_head = cmd_part.split(",", 1)[0]
+                if raw_line == "A|PING" and pong_enabled[0]:
+                    rx_sock.sendto(b"A|PONG\n", addr)
+                elif raw_line == "A|QUERY_STATE":
+                    rx_sock.sendto(b"A|STATE,STAND,NONE\n", addr)
+                elif raw_line == "A|DANCE,G1_FORBIDDEN":
+                    rx_sock.sendto(b"A|ERR,DANCE,UNLICENSED\n", addr)
+                elif raw_line == "A|DANCE,G1_TAIJI" and ack_enabled[0]:
+                    rx_sock.sendto(b"A|ACK,DANCE\n", addr)
+                    if dance_done_mode[0] in ("OK", "ABORTED"):
+                        rx_sock.sendto(f"A|DANCE_DONE,G1_TAIJI,{dance_done_mode[0]}\n".encode("ascii"), addr)
+                elif cmd_head not in ("PING", "QUERY_STATE") and ack_enabled[0]:
+                    rx_sock.sendto(f"A|ACK,{cmd_head}\n".encode("ascii"), addr)
+
+    rx_thread = threading.Thread(target=_fake_g1_rx, daemon=True)
+    rx_thread.start()
+
+    yaml_file = tmp_path / "lora_recv_group.yaml"
+    yaml_file.write_text(
+        "motion:\n  forward_axis: 0.60\n  lateral_axis: 0.50\n  turn_axis: 0.70\n"
+        "dance_map:\n  G1_TAIJI: [L1, LEFT] # 太极\n  G1_FORBIDDEN: [L1, RIGHT] # 未授权\n",
+        encoding="utf-8",
+    )
+    id_file = tmp_path / "lora_robot_id.txt"
+    id_file.write_text("A\n", encoding="utf-8")
+
+    def _ros_shell(cmd: str, _t: float):
+        if "rostopic echo -n 1 /Odometry_loc" in cmd:
+            return 0, "position:\n  x: 1.0\n  y: 0.0\norientation:\n  x: 0.0\n  y: 0.0\n  z: 0.0\n  w: 1.0", ""
+        if "rostopic echo -n 1 /local_nav_status" in cmd:
+            return 0, "data: 'ARRIVED'", ""
+        return 0, "ok", ""
+
+    cfg = RosEnvConfig(
+        lora_yaml_file=yaml_file, robot_id_file=id_file, cache_dir=tmp_path / "cache",
+        nav_poll_interval_s=0.03, motion_udp_enabled=True,
+        motion_udp_host="127.0.0.1", motion_udp_port=udp_port,
+        motion_udp_probe_timeout_s=0.35, motion_udp_ack_timeout_s=0.25, motion_udp_dance_grace_s=0.0,
+    )
+    ros_bridge = RosTopicServiceBridge(cfg=cfg, master_checker=lambda: True, shell_runner=_ros_shell)
+    ctx = LowerComputerContext(cfg=cfg, ros_bridge=ros_bridge)
+    srv = LowerComputerHttpServer(ctx, host="127.0.0.1", port=0)
+    http_port = srv.start()
+    try:
+        base = f"http://127.0.0.1:{http_port}"
+        c_p, res_p = _http_call(f"{base}/api/v1/control/probe")
+        assert c_p == 200 and res_p["reachable"] is True
+        c_h, res_h = _http_call(f"{base}/api/v1/health")
+        assert c_h == 200 and res_h["motion_udp_enabled"] is True and res_h["motion_udp"]["reachable"] is True
+
+        pong_enabled[0] = False
+        c_p2, res_p2 = _http_call(f"{base}/api/v1/control/probe")
+        assert c_p2 == 503 and res_p2["reachable"] is False
+        pong_enabled[0] = True
+
+        for body in (
+            {"command": "STAND"}, {"command": "GAIT"}, {"command": "PASSIVE"},
+            {"command": "FORWARD", "params": ["0.2"]}, {"command": "BACK", "params": ["0.3"]},
+            {"command": "MOVE_LEFT", "params": ["0.2"]}, {"command": "TURN_LEFT", "params": ["0.2"]},
+            {"command": "MOVE", "params": ["0.5", "0", "0", "0.4"]},
+        ):
+            code, d = _http_call(f"{base}/api/v1/control/command", "POST", body)
+            assert code == 200 and d["ok"] is True and d["details"]["udp"]["ack_received"] is True
+
+        # ERR,DANCE,UNLICENSED -> 409 REJECTED with error_code
+        c_err, r_err = _http_call(f"{base}/api/v1/control/dance", "POST", {"alias": "G1_FORBIDDEN"})
+        assert c_err == 409 and not r_err["ok"] and r_err["details"]["udp"]["error_code"] == "UNLICENSED"
+
+        # ACK_TIMEOUT -> honest 503 UNAVAILABLE
+        ack_enabled[0] = False
+        c_tmo, r_tmo = _http_call(f"{base}/api/v1/control/posture", "POST", {"posture": "STAND"})
+        assert c_tmo == 503 and not r_tmo["ok"] and r_tmo["details"]["udp"]["error_code"] == "ACK_TIMEOUT"
+        ack_enabled[0] = True
+
+        # DANCE -> ACK + DANCE_DONE clears active_dance; QUERY_STATE syncs STATE,STAND,NONE
+        c_d, r_d = _http_call(f"{base}/api/v1/control/dance", "POST", {"alias": "G1_TAIJI"})
+        assert c_d == 200 and r_d["execution_mode"] == "REAL" and r_d["details"]["udp"]["ack_received"] is True
+        time.sleep(0.05)
+        c_st, st_after = _http_call(f"{base}/api/v1/control/state?sync=1")
+        assert c_st == 200 and st_after["motion"]["active_dance"] == "" and st_after["motion"]["state"] == "STAND"
+
+        c_s, _ = _http_call(f"{base}/api/v1/control/stop", "POST", {"emergency": False})
+        assert c_s == 200
+        pre_emg_len = len(received)
+        c_e, r_e = _http_call(f"{base}/api/v1/control/stop", "POST", {"emergency": True})
+        assert c_e == 200 and r_e["command"] == "EMERGENCY"
+        assert received[pre_emg_len:] == ["A|STOP"]
+
+        for expect_pkt in (
+            "A|STAND", "A|GAIT", "A|PASSIVE", "A|FORWARD,0.20", "A|BACKWARD,0.30",
+            "A|MOVE_LEFT,0.20", "A|TURN_LEFT,0.20", "A|MOVE,0.500,0.000,0.000,0.40", "A|DANCE,G1_TAIJI",
+        ):
+            assert expect_pkt in received
+
+        # TaskChain nav->dance waits for DANCE_DONE:OK even with duration=0.0, switching to GAIT before nav
+        _http_call(f"{base}/api/v1/control/posture", "POST", {"posture": "RELEASE"})
+        received.clear()
+        assert _http_call(f"{base}/api/v1/task_chain/upload", "POST", {
+            "target_id": "A", "plan_id": "9101",
+            "chain_nodes": [
+                {"node_type": "trajectory", "title": "到点", "target_x": 1.0, "target_y": 0.0, "target_yaw": 0.0},
+                {"node_type": "action", "title": "太极", "lrmp_code": "G1_TAIJI", "duration": 0.0},
+            ],
+        })[0] == 200
+        t0 = time.monotonic()
+        assert _http_call(f"{base}/api/v1/task_chain/start", "POST", {"run_id": "9101"})[0] == 202
+        while time.monotonic() - t0 < 2.0 and ctx.task_chain.state.status != "COMPLETED":
+            time.sleep(0.03)
+        assert ctx.task_chain.state.status == "COMPLETED" and (time.monotonic() - t0) < 1.0
+        assert received.index("A|GAIT") < received.index("A|DANCE,G1_TAIJI")
+
+        # DANCE_DONE:ABORTED marks TaskChain ERROR
+        dance_done_mode[0] = "ABORTED"
+        assert _http_call(f"{base}/api/v1/task_chain/upload", "POST", {
+            "target_id": "A", "plan_id": "9102",
+            "chain_nodes": [{"node_type": "action", "title": "太极", "lrmp_code": "G1_TAIJI", "duration": 2.0}],
+        })[0] == 200
+        assert _http_call(f"{base}/api/v1/task_chain/start", "POST", {"run_id": "9102"})[0] == 202
+        t_ab = time.monotonic()
+        while time.monotonic() - t_ab < 2.0 and ctx.task_chain.state.status not in ("ERROR", "COMPLETED"):
+            time.sleep(0.03)
+        assert ctx.task_chain.state.status == "ERROR"
+
+        # Fallback to node duration when DANCE_DONE is absent
+        dance_done_mode[0] = "NONE"
+        assert _http_call(f"{base}/api/v1/task_chain/upload", "POST", {
+            "target_id": "A", "plan_id": "9103",
+            "chain_nodes": [{"node_type": "action", "title": "太极", "lrmp_code": "G1_TAIJI", "duration": 0.25}],
+        })[0] == 200
+        t1 = time.monotonic()
+        assert _http_call(f"{base}/api/v1/task_chain/start", "POST", {"run_id": "9103"})[0] == 202
+        while time.monotonic() - t1 < 2.0 and ctx.task_chain.state.status != "COMPLETED":
+            time.sleep(0.03)
+        assert ctx.task_chain.state.status == "COMPLETED" and (time.monotonic() - t1) >= 0.2
+    finally:
+        stop_rx.set()
+        rx_sock.close()
+        ros_bridge.stop_cmd_vel()
+        srv.stop()
+
+
+def test_g1_full_closure_state_faults_nav_and_relocalize(tmp_path: Path) -> None:
+    import socket
+
+    cb_events: List[Dict[str, Any]] = []
+
+    class _CbHandler(BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args) -> None:  # noqa: A002
+            return
+
+        def do_POST(self) -> None:  # noqa: N802
+            ln = int(self.headers.get("Content-Length", "0"))
+            cb_events.append(json.loads(self.rfile.read(ln).decode("utf-8")))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+
+    cb_srv = ThreadingHTTPServer(("127.0.0.1", 0), _CbHandler)
+    cb_port = cb_srv.server_address[1]
+    threading.Thread(target=cb_srv.serve_forever, daemon=True).start()
+    cb_url = f"http://127.0.0.1:{cb_port}/cb"
+
+    rx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    rx_sock.bind(("127.0.0.1", 0))
+    rx_sock.settimeout(0.1)
+    udp_port = rx_sock.getsockname()[1]
+
+    received: List[str] = []
+    client_addr: List[Any] = [None]
+    g1_mode = ["PASSIVE", "NONE", "BLOCKED"]  # MODE, ACTIVE_DANCE, NAV_INPUT
+    g1_nav = ["IDLE", ""]
+    stop_rx = threading.Event()
+
+    def _emit_rx(line: str) -> None:
+        if client_addr[0] is not None and not stop_rx.is_set():
+            try:
+                rx_sock.sendto((line + "\n").encode("ascii"), client_addr[0])
+            except OSError:
+                pass
+
+    def _fake_g1_live() -> None:
+        while not stop_rx.is_set():
+            try:
+                data, addr = rx_sock.recvfrom(512)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            client_addr[0] = addr
+            for raw in data.decode("ascii", errors="ignore").splitlines():
+                received.append(raw)
+                _, _, cmd_part = raw.partition("|")
+                head = cmd_part.split(",", 1)[0]
+                if raw == "A|PING":
+                    _emit_rx("A|PONG")
+                elif raw == "A|QUERY_STATE":
+                    _emit_rx(f"A|STATE,{g1_mode[0]},{g1_mode[1]},{g1_mode[2]}")
+                elif raw == "A|QUERY_NAV":
+                    _emit_rx(f"A|NAV_STATUS,{g1_nav[0]}" + (f",{g1_nav[1]}" if g1_nav[1] else ""))
+                elif raw == "A|STAND":
+                    _emit_rx("A|STATE,PASSIVE,NONE,BLOCKED")
+                    _emit_rx("A|ACK,STAND")
+                    def _finish_stand():
+                        time.sleep(0.03)
+                        _emit_rx("A|STATE,STANDING,NONE,BLOCKED")
+                        time.sleep(0.04)
+                        g1_mode[:] = ["STAND", "NONE", "BLOCKED"]
+                        _emit_rx("A|STATE,STAND,NONE,BLOCKED")
+                    threading.Thread(target=_finish_stand, daemon=True).start()
+                elif raw == "A|GAIT":
+                    _emit_rx("A|ACK,GAIT")
+                    def _finish_gait():
+                        time.sleep(0.04)
+                        g1_mode[:] = ["GAIT", "NONE", "READY"]
+                        _emit_rx("A|STATE,GAIT,NONE,READY")
+                    threading.Thread(target=_finish_gait, daemon=True).start()
+                elif raw == "A|DANCE,G1_TAIJI":
+                    _emit_rx("A|ACK,DANCE")
+                    _emit_rx("A|DANCE_START,G1_TAIJI")
+                    def _abort_dance():
+                        time.sleep(0.06)
+                        _emit_rx("A|DANCE_DONE,G1_TAIJI,ABORTED,USER_STOP")
+                        g1_mode[:] = ["STAND", "NONE", "BLOCKED"]
+                        _emit_rx("A|STATE,STAND,NONE,BLOCKED")
+                    threading.Thread(target=_abort_dance, daemon=True).start()
+                elif head not in ("PING", "QUERY_STATE", "QUERY_NAV"):
+                    _emit_rx(f"A|ACK,{head}")
+
+    threading.Thread(target=_fake_g1_live, daemon=True).start()
+
+    yaml_file = tmp_path / "lora_recv_group.yaml"
+    yaml_file.write_text("dance_map:\n  G1_TAIJI: [L1, LEFT]\n", encoding="utf-8")
+    id_file = tmp_path / "lora_robot_id.txt"
+    id_file.write_text("A\n", encoding="utf-8")
+
+    ros_master_up = [True]
+    reloc_services = ["/open3d_loc/relocalize"]
+    sim_confidence = [0.88]
+    ros_calls: List[str] = []
+
+    def _ros_shell(cmd: str, _t: float):
+        ros_calls.append(cmd)
+        if "rostopic list -v" in cmd:
+            return 0, "Published topics:\n * /Odometry_loc [nav_msgs/Odometry] 1 publisher\n * /localization_3d_confidence [std_msgs/Float32] 1 publisher\n", ""
+        if "rosservice list" in cmd:
+            return 0, "\n".join(reloc_services), ""
+        if "rosservice call /open3d_loc/relocalize" in cmd:
+            return 0, "success: True", ""
+        if "rostopic echo -n 1 /Odometry_loc" in cmd:
+            return 0, "position:\n  x: 0.0\n  y: 0.0\norientation:\n  x: 0.0\n  y: 0.0\n  z: 0.0\n  w: 1.0", ""
+        if "rostopic echo -n 1 /localization_3d_confidence" in cmd:
+            return 0, f"data: {sim_confidence[0]}", ""
+        if "rostopic echo -n 1 /local_nav_status" in cmd:
+            return 0, "data: 'MOVING'", ""
+        return 0, "ok", ""
+
+    cfg = RosEnvConfig(
+        lora_yaml_file=yaml_file, robot_id_file=id_file, cache_dir=tmp_path / "cache",
+        nav_poll_interval_s=0.04, motion_udp_enabled=True, motion_udp_host="127.0.0.1",
+        motion_udp_port=udp_port, motion_udp_probe_timeout_s=0.5, motion_udp_ack_timeout_s=0.3,
+        motion_udp_transition_timeout_s=1.5, motion_udp_dance_grace_s=0.0,
+    )
+    ros_bridge = RosTopicServiceBridge(cfg=cfg, master_checker=lambda: ros_master_up[0], shell_runner=_ros_shell)
+    navctl = NavctlRunner(cmd_runner=lambda argv, _t: subprocess.CompletedProcess(argv, 0, "ok", ""), exists_checker=lambda _p: True)
+    ctx = LowerComputerContext(cfg=cfg, navctl=navctl, ros_bridge=ros_bridge)
+    srv = LowerComputerHttpServer(ctx, host="127.0.0.1", port=0)
+    http_port = srv.start()
+    try:
+        base = f"http://127.0.0.1:{http_port}"
+        # 1. Probe syncs 3-field STATE (PASSIVE/BLOCKED); PASSIVE rejects direct nav goal with 409
+        c_pr, r_pr = _http_call(f"{base}/api/v1/control/probe")
+        assert c_pr == 200 and r_pr["state"]["nav_input"] == "BLOCKED"
+        c_ng0, r_ng0 = _http_call(f"{base}/api/v1/navigation/goal", "POST", {"x": 1.0, "y": 0.0})
+        assert c_ng0 == 409 and "PASSIVE" in r_ng0["message"]
+
+        # 2. STAND with wait_ready awaits STANDING -> STAND; then nav goal auto-switches GAIT -> READY
+        c_st, r_st = _http_call(f"{base}/api/v1/control/posture", "POST", {"posture": "STAND", "wait_ready": True})
+        assert c_st == 200 and r_st["details"]["motion"]["state"] == "STAND"
+        c_ng1, _ = _http_call(f"{base}/api/v1/navigation/goal", "POST", {"x": 2.0, "y": 1.0})
+        assert c_ng1 == 202 and ctx.motion_udp.tracker.is_nav_ready() is True
+        c_can, r_can = _http_call(f"{base}/api/v1/navigation/cancel", "POST", {})
+        assert c_can == 200 and r_can["cmd_vel_stop"]["ok"] is True and "A|STOP" in received
+
+        # 3. FAULT,WARN does NOT lock commands
+        _emit_rx("A|FAULT,WARN,LOW_BATTERY")
+        time.sleep(0.08)
+        _, hl = _http_call(f"{base}/api/v1/health")
+        assert hl["safety_locked"] is False and any(f["code"] == "LOW_BATTERY" for f in hl["active_faults"])
+        assert _http_call(f"{base}/api/v1/control/posture", "POST", {"posture": "GAIT"})[0] == 200
+
+        # 4. Release MANUAL lease first, then FAULT,FATAL,ESTOP_TRIGGERED + ESTOP locks arbiter and aborts running TaskChain
+        assert _http_call(f"{base}/api/v1/control/posture", "POST", {"posture": "RELEASE"})[0] == 200
+        _http_call(f"{base}/api/v1/task_chain/upload", "POST", {
+            "target_id": "A", "plan_id": "9201",
+            "chain_nodes": [{"node_type": "trajectory", "title": "长距离导航", "target_x": 8.0, "target_y": 0.0}],
+        })
+        assert _http_call(f"{base}/api/v1/task_chain/start", "POST", {"run_id": "9201", "callback_url": cb_url})[0] == 202
+        time.sleep(0.08)
+        _emit_rx("A|FAULT,FATAL,ESTOP_TRIGGERED")
+        _emit_rx("A|STATE,ESTOP,NONE,BLOCKED")
+        _emit_rx("A|NAV_STATUS,FAILED,FAULT")
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and (not ctx.arbiter.is_safety_locked or ctx.task_chain.state.status == "RUNNING"):
+            time.sleep(0.03)
+        assert ctx.arbiter.is_safety_locked is True and ctx.task_chain.state.status == "STOPPED"
+        assert _http_call(f"{base}/api/v1/control/posture", "POST", {"posture": "GAIT"})[0] == 409
+        assert _http_call(f"{base}/api/v1/navigation/goal", "POST", {"x": 1.0, "y": 1.0})[0] == 409
+        _, stop_locked = _http_call(f"{base}/api/v1/task_chain/stop", "POST", {"callback_url": cb_url})
+        assert stop_locked["return_goal_result"].get("skipped") is True
+        assert any(e.get("event") == "ROBOT_FAULT" for e in cb_events)
+
+        # SSE delivers real-time robot_state with active faults & lock
+        opener = urlrequest.build_opener(urlrequest.ProxyHandler({}))
+        with opener.open(f"{base}/api/v1/slam/stream", timeout=2.5) as sse_resp:
+            ev = json.loads(sse_resp.readline().decode("utf-8").strip()[5:].strip())
+            assert ev["robot_state"]["safety_locked"] is True and ev["robot_state"]["motion_state"] == "ESTOP"
+
+        # 5. Live recovery: FAULT,CLEAR,CLEAR,ESTOP_TRIGGERED stays locked during ESTOP, unlocks upon STATE,STANDING
+        _emit_rx("A|FAULT,CLEAR,CLEAR,ESTOP_TRIGGERED")
+        time.sleep(0.08)
+        assert ctx.arbiter.is_safety_locked is True
+        _emit_rx("A|STATE,STANDING,NONE,BLOCKED")
+        time.sleep(0.08)
+        assert ctx.arbiter.is_safety_locked is False
+
+        # 6. DANCE_START + DANCE_DONE,ABORTED,USER_STOP fails chain cleanly
+        assert _http_call(f"{base}/api/v1/task_chain/upload", "POST", {
+            "target_id": "A", "plan_id": "9202",
+            "chain_nodes": [{"node_type": "action", "title": "太极", "lrmp_code": "G1_TAIJI", "duration": 3.0}],
+        })[0] == 200
+        assert _http_call(f"{base}/api/v1/task_chain/start", "POST", {"run_id": "9202", "callback_url": cb_url})[0] == 202
+        t_dn = time.monotonic()
+        while time.monotonic() - t_dn < 2.0 and ctx.task_chain.state.status not in ("ERROR", "COMPLETED"):
+            time.sleep(0.03)
+        assert ctx.task_chain.state.status == "ERROR" and "USER_STOP" in ctx.task_chain.state.last_error
+
+        # 7. LOC_LOST fails nav node rapidly without locking manual authority
+        assert _http_call(f"{base}/api/v1/task_chain/upload", "POST", {
+            "target_id": "A", "plan_id": "9203",
+            "chain_nodes": [{"node_type": "trajectory", "title": "导航重定位测试", "target_x": 6.0, "target_y": 0.0}],
+        })[0] == 200
+        assert _http_call(f"{base}/api/v1/task_chain/start", "POST", {"run_id": "9203", "callback_url": cb_url})[0] == 202
+        time.sleep(0.12)
+        _emit_rx("A|NAV_STATUS,FAILED,LOC_LOST")
+        t_lc = time.monotonic()
+        while time.monotonic() - t_lc < 2.0 and ctx.task_chain.state.status not in ("ERROR", "COMPLETED"):
+            time.sleep(0.03)
+        assert ctx.task_chain.state.status == "ERROR" and "LOC_LOST" in ctx.task_chain.state.last_error
+        assert ctx.arbiter.is_safety_locked is False
+
+        # 8. Relocalization endpoint: auto service -> low conf fallback -> manual initialpose with covariance -> ROS off 503
+        c_r1, r_r1 = _http_call(f"{base}/api/v1/navigation/relocalize", "POST", {"mode": "auto", "timeout_s": 0.8})
+        assert c_r1 == 200 and r_r1["converged"] is True and r_r1["strategy_used"] == "ros_service:/open3d_loc/relocalize"
+
+        reloc_services.clear()
+        sim_confidence[0] = 0.25
+        c_r2, r_r2 = _http_call(f"{base}/api/v1/navigation/relocalize", "POST", {"mode": "auto", "timeout_s": 0.4, "allow_restart": True})
+        assert c_r2 == 200 and r_r2["converged"] is False and r_r2["needs_manual"] is True and r_r2["ok"] is False
+
+        sim_confidence[0] = 0.91
+        c_r3, r_r3 = _http_call(f"{base}/api/v1/navigation/relocalize", "POST", {"mode": "manual", "x": 1.2, "y": -0.5, "yaw": 0.3, "timeout_s": 0.8})
+        assert c_r3 == 200 and r_r3["converged"] is True and r_r3["strategy_used"] == "manual_initialpose"
+        assert any("rostopic pub -1 /initialpose" in c and "covariance:" in c for c in ros_calls)
+
+        ros_master_up[0] = False
+        c_r4, r_r4 = _http_call(f"{base}/api/v1/navigation/relocalize", "POST", {"mode": "auto"})
+        assert c_r4 == 503 and r_r4["ros_available"] is False and r_r4["ok"] is False
+    finally:
+        stop_rx.set()
+        rx_sock.close()
+        ros_bridge.stop_cmd_vel()
+        srv.stop()
+        cb_srv.shutdown()
+        cb_srv.server_close()
+
+
+def test_regression_fixes_d1_d2_d3_d4_d7(tmp_path: Path) -> None:
+    """Verify fixes for D1 (None conf/stale cache), D2 (READY->ESTOP->CLEAR release), D3 (concurrent ACKs), D4 (edge cancel), D7 (rejected state)."""
+    import socket
+
+    rx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    rx_sock.bind(("127.0.0.1", 0))
+    rx_sock.settimeout(0.1)
+    udp_port = rx_sock.getsockname()[1]
+
+    peer_addr: List[Any] = [None]
+    stop_rx = threading.Event()
+    cancel_calls = [0]
+    conf_reply: List[Any] = [0.90]
+
+    def _emit_rx(line: str) -> None:
+        if peer_addr[0] is not None and not stop_rx.is_set():
+            try:
+                rx_sock.sendto((line + "\n").encode("ascii"), peer_addr[0])
+            except OSError:
+                pass
+
+    def _mock_rx() -> None:
+        while not stop_rx.is_set():
+            try:
+                data, addr = rx_sock.recvfrom(512)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            peer_addr[0] = addr
+            for raw in data.decode("ascii", errors="ignore").splitlines():
+                _, _, cmd_part = raw.partition("|")
+                head = cmd_part.split(",", 1)[0]
+                if head == "PING":
+                    _emit_rx("A|PONG")
+                elif head == "DANCE":
+                    _emit_rx("A|ERR,DANCE,UNLICENSED")
+                elif head in ("MOVE",):
+                    _emit_rx("A|ERR,MOVE,BLOCKED")
+                elif head in ("FORWARD", "TURN_LEFT"):
+                    def _delayed_ack(h: str = head) -> None:
+                        time.sleep(0.05)
+                        _emit_rx(f"A|ACK,{h}")
+                    threading.Thread(target=_delayed_ack, daemon=True).start()
+                elif head not in ("QUERY_STATE", "QUERY_NAV"):
+                    _emit_rx(f"A|ACK,{head}")
+
+    threading.Thread(target=_mock_rx, daemon=True).start()
+
+    def _ros_shell(cmd: str, _t: float):
+        if "cancel_planning" in cmd:
+            cancel_calls[0] += 1
+            return 0, "ok", ""
+        if "rostopic list -v" in cmd:
+            return 0, "Published topics:\n * /Odometry_loc [nav_msgs/Odometry] 1 publisher\n * /localization_3d_confidence [std_msgs/Float32] 1 publisher\n", ""
+        if "rostopic echo -n 1 /Odometry_loc" in cmd:
+            return 0, "position:\n  x: 0.0\n  y: 0.0\norientation:\n  x: 0.0\n  y: 0.0\n  z: 0.0\n  w: 1.0", ""
+        if "rostopic echo -n 1 /localization_3d_confidence" in cmd:
+            return (0, f"data: {conf_reply[0]}", "") if conf_reply[0] is not None else (1, "", "no msg")
+        return 0, "ok", ""
+
+    yaml_file = tmp_path / "lora_recv_group.yaml"
+    yaml_file.write_text("dance_map:\n  G1_TAIJI: [L1, LEFT]\n", encoding="utf-8")
+    id_file = tmp_path / "lora_robot_id.txt"
+    id_file.write_text("A\n", encoding="utf-8")
+    cfg = RosEnvConfig(
+        lora_yaml_file=yaml_file, robot_id_file=id_file, cache_dir=tmp_path / "cache",
+        motion_udp_enabled=True, motion_udp_host="127.0.0.1", motion_udp_port=udp_port,
+        motion_udp_probe_timeout_s=0.4, motion_udp_ack_timeout_s=0.35,
+    )
+    ros_bridge = RosTopicServiceBridge(cfg=cfg, master_checker=lambda: True, shell_runner=_ros_shell)
+    ctx = LowerComputerContext(cfg=cfg, ros_bridge=ros_bridge)
+    srv = LowerComputerHttpServer(ctx, host="127.0.0.1", port=0)
+    srv.start()
+    try:
+        # D1: prior confidence in slam_tap must not falsely converge or crash with NoneType format when ROS returns no confidence
+        ctx.slam_tap.push_external_frame(pose={"x": 0.0, "y": 0.0, "yaw": 0.0}, confidence=0.90)
+        conf_reply[0] = None
+        rel_res = ctx.relocalizer.relocalize(mode="manual", pose=(1.0, 2.0, 0.0), timeout_s=0.3)
+        assert rel_res["ok"] is False and rel_res["converged"] is False and rel_res["needs_manual"] is True
+        assert "未收到新置信度反馈" in rel_res["message"]
+
+        # D7: rejected MOVE / DANCE must not mutate local _active_motion["state"]
+        assert ctx.motion_exec.execute("STAND").ok
+        bad_mv = ctx.motion_exec.execute("MOVE", ["0.5", "0", "0", "0.2"])
+        assert not bad_mv.ok and ctx.motion_exec._active_motion["state"] == "STAND"
+        bad_dn = ctx.motion_exec.execute("DANCE", ["G1_TAIJI"])
+        assert not bad_dn.ok and ctx.motion_exec._active_motion["state"] == "STAND" and ctx.motion_exec._active_motion["active_dance"] == ""
+
+        # D3: concurrent ACK waits must not race and time out each other
+        results: List[Any] = []
+        t1 = threading.Thread(target=lambda: results.append(ctx.motion_udp.send_command("A", "FORWARD,0.2")))
+        t2 = threading.Thread(target=lambda: results.append(ctx.motion_udp.send_command("A", "TURN_LEFT,0.2")))
+        t1.start(); t2.start(); t1.join(); t2.join()
+        assert len(results) == 2 and all(r.ok and r.ack_received for r in results)
+
+        # D2 & D4: ESTOP during READY releases CHOREO, and repeated ESTOP heartbeats only cancel ROS once
+        assert ctx.motion_exec.execute("RELEASE").ok
+        assert ctx.task_chain.upload_chain({"target_id": "A", "plan_id": "9301", "chain_nodes": [{"node_type": "action", "title": "t", "lrmp_code": "STAND"}]})["status"] == "UPLOADED"
+        assert ctx.task_chain.prep_chain("9301")["ok"] is True
+        assert ctx.task_chain.state.status == "READY" and ctx.arbiter.state.value == "CHOREO"
+
+        cancel_calls[0] = 0
+        for _ in range(4):
+            _emit_rx("A|STATE,ESTOP,NONE,BLOCKED")
+            time.sleep(0.03)
+        time.sleep(0.1)
+        assert cancel_calls[0] == 1
+        assert ctx.arbiter.is_safety_locked is True and ctx.arbiter.state.value == "FREE"
+
+        _emit_rx("A|STATE,STANDING,NONE,BLOCKED")
+        time.sleep(0.08)
+        assert ctx.arbiter.is_safety_locked is False
+        assert ctx.motion_exec.execute("STAND").ok
+
+        # WebhookDispatcher & SystemOpsService audit regression checks (C-6 / W-3)
+        from src.commands.system_ops_service import SystemOpsService
+        from src.task_chain.webhook_dispatcher import WebhookDispatcher
+
+        wd = WebhookDispatcher(async_backoff_s=0.0)
+        assert wd.emit_async("", "STEP_PROGRESS", {"x": 1}).ok is False and wd._async_worker is None
+        wd._ensure_async_worker = lambda: None
+        wd.emit_async("http://127.0.0.1:1/cb", "STEP_PROGRESS", {"idx": 1})
+        wd.emit_async("http://127.0.0.1:1/cb", "CHAIN_ABORTED", {"target_id": "A"}, urgent=True)
+        assert [it[1] for it in wd._pending] == ["CHAIN_ABORTED"]
+
+        sys_ops = SystemOpsService(
+            cfg, ctx.config_reader,
+            shell_fn=lambda cmd, _t: (0, "vsis_g1|rl:2.0|Up 2 hours" if "docker ps" in cmd else "", ""),
+        )
+        dk = sys_ops.get_docker_status()
+        assert dk["running"] is True and dk["container_exists"] is True and dk["is_container_running"] is True and dk["robot_id"] == "A"
+    finally:
+        stop_rx.set()
+        rx_sock.close()
+        ros_bridge.stop_cmd_vel()
+        srv.stop()
+
 

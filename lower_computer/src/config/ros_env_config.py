@@ -86,3 +86,13 @@ class RosEnvConfig:
     arrival_yaw_tolerance_rad: float = 0.35
     nav_poll_interval_s: float = 0.2
     nav_goal_timeout_s: float = 180.0
+    motion_udp_enabled: bool = False
+    motion_udp_host: str = "127.0.0.1"
+    motion_udp_port: int = 8899
+    motion_udp_source_ip: str = "127.0.0.1"
+    motion_udp_source_port: int = 0
+    motion_udp_probe_timeout_s: float = 2.0
+    motion_udp_ack_timeout_s: float = 0.5
+    motion_udp_dance_grace_s: float = 10.0
+    motion_udp_default_dance_timeout_s: float = 60.0
+    motion_udp_transition_timeout_s: float = 6.0

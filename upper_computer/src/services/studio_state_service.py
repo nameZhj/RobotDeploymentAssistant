@@ -30,7 +30,7 @@ from src.persistence import (
     SceneTaskRepository,
     StudioDatabase,
     TrajectoryRepository,
-    UniUniJsonCodec,
+    StudioJsonCodec,
     get_database,
 )
 from src.protocol import (
@@ -38,11 +38,15 @@ from src.protocol import (
     HttpCallbackListener,
     HttpTrajectoryClient,
     RobotHttpClient,
+    RobotHttpResponse,
     SlamMappingClient,
 )
 from src.services.studio_http_ops import (
+    barrier_task_chains_http_op,
     compile_and_upload_chains_http_op,
     dispatch_command_http_op,
+    dispatch_targets_http_op,
+    fleet_health_op,
     start_task_chains_http_op,
     stop_all_robots_to_origin_http_op,
     sync_actions_from_http_op,
@@ -61,7 +65,7 @@ from src.services.studio_state_ops import (
 
 
 class StudioStateService:
-    """Single source of truth mediating L2-L6 engines and L8 UniUni pages."""
+    """Single source of truth mediating L2-L6 engines and L8 desktop workspace pages."""
 
     def __init__(
         self,
@@ -82,7 +86,7 @@ class StudioStateService:
         self.traj_repo = TrajectoryRepository(self.db)
         self.action_repo = ActionRepository(self.db)
         self.map_repo = MapFragmentRepository(self.db)
-        self.json_codec = UniUniJsonCodec(self.db)
+        self.json_codec = StudioJsonCodec(self.db)
 
         self.arbiter = AuthorityStateMachine()
         self.http_client = HttpTrajectoryClient()
@@ -133,6 +137,10 @@ class StudioStateService:
         )
         self.bus.publish(StudioEvent.COLLISION_UPDATED, self.collisions)
         return self.collisions
+
+    def effective_playback_duration(self) -> float:
+        """Return exact end time of the last non-ignored block, or 0.0 when timeline has no active blocks."""
+        return float(max((b.end_time for b in self.blocks if not b.is_ignored), default=0.0))
 
     def total_duration(self) -> float:
         max_blk = max((b.end_time for b in self.blocks if not b.is_ignored), default=0.0)
@@ -220,6 +228,18 @@ class StudioStateService:
 
     def start_task_chains_http(self, run_id: str = "9001") -> List[Dict[str, Any]]:
         return start_task_chains_http_op(self, run_id=run_id)
+
+    def barrier_task_chains_http(self, run_id: str, barrier_id: str = "1") -> List[Dict[str, Any]]:
+        return barrier_task_chains_http_op(self, run_id, barrier_id)
+
+    def dispatch_targets_http(
+        self, commands: List[Tuple[str, str, List[str]]]
+    ) -> List[Dict[str, Any]]:
+        return dispatch_targets_http_op(self, commands)
+
+    def fleet_health(self, timeout_s: float = 1.2) -> Dict[str, RobotHttpResponse]:
+        """Blocking parallel /api/v1/health probe of all tracks (call from a background task)."""
+        return fleet_health_op(self, timeout_s=timeout_s)
 
     def stop_all_robots_and_return_origin_http(self) -> List[Dict[str, Any]]:
         return stop_all_robots_to_origin_http_op(self)

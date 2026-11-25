@@ -51,11 +51,58 @@ def add_no_cache_headers(response):
 
 # 动态任务事件输出队列
 stream_queues = {}
+_stream_lock = threading.Lock()
+_stream_created_at = {}
+STREAM_QUEUE_MAX_MESSAGES = 500  # 单个任务队列的消息条数上限，超出丢弃最旧
+STREAM_MSG_TTL_S = 1800.0        # 队列内消息过期时间（秒），防止断连后消息永久滞留
+
+
+def _sweep_expired_queues_unlocked(now: float) -> None:
+    stale = [tid for tid, ts in _stream_created_at.items() if (now - ts) > STREAM_MSG_TTL_S]
+    for tid in stale:
+        _stream_created_at.pop(tid, None)
+        stream_queues.pop(tid, None)
+
+
+def _create_stream_queue(task_id: str) -> queue.Queue:
+    now = time.time()
+    q = queue.Queue()
+    with _stream_lock:
+        _sweep_expired_queues_unlocked(now)
+        stream_queues[task_id] = q
+        _stream_created_at[task_id] = now
+    return q
 
 
 def push_stream_msg(task_id: str, text: str, is_err: bool = False):
-    if task_id in stream_queues:
-        stream_queues[task_id].put({"text": text, "is_err": is_err, "time": time.time()})
+    now = time.time()
+    with _stream_lock:
+        _sweep_expired_queues_unlocked(now)
+        q = stream_queues.get(task_id)
+        if q is not None:
+            _stream_created_at[task_id] = now
+    if q is None:
+        return
+    # 过期清理：在 q.mutex 保护下移除队首已过期消息（未过期消息不动，避免与 SSE 消费者乱序）
+    while True:
+        with q.mutex:
+            if not q.queue:
+                break
+            try:
+                head_age = now - float(q.queue[0].get("time") or 0.0)
+            except (TypeError, ValueError, AttributeError):
+                logger.warning(f"任务 {task_id} 流队列存在非法时间戳消息，按过期清理处理")
+                head_age = STREAM_MSG_TTL_S + 1.0
+            if head_age <= STREAM_MSG_TTL_S:
+                break
+            q.queue.popleft()
+    # 长度上限：超出上限丢弃最旧消息，防止孤儿队列内存无限增长
+    while q.qsize() >= STREAM_QUEUE_MAX_MESSAGES:
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            break
+    q.put({"text": text, "is_err": is_err, "time": now})
 
 
 # ==========================================
@@ -128,8 +175,15 @@ def connect_robot():
     data = request.json or {}
     host = data.get("host", "192.168.123.164")
     port = int(data.get("port", 22))
-    username = data.get("username", "unitree")
-    password = data.get("password", "123")
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    if not username or not password:
+        # W-7: 不再回退硬编码默认凭据 unitree/123，缺失时显式拒绝
+        return jsonify({
+            "success": False,
+            "connected": False,
+            "msg": "缺少 SSH 用户名或密码，请填写机器人连接凭据后重试"
+        }), 400
 
     ssh_manager.set_credentials(host, port, username, password)
     ok, msg = ssh_manager.connect(timeout=3.5)
@@ -317,8 +371,7 @@ def run_precheck():
 @app.route("/api/fix/lora", methods=["POST"])
 def fix_lora():
     task_id = f"fix_lora_{int(time.time())}"
-    q = queue.Queue()
-    stream_queues[task_id] = q
+    q = _create_stream_queue(task_id)
 
     def _worker():
         def _cb(line, is_err):
@@ -334,8 +387,7 @@ def fix_lora():
 @app.route("/api/fix/docker", methods=["POST"])
 def fix_docker():
     task_id = f"fix_docker_{int(time.time())}"
-    q = queue.Queue()
-    stream_queues[task_id] = q
+    q = _create_stream_queue(task_id)
 
     def _worker():
         def _cb(line, is_err):
@@ -561,8 +613,7 @@ def load_image():
     data = request.json or {}
     remote_tar_path = data.get("remote_tar_path", "/home/ubuntu/vsis_dancer_cpu_1.0.tar.gz")
     task_id = f"docker_load_{int(time.time())}"
-    q = queue.Queue()
-    stream_queues[task_id] = q
+    q = _create_stream_queue(task_id)
 
     def _worker():
         def _cb(line, is_err):
@@ -591,8 +642,7 @@ def start_container():
     data = request.json or {}
     image_name = data.get("image_name", "rl_cu118:2.0")
     task_id = f"docker_start_{int(time.time())}"
-    q = queue.Queue()
-    stream_queues[task_id] = q
+    q = _create_stream_queue(task_id)
 
     def _worker():
         def _cb(line, is_err):
@@ -647,8 +697,7 @@ def config_autostart():
 @app.route("/api/robot/check_env", methods=["POST"])
 def check_robot_env():
     task_id = f"check_env_{int(time.time())}"
-    q = queue.Queue()
-    stream_queues[task_id] = q
+    q = _create_stream_queue(task_id)
 
     def _worker():
         def _cb(line, is_err):
@@ -683,8 +732,7 @@ def start_robot_processes_route():
         if http_res.get("ok"):
             return jsonify(http_res)
     task_id = f"robot_proc_start_{int(time.time())}"
-    q = queue.Queue()
-    stream_queues[task_id] = q
+    q = _create_stream_queue(task_id)
 
     def _worker():
         def _cb(line, is_err=False):
@@ -799,8 +847,7 @@ def deploy_license():
 @app.route("/api/dance/update", methods=["POST"])
 def update_dance():
     task_id = f"dance_update_{int(time.time())}"
-    q = queue.Queue()
-    stream_queues[task_id] = q
+    q = _create_stream_queue(task_id)
 
     dest_path = request.form.get("dest_path", "/secure/config_vsis").strip() if request.form else "/secure/config_vsis"
     local_path = ""
@@ -1090,6 +1137,20 @@ def check_http_fleet_health():
     return jsonify(http_lower_bridge.check_fleet_health(robots))
 
 
+@app.route("/api/http/probe", methods=["GET", "POST"])
+def probe_http_motion():
+    data = (request.get_json(silent=True) or {}) if request.method == "POST" else {}
+    raw_port = data.get("port") or request.args.get("port", "")
+    port = int(raw_port) if str(raw_port).isdigit() else None
+    targets_map = data.get("targets_map") if isinstance(data.get("targets_map"), dict) else None
+    return jsonify(http_lower_bridge.probe_motion(
+        target=str(data.get("target") or request.args.get("target", "")),
+        robot_ip=str(data.get("robot_ip") or request.args.get("robot_ip", "")),
+        port=port,
+        targets_map=targets_map,
+    ))
+
+
 @app.route("/api/http/scan_lan", methods=["POST"])
 def scan_http_lan_robots():
     data = request.get_json(silent=True) or {}
@@ -1120,6 +1181,7 @@ def get_http_control_state():
         target=request.args.get("target", ""),
         robot_ip=request.args.get("robot_ip", ""),
         port=int(request.args["port"]) if request.args.get("port", "").isdigit() else None,
+        sync=request.args.get("sync", "").lower() in ("1", "true", "yes"),
     ))
 
 
@@ -1131,6 +1193,7 @@ def send_http_posture():
         posture=str(data.get("posture", "")),
         robot_ip=str(data.get("robot_ip", "")),
         port=data.get("port"),
+        wait_ready=bool(data.get("wait_ready", False)),
     ))
 
 
@@ -1160,11 +1223,13 @@ def send_http_dance():
 @app.route("/api/http/stop", methods=["POST"])
 def send_http_stop():
     data = request.json or {}
+    tmap = data.get("targets_map") if isinstance(data.get("targets_map"), dict) else None
     return jsonify(http_lower_bridge.send_stop(
         target=str(data.get("target", "")),
         emergency=bool(data.get("emergency", False)),
         robot_ip=str(data.get("robot_ip", "")),
         port=data.get("port"),
+        targets_map=tmap,
     ))
 
 
@@ -1294,24 +1359,28 @@ def parse_dances_api():
 # ==========================================
 @app.route("/api/stream/<task_id>")
 def stream_events(task_id):
-    if task_id not in stream_queues:
+    with _stream_lock:
+        q = stream_queues.get(task_id)
+    if q is None:
         return Response("Task not found", status=404)
 
     def event_stream():
-        q = stream_queues[task_id]
-        while True:
-            try:
-                msg = q.get(timeout=30.0)
-                text = msg["text"]
-                is_err = msg["is_err"]
-                yield f"data: {json.dumps({'text': text, 'is_err': is_err})}\n\n"
-                if "__TASK_DONE__" in text:
-                    break
-            except queue.Empty:
-                yield f"data: {json.dumps({'text': '', 'ping': True})}\n\n"
-
-        # 清理队列
-        stream_queues.pop(task_id, None)
+        try:
+            while True:
+                try:
+                    msg = q.get(timeout=30.0)
+                    text = msg["text"]
+                    is_err = msg["is_err"]
+                    yield f"data: {json.dumps({'text': text, 'is_err': is_err})}\n\n"
+                    if "__TASK_DONE__" in text:
+                        break
+                except queue.Empty:
+                    yield f"data: {json.dumps({'text': '', 'ping': True})}\n\n"
+        finally:
+            # R-7: 正常结束或客户端断开（GeneratorExit）都必须清理队列，消除断连后的孤儿队列内存滞留
+            with _stream_lock:
+                stream_queues.pop(task_id, None)
+                _stream_created_at.pop(task_id, None)
 
     return Response(event_stream(), mimetype="text/event-stream")
 

@@ -1,5 +1,5 @@
 # @file: src/domain/trajectory_entities.py
-# @brief: Domain entities for 2D control points, trajectory groups, and UniUni-compatible trajectories.
+# @brief: Domain entities for 2D control points, trajectory groups, and stage-compatible trajectories.
 # @exports: ControlPoint2D, TrajectoryGroupEntity, TrajectoryEntity
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ class TrajectoryGroupEntity:
 
 @dataclass
 class TrajectoryEntity:
-    """Trajectory asset matching UniUni trackState/trajectories schema and spline params."""
+    """Trajectory asset matching standard stage specs trackState/trajectories schema and spline params."""
 
     id: Optional[int] = None
     group_id: int = 1

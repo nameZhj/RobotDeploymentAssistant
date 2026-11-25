@@ -1,10 +1,11 @@
 # @file: src/ui/mapping/teleop_mapping_dock.py
-# @brief: Right 296px Teleop SLAM control panel sending real HTTP velocity hold commands and downloading authentic .pcd maps.
+# @brief: Right 296px Teleop SLAM control panel sending real HTTP velocity hold commands in background tasks and downloading authentic .pcd maps.
 # @exports: TeleopMappingDock
 
 from __future__ import annotations
 
-from typing import Any, Dict
+import threading
+from typing import Any, Dict, Optional, Tuple
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QLineEdit, QWidget
 
@@ -14,6 +15,7 @@ from src.persistence.pcd_grid_generator import generate_occupancy_grid_png
 from src.persistence.pcd_parser import load_pcd
 from src.core.paths import get_paths
 from src.services.studio_state_service import StudioStateService
+from src.ui.common.async_task import TaskHandle, run_in_background
 from src.ui.design_system.tokens import C_TEXT_2, FONT_MONO
 from src.ui.design_system.u_buttons import UBadge, UButton
 from src.ui.design_system.u_inputs import UInputNumber, USelect
@@ -36,6 +38,7 @@ class TeleopMappingDock(UPanel):
         self.state = state
         self.setFixedWidth(296)
         self.body_layout.setSpacing(8)
+        self._teleop_lock = threading.Lock()  # serializes velocity-hold commands so order is preserved
 
         row1 = QHBoxLayout()
         self.target_sel = USelect([], self.body_widget)
@@ -107,32 +110,59 @@ class TeleopMappingDock(UPanel):
         for t in self.state.tracks:
             self.target_sel.addItem(f"{t.name} [{t.target_id}]", (t.target_id, t.robot_ip))
 
-    def _on_start(self) -> None:
+    def _on_start(self) -> Optional[TaskHandle]:
         data = self.target_sel.current_data()
         if not isinstance(data, tuple):
             self.state.notify("暂无真实机器人轨道，请先添加机器人后再建图", "warn")
-            return
+            return None
         tgt, ip = str(data[0]), str(data[1])
+        self.status_badge.setText("建图启动中...")
+        return run_in_background(
+            lambda: self._start_mapping_bg(tgt, ip),
+            on_done=lambda payload: self._on_start_done(tgt, ip, payload),
+            busy_widgets=[self.start_b, self.stop_b],
+            busy_text=f"正在后台启动机器人 {tgt} 的遥控建图会话...",
+            notifier=self.state.notify,
+        )
+
+    def _start_mapping_bg(self, tgt: str, ip: str) -> Tuple[bool, str, Any]:
         ok, msg = self.state.slam_client.start_mapping(tgt, ip)
+        pts = None
+        if ok:
+            pts, _ = self.state.slam_client.fetch_live_cloud(0)
+        return ok, msg, pts
+
+    def _on_start_done(self, tgt: str, ip: str, payload: Tuple[bool, str, Any]) -> None:
+        ok, msg, pts = payload
         self.status_badge.setText("建图中 (MANUAL)" if ok else "启动失败")
         self.status_badge.set_tone("ok" if ok else "danger")
         if ok:
-            pts, _ = self.state.slam_client.fetch_live_cloud(0)
             if pts is not None and len(pts) > 0:
                 self.slamCloudUpdated.emit(pts, None)
             self.targetChanged.emit(tgt, ip)
         self.state.notify(msg, "ok" if ok else "warn")
 
-    def _step_move(self, sx: float, sy: float, sz: float) -> None:
+    def _step_move(self, sx: float, sy: float, sz: float) -> Optional[TaskHandle]:
         if sx == 0.0 and sy == 0.0 and sz == 0.0 and self.state.slam_client.state.robot_ip:
-            res = self.state.http_rpc.send_stop(self.state.slam_client.state.robot_ip, emergency=False)
-            self.state.notify("已发送悬停归零指令" if res.ok else res.message, "info" if res.ok else "warn")
-            return
+            ip = self.state.slam_client.state.robot_ip
+            return run_in_background(
+                lambda: self.state.http_rpc.send_stop(ip, emergency=False),
+                on_done=lambda res: self.state.notify(
+                    "已发送悬停归零指令" if res.ok else res.message, "info" if res.ok else "warn"
+                ),
+            )
         v = self.lin_speed.value()
         w = self.ang_speed.value()
-        ok, msg = self.state.slam_client.send_teleop_move(sx * v, sy * v, sz * w, duration_s=0.6)
-        if not ok:
-            self.state.notify(msg, "warn")
+        vx, vy, vz = sx * v, sy * v, sz * w
+
+        def _move_bg():
+            with self._teleop_lock:
+                return self.state.slam_client.send_teleop_move(vx, vy, vz, duration_s=0.6)
+
+        return run_in_background(
+            _move_bg,
+            on_done=lambda payload: self.state.notify(payload[1], "warn") if not payload[0] else None,
+        )
 
     def update_live_telemetry(self, live: Dict[str, Any]) -> None:
         p = live.get("pose")
@@ -140,25 +170,52 @@ class TeleopMappingDock(UPanel):
             self.state.slam_client.state.pose = (float(p["x"]), float(p["y"]), float(p.get("yaw", 0.0)))
         pts = int(live.get("point_count", self.state.slam_client.state.point_count) or 0)
         pose = self.state.slam_client.state.pose
-        self.pose_lbl.setText(f"位姿: ({pose[0]:.2f}, {pose[1]:.2f}) | 真实点云: {pts:,}")
+        rs = live.get("robot_state") if isinstance(live.get("robot_state"), dict) else {}
+        faults = [f for f in (rs.get("active_faults") or []) if isinstance(f, dict)]
+        if rs.get("safety_locked"):
+            self.status_badge.setText(f"联锁: {rs.get('motion_state') or 'FAULT'}")
+            self.status_badge.set_tone("danger")
+        elif self.state.slam_client.state.active:
+            self.status_badge.setText("建图中 (告警)" if faults else "建图中 (MANUAL)")
+            self.status_badge.set_tone("warn" if faults else "ok")
+        elif rs.get("motion_state"):
+            self.status_badge.setText(f"{rs['motion_state']}" + ("·告警" if faults else ""))
+            self.status_badge.set_tone("warn" if faults else "neutral")
+        warn_s = f" | 故障:{faults[0].get('code', '')}" if faults else ""
+        self.pose_lbl.setText(f"位姿: ({pose[0]:.2f}, {pose[1]:.2f}) | 真实点云: {pts:,}{warn_s}")
 
-    def _on_stop(self) -> None:
-        ok, msg = self.state.slam_client.stop_mapping()
+    def _on_stop(self) -> Optional[TaskHandle]:
+        return run_in_background(
+            self.state.slam_client.stop_mapping,
+            on_done=self._on_stop_done,
+            busy_widgets=[self.stop_b, self.start_b],
+            busy_text="正在后台结束建图会话并释放控制权...",
+            notifier=self.state.notify,
+        )
+
+    def _on_stop_done(self, payload: Tuple[bool, str]) -> None:
+        ok, msg = payload
         self.status_badge.setText("已释放 (FREE)" if ok else "异常")
         self.status_badge.set_tone("neutral" if ok else "warn")
         self.state.notify(msg, "info" if ok else "warn")
 
-    def save_and_register_map(self) -> PcdMapEntity | None:
+    def save_and_register_map(self) -> Optional[TaskHandle]:
         data = self.target_sel.current_data()
         if isinstance(data, tuple) and not self.state.slam_client.state.robot_ip:
             self.state.slam_client.state.robot_ip = str(data[1])
             self.state.slam_client.state.target_id = str(data[0]).upper()
         name = self.map_name_edit.text().strip() or "slam_scan_01"
-        try:
-            out_pcd = self.state.slam_client.save_live_map(name)
-        except Exception as ex:
-            self.state.notify(str(ex), "warn")
-            return None
+        return run_in_background(
+            lambda: self._save_map_bg(name),
+            on_done=self._on_map_saved,
+            on_error=lambda err: self.state.notify(f"保存建图失败: {err.splitlines()[0]}", "warn"),
+            busy_widgets=[self.start_b, self.stop_b],
+            busy_text="正在后台结束建图、下载真实 .pcd 地图并生成栅格...",
+            notifier=self.state.notify,
+        )
+
+    def _save_map_bg(self, name: str) -> PcdMapEntity:
+        out_pcd = self.state.slam_client.save_live_map(name)
         cloud = load_pcd(out_pcd, max_points=100000)
         png = get_paths().pcd_cache_dir / f"{out_pcd.stem}_grid.png"
         grid = generate_occupancy_grid_png(cloud, png)
@@ -176,7 +233,9 @@ class TeleopMappingDock(UPanel):
         self.state.scene.active_map_id = saved.id
         self.state.scene_repo.update_scene(self.state.scene)
         self.state.reload_all()
+        return saved
+
+    def _on_map_saved(self, saved: PcdMapEntity) -> None:
         self.state.bus.publish(StudioEvent.MAP_LIST_UPDATED, saved.id)
         self.state.bus.publish(StudioEvent.MAP_LOADED, saved.id)
         self.state.notify(f"已从机器人保存真实建图 {saved.name}.pcd 并入库", "ok")
-        return saved

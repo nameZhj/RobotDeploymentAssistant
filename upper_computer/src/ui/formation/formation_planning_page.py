@@ -1,11 +1,11 @@
 # @file: src/ui/formation/formation_planning_page.py
-# @brief: Complete UniUni Page 2 Swarm Formation Design & Multi-Robot Action Planning workspace.
+# @brief: Complete stage Page 2 Swarm Formation Design & Multi-Robot Action Planning workspace.
 # @exports: FormationPlanningPage
 
 from __future__ import annotations
 
 import math
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from PySide6.QtWidgets import QHBoxLayout, QWidget
 
 from src.algorithms import (
@@ -26,7 +26,7 @@ from src.ui.formation.formation_planner_canvas import FormationPlannerCanvas
 
 
 class FormationPlanningPage(QWidget):
-    """UniUni Formation Planning View (Sources/Targets Table | 2D Planner Canvas | Solver Dock)."""
+    """stage Formation Planning View (Sources/Targets Table | 2D Planner Canvas | Solver Dock)."""
 
     def __init__(self, state: StudioStateService, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -132,21 +132,31 @@ class FormationPlanningPage(QWidget):
         self.canvas.sim_progress = ratio
         self.canvas.update()
 
-    def sync_teb_max_speed(self, max_vel_x: float) -> int:
+    def sync_teb_max_speed(self, max_vel_x: float) -> Optional[TaskHandle]:
+        """Push TEB max_vel_x to every robot in the background; returns a TaskHandle (None when no IPs)."""
         ips = [t.robot_ip.strip() for t in self.state.tracks if t.robot_ip]
         if not ips:
             self.state.notify("暂无配置了 Wi-Fi IP 的机器人轨道，无法同步 TEB 限速", "warn")
-            return 0
-        ok_cnt = 0
-        for ip in ips:
-            res = self.state.http_rpc.set_teb_params(ip, {"max_vel_x": round(float(max_vel_x), 2)})
-            if res.ok:
-                ok_cnt += 1
-        self.state.notify(
-            f"已同步 TEB max_vel_x={max_vel_x:.2f}m/s ({ok_cnt}/{len(ips)} 台就绪)",
-            "ok" if ok_cnt == len(ips) else "warn",
+            return None
+        value = round(float(max_vel_x), 2)
+
+        def _push_bg() -> int:
+            ok_cnt = 0
+            for ip in ips:
+                res = self.state.http_rpc.set_teb_params(ip, {"max_vel_x": value})
+                if res.ok:
+                    ok_cnt += 1
+            return ok_cnt
+
+        return run_in_background(
+            _push_bg,
+            on_done=lambda ok_cnt: self.state.notify(
+                f"已同步 TEB max_vel_x={max_vel_x:.2f}m/s ({ok_cnt}/{len(ips)} 台就绪)",
+                "ok" if ok_cnt == len(ips) else "warn",
+            ),
+            busy_text=f"正在后台向 {len(ips)} 台机器人同步 TEB 限速...",
+            notifier=self.state.notify,
         )
-        return ok_cnt
 
     def commit_to_library(self) -> TrajectoryGroupEntity | None:
         if not self.state.tracks:

@@ -1,5 +1,5 @@
 # @file: src/ui/choreography/track_lib_panel.py
-# @brief: UniUni Right-Column Trajectory Library with collapsible groups, track binding, drag-to-timeline, and JSON I/O.
+# @brief: Right-Column Trajectory Library with collapsible groups, track binding, drag-to-timeline, and JSON I/O.
 # @exports: TrackLibPanel, BLOCK_MIME_TYPE
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from src.ui.choreography.track_lib_row import BindRobotsDialog, TrajectoryRowWid
 from src.ui.design_system.u_buttons import UIconButton
 from src.ui.design_system.u_panels import UCollapsibleGroup, UEmpty, UPanel
 
-BLOCK_MIME_TYPE = "application/x-uniuni-block"
+BLOCK_MIME_TYPE = "application/x-studio-block"
 
 
 class TrackLibPanel(UPanel):
@@ -38,9 +38,9 @@ class TrackLibPanel(UPanel):
         add_b.clicked.connect(self.open_new_trajectory)
         grp_b = UIconButton("folder", tooltip="新建轨迹分组", size=24, parent=self)
         grp_b.clicked.connect(self._create_group)
-        imp_b = UIconButton("upload", tooltip="导入 UniUni JSON 工程", size=24, parent=self)
+        imp_b = UIconButton("upload", tooltip="导入 JSON 工程", size=24, parent=self)
         imp_b.clicked.connect(self._import_json)
-        exp_b = UIconButton("save", tooltip="导出 UniUni JSON 工程", size=24, parent=self)
+        exp_b = UIconButton("save", tooltip="导出 JSON 工程", size=24, parent=self)
         exp_b.clicked.connect(self._export_json)
 
         hdr = self.header_bar.layout()
@@ -187,7 +187,7 @@ class TrackLibPanel(UPanel):
         self.refresh()
 
     def _import_json(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "导入 UniUni 工程 JSON", "", "JSON (*.json)")
+        path, _ = QFileDialog.getOpenFileName(self, "导入工程 JSON", "", "JSON (*.json)")
         if not path:
             return
         with open(path, "r", encoding="utf-8") as fh:
@@ -198,7 +198,7 @@ class TrackLibPanel(UPanel):
         self.state.notify("已从 JSON 导入轨迹与任务链", "ok")
 
     def _export_json(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "导出 UniUni 工程 JSON", "choreo_export.json", "JSON (*.json)")
+        path, _ = QFileDialog.getSaveFileName(self, "导出工程 JSON", "choreo_export.json", "JSON (*.json)")
         if not path:
             return
         payload = self.state.json_codec.export_task_to_dict()

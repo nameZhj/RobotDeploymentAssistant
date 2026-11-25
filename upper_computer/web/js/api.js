@@ -51,10 +51,12 @@ const API = {
     return this.request('/api/network/interfaces');
   },
 
-  autoConnect(forceNic = true, nicName = '', targetIp = '') {
+  // W-8: 后端 /api/network/auto_connect 只消费 force_nic（app.py auto_detect_and_connect_api），
+  // nic_name/target_ip 会被静默忽略，故前端不再发送这两个参数，改由调用方给出反馈。
+  autoConnect(forceNic = true) {
     return this.request('/api/network/auto_connect', {
       method: 'POST',
-      body: JSON.stringify({ force_nic: forceNic, nic_name: nicName, target_ip: targetIp })
+      body: JSON.stringify({ force_nic: forceNic })
     });
   },
 
@@ -366,23 +368,24 @@ const API = {
     return this.request(`/api/serial/messages?since=${since}`);
   },
 
-  getSerialDanceList(forceRefresh = false, target = 'ALL') {
-    let url = `/api/serial/dance_list?target=${encodeURIComponent(target)}`;
-    if (forceRefresh) url += '&refresh=1';
-    return this.request(url);
+  // W-8: 后端 /api/serial/dance_list 不消费 target/refresh（app.py get_serial_dance_list），停止发送。
+  getSerialDanceList() {
+    return this.request('/api/serial/dance_list');
   },
 
-  refreshSerialDanceList(timeout = 2.5, target = 'ALL') {
+  // W-8: 后端 /api/serial/refresh_dance_list 不消费 timeout/target（app.py refresh_serial_dance_list），停止发送。
+  refreshSerialDanceList() {
     return this.request('/api/serial/refresh_dance_list', {
       method: 'POST',
-      body: JSON.stringify({ timeout, target })
+      body: JSON.stringify({})
     });
   },
 
-  parseSerialDances(yamlContent, target = 'ALL') {
+  // W-8: 后端 /api/serial/parse_dances 只消费 content（app.py parse_dances_api），停止发送 target。
+  parseSerialDances(yamlContent) {
     return this.request('/api/serial/parse_dances', {
       method: 'POST',
-      body: JSON.stringify({ content: yamlContent, target })
+      body: JSON.stringify({ content: yamlContent })
     });
   },
 
@@ -398,6 +401,14 @@ const API = {
     return this.request('/api/http/command', {
       method: 'POST',
       body: JSON.stringify({ target, command, robot_ip: robotIp, port, targets_map: targetsMap })
+    });
+  },
+
+  // W-10: 急停/停止改走结构化端点 /api/http/stop（emergency 标志位），不再用自由文本 'STOP' 指令。
+  stopHttpRobot(target, emergency = false, robotIp = '', port = null) {
+    return this.request('/api/http/stop', {
+      method: 'POST',
+      body: JSON.stringify({ target, emergency, robot_ip: robotIp, port })
     });
   },
 
@@ -420,6 +431,21 @@ const API = {
       method: 'POST',
       body: JSON.stringify({ subnet, port })
     });
+  },
+
+  probeHttpMotion(target = '', targetsMap = null, robotIp = '', port = null) {
+    return this.request('/api/http/probe', {
+      method: 'POST',
+      body: JSON.stringify({ target, targets_map: targetsMap, robot_ip: robotIp, port })
+    });
+  },
+
+  getHttpControlState(target = '', sync = false, robotIp = '', port = null) {
+    const qs = new URLSearchParams({ target });
+    if (sync) qs.set('sync', '1');
+    if (robotIp) qs.set('robot_ip', robotIp);
+    if (port) qs.set('port', String(port));
+    return this.request(`/api/http/state?${qs.toString()}`);
   },
 
   configureLoraWifi(payload) {
@@ -468,6 +494,18 @@ const API = {
     return es;
   }
 };
+
+// 全局 HTML 转义工具（W-6: 所有将服务端/外部数据插入 innerHTML 的位置必须先经此转义）
+function escapeHtml(value) {
+  if (value === undefined || value === null) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+window.escapeHtml = escapeHtml;
 
 // 全局通用安全剪贴板复制工具
 function copyToClipboard(text, notifyText = '已复制到剪贴板！') {
@@ -518,17 +556,29 @@ function showToast(msg, type = 'info', duration = 3500, showCopyBtn = true) {
   if (type === 'error') icon = '❌';
   if (type === 'warning') icon = '⚠️';
 
-  const copyBtnHtml = (showCopyBtn && (type === 'error' || type === 'warning' || (typeof msg === 'string' && msg.length > 25)))
-    ? `<button class="toast-copy-btn" title="复制此消息" onclick="event.stopPropagation(); copyToClipboard(${JSON.stringify(String(msg))}, '消息内容已复制')">📋 复制</button>`
-    : '';
+  // W-6: 改为 DOM 构建 + textContent，消息内容（常含服务端返回文本）不再经 innerHTML 插入，
+  // 同时消除原 onclick 属性内 JSON.stringify 的属性注入面。
+  const body = document.createElement('div');
+  body.className = 'toast-msg-body';
+  const iconSpan = document.createElement('span');
+  iconSpan.textContent = icon;
+  const msgSpan = document.createElement('span');
+  msgSpan.textContent = msg;
+  body.appendChild(iconSpan);
+  body.appendChild(msgSpan);
+  toast.appendChild(body);
 
-  toast.innerHTML = `
-    <div class="toast-msg-body">
-      <span>${icon}</span>
-      <span>${msg}</span>
-    </div>
-    ${copyBtnHtml}
-  `;
+  if (showCopyBtn && (type === 'error' || type === 'warning' || (typeof msg === 'string' && msg.length > 25))) {
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'toast-copy-btn';
+    copyBtn.title = '复制此消息';
+    copyBtn.textContent = '📋 复制';
+    copyBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      copyToClipboard(String(msg), '消息内容已复制');
+    });
+    toast.appendChild(copyBtn);
+  }
   container.appendChild(toast);
 
   setTimeout(() => {

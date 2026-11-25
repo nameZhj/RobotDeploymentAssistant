@@ -1,5 +1,5 @@
 # @file: src/ui/choreography/timeline_header.py
-# @brief: 38px UniUni task-chain top control bar with local preview controls, track/task dialogs, and HTTP deploy.
+# @brief: 38px stage task-chain top control bar with local preview controls, track/task dialogs, and HTTP deploy.
 # @exports: TimelineHeader
 
 from __future__ import annotations

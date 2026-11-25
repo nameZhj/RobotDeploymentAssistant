@@ -1,5 +1,5 @@
 # @file: src/ui/design_system/ugc_v3_qss.py
-# @brief: Complete UniUni ugc-v3.css compiled into PySide6 QSS eliminating colorful clutter and enforcing hairlines.
+# @brief: Complete desktop QSS stylesheet eliminating colorful clutter and enforcing hairline borders.
 # @exports: build_ugc_v3_stylesheet
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from src.ui.design_system.tokens import (
 
 
 def build_ugc_v3_stylesheet() -> str:
-    """Return global PySide6 QSS mirroring UniUni v3 design-system/prototypes/assets/ugc-v3.css."""
+    """Return global PySide6 QSS styling for dark desktop workspace."""
     return f"""
 QWidget {{
     background-color: {C_BASE};
@@ -42,11 +42,11 @@ QWidget {{
     font-size: 13px;
 }}
 
-QMainWindow, #UniUniAppShell {{
+QMainWindow, #StudioAppShell {{
     background-color: {C_BASE};
 }}
 
-UPanel, QFrame[uniPanel="true"] {{
+UPanel, QFrame[studioPanel="true"] {{
     background-color: {C_PANEL};
     border: 1px solid {LINE};
     border-radius: {R_CARD}px;

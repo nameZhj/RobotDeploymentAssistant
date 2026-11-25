@@ -31,13 +31,30 @@ _MANUAL_CMDS = {
 
 
 class ControlArbiter:
-    """Thread-safe LRMP V1.0-R3 onboard control authority state machine."""
+    """Thread-safe LRMP V1.0-R3 onboard control authority state machine with hardware fault lockout."""
 
     def __init__(self, manual_lease_timeout_s: float = 3.0) -> None:
         self._lock = threading.Lock()
         self._state = ControlAuthority.FREE
         self._last_activity_ts = time.monotonic()
         self._lease_timeout_s = max(0.5, manual_lease_timeout_s)
+        self._safety_locked = False
+        self._safety_reason = ""
+
+    @property
+    def is_safety_locked(self) -> bool:
+        with self._lock:
+            return self._safety_locked
+
+    @property
+    def safety_lock_reason(self) -> str:
+        with self._lock:
+            return self._safety_reason
+
+    def set_safety_lock(self, locked: bool, reason: str = "") -> None:
+        with self._lock:
+            self._safety_locked = bool(locked)
+            self._safety_reason = reason if locked else ""
 
     @property
     def state(self) -> ControlAuthority:
@@ -53,6 +70,8 @@ class ControlArbiter:
         cmd = (command or "").strip().upper()
         with self._lock:
             self._expire_manual_if_needed()
+            if self._safety_locked and cmd not in ("STOP", "EMERGENCY", "PASSIVE", "RELEASE", "STATUS", "GETDANCELIST", "DISCOVER"):
+                return ArbiterDecision(False, self._state, f"安全联锁生效，禁止执行 {cmd}: {self._safety_reason}")
             if cmd == "EMERGENCY":
                 self._state = ControlAuthority.FREE
                 self._last_activity_ts = time.monotonic()

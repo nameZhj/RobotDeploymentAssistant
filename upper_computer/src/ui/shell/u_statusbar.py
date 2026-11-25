@@ -1,5 +1,5 @@
 # @file: src/ui/shell/u_statusbar.py
-# @brief: UniUni v3 28px bottom status bar displaying version, scene, init points, task status, local LAN IP, and alerts.
+# @brief: desktop v3 28px bottom status bar displaying version, scene, init points, task status, local LAN IP, and alerts.
 # @exports: UStatusBar
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def _detect_local_lan_ip() -> str:
 
 
 class UStatusBar(QFrame):
-    """Exact 28px bottom global status bar mirroring UniUni LAYOUT.md §2."""
+    """Exact 28px bottom global status bar mirroring stage LAYOUT.md §2."""
 
     initPointsClicked = Signal()
 

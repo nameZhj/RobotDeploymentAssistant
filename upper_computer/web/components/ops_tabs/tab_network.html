@@ -1,240 +1,229 @@
       <!-- ======================================= -->
-      <!-- TAB: 网络与 License 管理 (合并设备发现、网卡配置、机器码与授权) -->
+      <!-- TAB: 网络与 License 管理 -->
+      <!-- 布局：左列「本机环境与授权」 | 右列「机器人网络」 | 底部通栏可折叠控制台 -->
       <!-- ======================================= -->
       <section class="tab-content-panel" id="tab-network">
-        
+
         <div class="network-license-grid">
-          <!-- 左侧：紧凑连贯的操作卡片栈 (总高 <400px，杜绝滚动条) -->
-          <div class="network-license-left">
-            <!-- 卡片 1: 🌐 本机网卡直连与自动连接 (精简长文本，保留断网自愈与自动连接按钮) -->
-            <div class="card" style="padding: 10px 12px; margin-bottom: 0;">
-              <div class="card-header" style="margin-bottom: 6px; padding-bottom: 4px;">
-                <div class="card-title" style="font-size: 0.86rem; display: flex; align-items: center; gap: 6px;">
-                  <span>🌐 本机网卡直连与自动连接</span>
-                </div>
-                <button class="btn btn-primary btn-xs" onclick="TabNetwork.autoConnect()"
-                  style="font-weight: 700; padding: 2px 8px; font-size: 0.72rem; white-space: nowrap;"
-                  title="立即触发断网自愈与自动搜索连接机器人">
-                  ⚡ 断网自愈与连接
-                </button>
-              </div>
-
-              <!-- 网卡选择行 -->
-              <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 6px;">
-                <span style="font-size: 0.72rem; color: var(--text-secondary); white-space: nowrap; font-weight: 600;">以太网卡:</span>
-                <select class="form-control" id="tp-nic-select"
-                  style="font-size: 0.74rem; padding: 3px 6px; flex: 1;">
-                  <option value="">加载中...</option>
-                </select>
-                <button class="btn btn-secondary btn-xs" onclick="TabNetwork.loadNics()"
-                  style="padding: 3px 8px; font-size: 0.72rem; white-space: nowrap;">
-                  🔄 刷新
-                </button>
-              </div>
-
-              <!-- 静态 IP 与 DHCP 配置按钮组 -->
-              <div style="display: flex; gap: 6px;">
-                <button class="btn btn-primary btn-xs" onclick="TabNetwork.setStatic()"
-                  style="flex: 1; font-weight: 700; padding: 4px 8px; font-size: 0.74rem; white-space: nowrap;">
-                  ⚡ 设为 192.168.123.200
-                </button>
-                <button class="btn btn-secondary btn-xs" onclick="TabNetwork.setDhcp()"
-                  style="flex: 1; padding: 4px 8px; font-size: 0.74rem; white-space: nowrap;">
-                  恢复自动获取 (DHCP)
-                </button>
-              </div>
-            </div>
-
-            <!-- 卡片 2: 🔌 本机 LoRa 串口驱动 (CH340/CH341) (精简长文本) -->
-            <div class="card" style="padding: 10px 12px; margin-bottom: 0;">
-              <div class="card-header" style="margin-bottom: 5px; padding-bottom: 4px;">
-                <div class="card-title" style="font-size: 0.86rem; display: flex; align-items: center; gap: 6px;">
-                  <span>🔌 本机 LoRa 串口 (CH340/CH341)</span>
-                </div>
-                <div style="display: flex; gap: 6px;">
-                  <button class="btn btn-secondary btn-xs" onclick="TabNetwork.loadWindowsCh341()"
-                    style="padding: 2px 6px; font-size: 0.72rem; white-space: nowrap;">
-                    🔄 刷新串口
+          <!-- 左列：本机环境与授权 (4 张卡片，纵向自适应，内容多时仅此列滚动) -->
+          <div class="network-license-col">
+            <div class="ops-col-caption"><span>💻</span>本机环境与授权</div>
+            <div class="network-license-left">
+              <!-- 卡片 1: 🌐 本机网卡直连与自动连接 -->
+              <div class="card">
+                <div class="card-header">
+                  <div class="card-title">
+                    <span>🌐 本机网卡直连与自动连接</span>
+                  </div>
+                  <button class="btn btn-primary btn-xs" onclick="TabNetwork.autoConnect()"
+                    title="立即触发断网自愈与自动搜索连接机器人">
+                    ⚡ 断网自愈与连接
                   </button>
-                  <button class="btn btn-primary btn-xs" onclick="TabNetwork.installWindowsCh341()"
-                    style="padding: 2px 8px; font-size: 0.72rem; font-weight: 700; white-space: nowrap;">
-                    ⚡ 安装驱动
+                </div>
+
+                <!-- 网卡选择行 -->
+                <div class="ops-form-row">
+                  <span class="ops-form-label">以太网卡</span>
+                  <select class="form-control" id="tp-nic-select">
+                    <option value="">加载中...</option>
+                  </select>
+                  <button class="btn btn-secondary btn-xs" onclick="TabNetwork.loadNics()" title="重新读取本机网卡列表">
+                    🔄 刷新
+                  </button>
+                </div>
+
+                <!-- 静态 IP 与 DHCP 配置按钮组 -->
+                <div class="ops-form-row">
+                  <button class="btn btn-primary btn-xs" onclick="TabNetwork.setStatic()"
+                    title="将以太网卡设为 192.168.123.200，与机器人有线管理段同网段">
+                    ⚡ 设为 192.168.123.200
+                  </button>
+                  <button class="btn btn-secondary btn-xs" onclick="TabNetwork.setDhcp()" title="恢复为 DHCP 自动获取">
+                    恢复自动获取 (DHCP)
                   </button>
                 </div>
               </div>
-              <div id="tp-win-ch341-status"
-                style="font-size: 0.74rem; padding: 4px 8px; background: rgba(0,0,0,0.25); border-radius: 4px; border: 1px solid rgba(255,255,255,0.06); min-height: 24px; display: flex; align-items: center;">
-                <span style="color: var(--text-muted);">正在检测 Windows 本机串口状态...</span>
-              </div>
-            </div>
 
-            <!-- 卡片 3: 🔑 64 位硬件机器码 (Machine ID) -->
-            <div class="card" style="padding: 10px 12px; margin-bottom: 0;">
-              <div class="card-header" style="margin-bottom: 5px; padding-bottom: 4px;">
-                <div class="card-title" style="font-size: 0.86rem; display: flex; align-items: center; gap: 6px;">
-                  <span>🔑 硬件机器码 (Machine ID)</span>
-                </div>
-                <div style="display: flex; gap: 6px;">
-                  <button class="btn btn-primary btn-xs" onclick="TabLicense.copyMachineId()"
-                    style="font-weight: 700; padding: 2px 8px; font-size: 0.72rem; white-space: nowrap;">
-                    📋 复制
-                  </button>
-                  <button class="btn btn-secondary btn-xs" onclick="TabLicense.fetchMachineId()"
-                    style="padding: 2px 6px; font-size: 0.72rem; white-space: nowrap;">
-                    🔄 重新读取
-                  </button>
-                </div>
-              </div>
-              <div id="tp-machine-id-val"
-                style="font-family: monospace; font-size: 0.78rem; font-weight: 700; color: var(--accent-cyan); background: rgba(0,0,0,0.3); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 4px; padding: 4px 8px; user-select: text; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                尚未读取，请点击重新读取
-              </div>
-            </div>
-
-            <!-- 卡片 4: 📄 License 授权导入与部署 (原 tab-license 功能合并) -->
-            <div class="card" id="tab-license" style="padding: 10px 12px; margin-bottom: 0;">
-              <div class="card-header" style="margin-bottom: 5px; padding-bottom: 4px;">
-                <div class="card-title" style="font-size: 0.86rem; display: flex; align-items: center; gap: 6px;">
-                  <span>📄 License 授权导入与部署</span>
-                </div>
-                <span class="card-badge" style="font-size: 0.65rem; padding: 1px 6px;">license.json</span>
-              </div>
-
-              <!-- 紧凑拖拽导入框 -->
-              <div class="dropzone" id="tp-license-dropzone"
-                style="padding: 10px 12px; border-radius: 8px; border: 2px dashed rgba(56, 189, 248, 0.35); background: rgba(14, 165, 233, 0.04); text-align: center; cursor: pointer; transition: all 0.2s; margin-bottom: 6px;"
-                ondragenter="event.preventDefault(); event.stopPropagation(); this.classList.add('dragover');"
-                ondragover="event.preventDefault(); event.stopPropagation(); this.classList.add('dragover'); if(event.dataTransfer) event.dataTransfer.dropEffect='copy';"
-                ondragleave="event.preventDefault(); event.stopPropagation(); this.classList.remove('dragover');"
-                ondrop="event.preventDefault(); event.stopPropagation(); this.classList.remove('dragover'); TabLicense.handleDrop(event);"
-                onclick="document.getElementById('tp-license-file-input').click()">
-                <div style="font-size: 1.2rem; line-height: 1; margin-bottom: 2px;">📥</div>
-                <div style="font-size: 0.78rem; font-weight: 600; color: var(--text-primary); margin-bottom: 2px;">
-                  点击选择或将 license.json 拖拽至此处
-                </div>
-                <div id="tp-license-filename" style="font-size: 0.68rem; color: var(--accent-cyan); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                  未选择文件
-                </div>
-                <input type="file" id="tp-license-file-input" style="display: none;" accept=".json"
-                  onchange="TabLicense.handleFileInput(this)">
-              </div>
-
-              <button class="btn btn-success btn-xs" id="tp-deploy-btn"
-                style="width: 100%; font-weight: 700; padding: 4px 8px; font-size: 0.76rem; white-space: nowrap;"
-                onclick="TabLicense.deploy()" disabled>
-                🚀 部署 License 至机器人
-              </button>
-            </div>
-
-            <!-- 卡片 4: 📶 G1 机器人 Wi-Fi 无线连接与静态 IP 配置 (基于 g1_wifi_setup 规范) -->
-            <div class="card"
-              style="padding: 8px 10px; margin-bottom: 0; background: rgba(16, 185, 129, 0.04); border: 1px solid rgba(52, 211, 153, 0.25);">
-              <div class="card-header" style="margin-bottom: 5px; padding-bottom: 3px; display: flex; justify-content: space-between; align-items: center;">
-                <div class="card-title" style="font-size: 0.8rem; color: #34d399; display: flex; align-items: center; gap: 5px;">
-                  <span>📶 Wi-Fi 配网</span>
-                </div>
-                <div style="display: flex; align-items: center; gap: 4px;">
-                  <input id="tp-wifi-ifname" class="form-input" value="wlan0"
-                    style="width: 62px; padding: 2px 5px; font-size: 0.7rem;" title="无线网卡接口名">
-                  <button id="tp-btn-wifi-probe" class="btn btn-secondary btn-xs" onclick="TabNetwork.probeRobotWifi()"
-                    style="padding: 2px 6px; font-size: 0.7rem; white-space: nowrap;">🔍 探测</button>
-                  <button id="tp-btn-wifi-scan" class="btn btn-primary btn-xs" onclick="TabNetwork.scanRobotWifi()"
-                    style="padding: 2px 6px; font-size: 0.7rem; white-space: nowrap;">📡 扫网</button>
-                  <div class="help-tooltip-wrapper align-right">
-                    <span class="help-icon-circle" tabindex="0" role="button" aria-label="配网说明">?</span>
-                    <div class="help-tooltip-bubble">
-                      <div class="help-bubble-header">Wi-Fi 配网说明</div>
-                      <div class="help-bubble-item">
-                        <span class="help-item-desc">通过专用 LoRa 串口通道为机器人配置 Wi-Fi 与静态 IP；配置完成后其余业务指令均走 Wi-Fi HTTP。</span>
-                      </div>
-                    </div>
+              <!-- 卡片 2: 🔌 本机 LoRa 串口驱动 (CH340/CH341) -->
+              <div class="card">
+                <div class="card-header">
+                  <div class="card-title">
+                    <span>🔌 本机 LoRa 串口 (CH340/CH341)</span>
+                  </div>
+                  <div class="ops-btn-group">
+                    <button class="btn btn-secondary btn-xs" onclick="TabNetwork.loadWindowsCh341()" title="重新检测 Windows 本机串口">
+                      🔄 刷新串口
+                    </button>
+                    <button class="btn btn-primary btn-xs" onclick="TabNetwork.installWindowsCh341()" title="在当前电脑安装 CH341 串口驱动">
+                      ⚡ 安装驱动
+                    </button>
                   </div>
                 </div>
+                <div id="tp-win-ch341-status" class="ops-status-line">
+                  <span style="color: var(--text-muted);">正在检测 Windows 本机串口状态...</span>
+                </div>
               </div>
-              <div style="display: flex; gap: 4px; margin-bottom: 5px;">
-                <select id="tp-wifi-list" class="form-select" onchange="TabNetwork.onSelectWifiAp(this.value)"
-                  style="flex: 1; padding: 3px 6px; font-size: 0.72rem;">
-                  <option value="">-- 点击【📡 扫网】刷新周围 Wi-Fi 列表 --</option>
-                </select>
+
+              <!-- 卡片 3: 🔑 64 位硬件机器码 (Machine ID) -->
+              <div class="card">
+                <div class="card-header">
+                  <div class="card-title">
+                    <span>🔑 硬件机器码 (Machine ID)</span>
+                  </div>
+                  <div class="ops-btn-group">
+                    <button class="btn btn-primary btn-xs" onclick="TabLicense.copyMachineId()" title="复制机器码，用于申请 License">
+                      📋 复制
+                    </button>
+                    <button class="btn btn-secondary btn-xs" onclick="TabLicense.fetchMachineId()" title="重新从机器人读取机器码">
+                      🔄 重新读取
+                    </button>
+                  </div>
+                </div>
+                <div id="tp-machine-id-val" class="ops-mono-value">
+                  尚未读取，请点击重新读取
+                </div>
               </div>
-              <div style="display: flex; gap: 4px; margin-bottom: 5px; align-items: center;">
-                <input id="tp-wifi-ssid" class="form-input" placeholder="目标 Wi-Fi SSID"
-                  style="flex: 1; padding: 3px 6px; font-size: 0.72rem;">
-                <input id="tp-wifi-password" type="password" class="form-input" placeholder="Wi-Fi 密码(开放可空)"
-                  style="flex: 1; padding: 3px 6px; font-size: 0.72rem;">
-                <button id="tp-btn-wifi-connect" class="btn btn-success btn-xs" onclick="TabNetwork.connectRobotWifi()"
-                  style="padding: 3px 8px; font-size: 0.72rem; white-space: nowrap;">🔗 连接</button>
-              </div>
-              <div style="display: grid; grid-template-columns: 78px 1fr 1fr; gap: 4px; margin-bottom: 4px;">
-                <select id="tp-wifi-ipv4-mode" class="form-select" style="padding: 3px 4px; font-size: 0.7rem;">
-                  <option value="manual">静态 IP</option>
-                  <option value="auto">DHCP 自动</option>
-                </select>
-                <input id="tp-wifi-static-ip" class="form-input" placeholder="Wi-Fi IP 如 192.168.1.88"
-                  style="padding: 3px 6px; font-size: 0.7rem;" title="禁止与 192.168.123.0/24 有线管理段重叠">
-                <input id="tp-wifi-netmask" class="form-input" value="255.255.255.0" placeholder="掩码 255.255.255.0"
-                  style="padding: 3px 6px; font-size: 0.7rem;">
-              </div>
-              <div style="display: flex; gap: 4px; align-items: center;">
-                <input id="tp-wifi-gateway" class="form-input" placeholder="网关 (可选)"
-                  style="flex: 1; padding: 3px 6px; font-size: 0.7rem;">
-                <input id="tp-wifi-dns" class="form-input" placeholder="DNS (如 223.5.5.5)"
-                  style="flex: 1; padding: 3px 6px; font-size: 0.7rem;">
-                <button id="tp-btn-wifi-ipv4" class="btn btn-primary btn-xs" onclick="TabNetwork.setRobotWifiIpv4()"
-                  style="padding: 3px 8px; font-size: 0.7rem; white-space: nowrap;">⚙️ 应用IPv4</button>
-              </div>
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 5px; font-size: 0.7rem; color: var(--text-muted);">
-                <span>当前无线 IP: <strong id="tp-wifi-current-ip" style="color: #6ee7b7;">未知</strong></span>
-                <button id="tp-btn-switch-wifi-ssh" class="btn btn-primary btn-xs" onclick="TabNetwork.switchSshToWifiIp()"
-                  style="padding: 2px 6px; font-size: 0.68rem;">🌐 绑定无线 IP 到 HTTP 群控</button>
+
+              <!-- 卡片 4: 📄 License 授权导入与部署 (原 tab-license 功能合并) -->
+              <div class="card" id="tab-license">
+                <div class="card-header">
+                  <div class="card-title">
+                    <span>📄 License 授权导入与部署</span>
+                  </div>
+                  <span class="card-badge">license.json</span>
+                </div>
+
+                <!-- 紧凑拖拽导入框 -->
+                <div class="dropzone" id="tp-license-dropzone"
+                  ondragenter="event.preventDefault(); event.stopPropagation(); this.classList.add('dragover');"
+                  ondragover="event.preventDefault(); event.stopPropagation(); this.classList.add('dragover'); if(event.dataTransfer) event.dataTransfer.dropEffect='copy';"
+                  ondragleave="event.preventDefault(); event.stopPropagation(); this.classList.remove('dragover');"
+                  ondrop="event.preventDefault(); event.stopPropagation(); this.classList.remove('dragover'); TabLicense.handleDrop(event);"
+                  onclick="document.getElementById('tp-license-file-input').click()">
+                  <div class="dropzone-icon">📥</div>
+                  <div class="dropzone-text">
+                    <div class="dropzone-title">点击选择或将 license.json 拖拽至此处</div>
+                    <div id="tp-license-filename" class="dropzone-filename">未选择文件</div>
+                  </div>
+                  <input type="file" id="tp-license-file-input" style="display: none;" accept=".json"
+                    onchange="TabLicense.handleFileInput(this)">
+                </div>
+
+                <button class="btn btn-success btn-sm" id="tp-deploy-btn"
+                  onclick="TabLicense.deploy()" disabled>
+                  🚀 部署 License 至机器人
+                </button>
               </div>
             </div>
           </div>
 
-          <!-- 右侧：设备扫描看板与统一执行/授权控制台 -->
-          <div class="network-license-right">
-            <!-- 卡片 5: 📡 局域网设备扫描看板 (精简长文本) -->
-            <div class="card"
-              style="padding: 8px 12px; margin-bottom: 0; background: rgba(14, 165, 233, 0.04); border: 1px solid rgba(56, 189, 248, 0.22);">
-              <div class="card-header" style="margin-bottom: 4px; padding-bottom: 2px;">
-                <div class="card-title"
-                  style="font-size: 0.82rem; color: var(--accent-cyan); display: flex; align-items: center; gap: 6px;">
-                  <span>📡 局域网扫描</span>
+          <!-- 右列：机器人网络 (Wi-Fi 配网 + 局域网扫描，扫描列表自动撑满剩余高度) -->
+          <div class="network-license-col">
+            <div class="ops-col-caption"><span>🤖</span>机器人网络</div>
+            <div class="network-license-right">
+              <!-- 卡片 5: 📶 G1 机器人 Wi-Fi 无线连接与静态 IP 配置 (基于 g1_wifi_setup 规范) -->
+              <div class="card wifi-card">
+                <div class="card-header">
+                  <div class="card-title">
+                    <span>📶 Wi-Fi 配网</span>
+                  </div>
+                  <div class="ops-btn-group">
+                    <input id="tp-wifi-ifname" class="form-input" value="wlan0" title="无线网卡接口名">
+                    <button id="tp-btn-wifi-probe" class="btn btn-secondary btn-xs" onclick="TabNetwork.probeRobotWifi()" title="探测机器人无线网卡状态与当前 IP">
+                      🔍 探测
+                    </button>
+                    <button id="tp-btn-wifi-scan" class="btn btn-primary btn-xs" onclick="TabNetwork.scanRobotWifi()" title="扫描机器人周围可见的 Wi-Fi 列表">
+                      📡 扫网
+                    </button>
+                    <div class="help-tooltip-wrapper align-right">
+                      <span class="help-icon-circle" tabindex="0" role="button" aria-label="配网说明">?</span>
+                      <div class="help-tooltip-bubble">
+                        <div class="help-bubble-header">Wi-Fi 配网说明</div>
+                        <div class="help-bubble-item">
+                          <span class="help-item-desc">通过专用 LoRa 串口通道为机器人配置 Wi-Fi 与静态 IP；配置完成后其余业务指令均走 Wi-Fi HTTP。</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <button id="tp-btn-scan" class="btn btn-primary btn-xs" onclick="TabNetwork.scan()"
-                  style="padding: 2px 8px; font-size: 0.72rem; font-weight: 700; white-space: nowrap;">
-                  🔍 开始扫描
-                </button>
-              </div>
-              <div id="tp-scan-results" style="max-height: 100px; overflow-y: auto;">
-                <div style="color: var(--text-muted); font-size: 0.74rem;">点击【开始扫描】发现局域网设备</div>
-              </div>
-            </div>
 
-            <!-- 卡片 6: 📋 统一执行与授权控制台 (单一日志窗口) -->
-            <div class="card console-card"
-              style="padding: 8px 12px; margin-bottom: 0; flex: 1; display: flex; flex-direction: column; min-height: 0;">
-              <div class="card-header"
-                style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; padding-bottom: 2px;">
-                <div class="card-title" style="font-size: 0.82rem; display: flex; align-items: center; gap: 6px;">
-                  <span>📋 统一执行与授权控制台</span>
+                <div class="ops-form-row">
+                  <select id="tp-wifi-list" class="form-select" onchange="TabNetwork.onSelectWifiAp(this.value)">
+                    <option value="">-- 点击【📡 扫网】刷新周围 Wi-Fi 列表 --</option>
+                  </select>
                 </div>
-                <div style="display: flex; align-items: center; gap: 4px;">
-                  <button class="btn btn-secondary btn-xs" onclick="TabLicense.fetchMachineId()"
-                    title="刷新机器码与授权状态" style="padding: 2px 6px; font-size: 0.7rem; white-space: nowrap;">
-                    🔄 状态刷新
+                <div class="ops-form-row">
+                  <input id="tp-wifi-ssid" class="form-input" placeholder="目标 Wi-Fi SSID">
+                  <input id="tp-wifi-password" type="password" class="form-input" placeholder="Wi-Fi 密码 (开放网络可空)">
+                  <button id="tp-btn-wifi-connect" class="btn btn-success btn-xs" onclick="TabNetwork.connectRobotWifi()">
+                    🔗 连接
                   </button>
-                  <button class="btn btn-secondary btn-xs" onclick="TabNetwork.clearConsole()" title="清空控制台"
-                    style="padding: 2px 6px; font-size: 0.7rem; white-space: nowrap;">
-                    🗑️ 清空
+                </div>
+                <div class="ops-form-row" style="grid-template-columns: 88px 1fr 1fr;">
+                  <select id="tp-wifi-ipv4-mode" class="form-select" title="IPv4 地址分配方式">
+                    <option value="manual">静态 IP</option>
+                    <option value="auto">DHCP 自动</option>
+                  </select>
+                  <input id="tp-wifi-static-ip" class="form-input" placeholder="Wi-Fi IP 如 192.168.1.88"
+                    title="禁止与 192.168.123.0/24 有线管理段重叠">
+                  <input id="tp-wifi-netmask" class="form-input" value="255.255.255.0" placeholder="掩码 255.255.255.0">
+                </div>
+                <div class="ops-form-row">
+                  <input id="tp-wifi-gateway" class="form-input" placeholder="网关 (可选)">
+                  <input id="tp-wifi-dns" class="form-input" placeholder="DNS (如 223.5.5.5)">
+                  <button id="tp-btn-wifi-ipv4" class="btn btn-primary btn-xs" onclick="TabNetwork.setRobotWifiIpv4()" title="应用以上 IPv4 配置到机器人无线网卡">
+                    ⚙️ 应用 IPv4
+                  </button>
+                </div>
+                <div class="ops-footer-row">
+                  <span>当前无线 IP: <strong id="tp-wifi-current-ip">未知</strong></span>
+                  <button id="tp-btn-switch-wifi-ssh" class="btn btn-primary btn-xs" onclick="TabNetwork.switchSshToWifiIp()"
+                    title="将 Wi-Fi IP 绑定为群控 HTTP 目标">
+                    🌐 绑定无线 IP 到 HTTP 群控
                   </button>
                 </div>
               </div>
-              <div class="terminal-console log-wordwrap" id="tp-license-result"
-                style="flex: 1; min-height: 180px; overflow-y: auto; overflow-x: hidden; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; font-size: 0.74rem; line-height: 1.42; padding: 8px 10px;">
-                <div class="log-info" style="white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;">就绪。</div>
+
+              <!-- 卡片 6: 📡 局域网设备扫描看板 (列表撑满剩余高度) -->
+              <div class="card scan-card">
+                <div class="card-header">
+                  <div class="card-title ops-title-cyan">
+                    <span>📡 局域网扫描</span>
+                    <span class="card-badge" id="tp-scan-count" title="已发现设备数">0 台</span>
+                  </div>
+                  <button id="tp-btn-scan" class="btn btn-primary btn-xs" onclick="TabNetwork.scan()" title="扫描 Wi-Fi 局域网内运行下位机 HTTP 服务 (8090) 的机器人">
+                    🔍 开始扫描
+                  </button>
+                </div>
+                <div id="tp-scan-results" class="scan-results">
+                  <div class="ops-empty-hint">点击【开始扫描】发现局域网设备</div>
+                </div>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- 底部通栏：统一执行与授权控制台 (默认紧凑，可一键展开) -->
+        <div class="card console-card ops-console-strip" id="tp-license-console-card">
+          <div class="card-header ops-console-header">
+            <div class="card-title">
+              <span>📋 统一执行与授权控制台</span>
+              <span class="ops-console-hint">本页所有操作输出实时显示于此</span>
+            </div>
+            <div class="ops-btn-group">
+              <button class="btn btn-secondary btn-xs" onclick="TabLicense.fetchMachineId()"
+                title="刷新机器码与授权状态">
+                🔄 状态刷新
+              </button>
+              <button class="btn btn-secondary btn-xs" onclick="TabNetwork.clearConsole()" title="清空控制台">
+                🗑️ 清空
+              </button>
+              <button class="btn btn-secondary btn-xs ops-console-toggle" type="button"
+                title="展开 / 收起控制台" aria-expanded="false">⤢ 展开</button>
+            </div>
+          </div>
+          <div class="terminal-console log-wordwrap" id="tp-license-result">
+            <div class="log-info">就绪。</div>
           </div>
         </div>
       </section>

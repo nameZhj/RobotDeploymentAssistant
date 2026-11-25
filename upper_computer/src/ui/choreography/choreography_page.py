@@ -1,5 +1,5 @@
 # @file: src/ui/choreography/choreography_page.py
-# @brief: Complete UniUni Page 1 Choreography layout pairing Left Stage+Timeline and Right 330px Libraries.
+# @brief: Complete stage Page 1 Choreography layout pairing Left Stage+Timeline and Right 330px Libraries.
 # @exports: ChoreographyPage
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from src.ui.modals import (
 
 
 class ChoreographyPage(QWidget):
-    """Primary UniUni v3 Stage Choreography view (PreviewMap + TaskEditor | TrackLib + ActionLib)."""
+    """Primary desktop v3 Stage Choreography view (PreviewMap + TaskEditor | TrackLib + ActionLib)."""
 
     def __init__(self, state: StudioStateService, playback: PlaybackCoordinator, parent=None) -> None:
         super().__init__(parent)

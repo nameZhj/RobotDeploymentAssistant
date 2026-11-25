@@ -1,5 +1,5 @@
 # @file: src/domain/scene_entities.py
-# @brief: Domain entities representing UniUni stage physical bounds, scenes, and choreography tasks.
+# @brief: Domain entities representing stage stage physical bounds, scenes, and choreography tasks.
 # @exports: StageConfig, SceneEntity, TaskEntity
 
 from __future__ import annotations

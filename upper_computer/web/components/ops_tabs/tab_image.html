@@ -273,21 +273,23 @@
 
     </div>
 
-    <!-- 下半区：📋 统一执行与运维日志控制台 (全宽通栏，高度紧凑适中 ~145px，支持自动换行) -->
-    <div class="card image-dashboard-console-card console-card">
-      <div class="card-header">
-        <div class="card-title" style="font-size: 0.88rem; font-weight: 700; display: flex; align-items: center; gap: 6px;">
+    <!-- 下半区：📋 统一执行与运维日志控制台 (全宽通栏可折叠，默认紧凑 ~5 行) -->
+    <div class="card console-card ops-console-strip" id="tp-image-console-card">
+      <div class="card-header ops-console-header">
+        <div class="card-title" style="font-size: 0.88rem; font-weight: 700;">
           <span>📋 执行日志</span>
+          <span class="ops-console-hint">上传、导入、启停与修复的输出实时显示于此</span>
         </div>
-        <div style="display: flex; align-items: center; gap: 6px;">
+        <div class="ops-btn-group">
           <button class="btn btn-secondary btn-xs" onclick="TabImage.checkAndFixEnvironment()"
-            title="一键检测并修复机载脚本、底层设备权限与运行环境" style="padding: 3px 10px; font-size: 0.74rem; font-weight: 600; white-space: nowrap;">
+            title="一键检测并修复机载脚本、底层设备权限与运行环境">
             🛠️ 修复环境
           </button>
-          <button class="btn btn-secondary btn-xs" onclick="TabImage.clearConsole()" title="清空控制台日志"
-            style="padding: 3px 10px; font-size: 0.74rem; font-weight: 600; white-space: nowrap;">
+          <button class="btn btn-secondary btn-xs" onclick="TabImage.clearConsole()" title="清空控制台日志">
             🗑️ 清空
           </button>
+          <button class="btn btn-secondary btn-xs ops-console-toggle" type="button"
+            title="展开 / 收起控制台" aria-expanded="false">⤢ 展开</button>
         </div>
       </div>
       <div class="terminal-console log-wordwrap" id="tp-unified-console">

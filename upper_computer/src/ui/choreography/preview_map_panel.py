@@ -1,5 +1,5 @@
 # @file: src/ui/choreography/preview_map_panel.py
-# @brief: UniUni PreviewMap container pairing stacked 3D/2D viewports, inline trajectory draw bar, and scrubber.
+# @brief: PreviewMap container pairing stacked 3D/2D viewports, inline trajectory draw bar, and scrubber.
 # @exports: PreviewMapPanel
 
 from __future__ import annotations
@@ -79,11 +79,12 @@ class PreviewMapPanel(UPanel):
 
         self.draw_toolbar.modeChanged.connect(self._on_draw_mode)
         self.draw_toolbar.clearSketchClicked.connect(self.canvas_2d.clear_sketches)
-        self.draw_toolbar.clearDraftClicked.connect(self.canvas_2d.clear_draft)
+        self.draw_toolbar.clearDraftClicked.connect(self._on_clear_draft)
         self.draw_toolbar.saveDraftClicked.connect(lambda: self._open_save_drawn(self.canvas_2d.draft_points))
         self.canvas_2d.hoverCoordChanged.connect(self.draw_toolbar.update_coord)
         self.canvas_2d.draftPointsChanged.connect(self.draw_toolbar.update_draft_status)
         self.canvas_2d.trajectoryFinishRequested.connect(self._open_save_drawn)
+        self.canvas_2d.exitDrawModeRequested.connect(self.draw_toolbar.reset_to_view)
         state.bus.subscribe(StudioEvent.SCENE_CHANGED, lambda _s: self.stage_pill.setText(self._stage_label()))
 
     @property
@@ -95,15 +96,20 @@ class PreviewMapPanel(UPanel):
             self.mode_switch.set_current("2D")
         self.canvas_2d.set_draw_mode(mode)
 
+    def _on_clear_draft(self) -> None:
+        self.canvas_2d.clear_draft()
+        self.draw_toolbar.reset_to_view()
+
     def _open_save_drawn(self, points: List[ControlPoint2D]) -> None:
         if len(points) < 2:
             self.state.notify("请先在画布至少点击 2 个轨迹控制点", "warn")
+            self.draw_toolbar.reset_to_view()
             return
         from src.ui.modals.trajectory_editor_modal import TrajectoryEditorModal
         dlg = TrajectoryEditorModal(self.state, traj=None, initial_points=points, parent=self)
         if dlg.exec():
             self.canvas_2d.clear_draft()
-            self.draw_toolbar.reset_to_view()
+        self.draw_toolbar.reset_to_view()
 
     def _stage_label(self) -> str:
         sc = self.state.scene

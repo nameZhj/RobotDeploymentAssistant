@@ -23,6 +23,7 @@ from src.persistence.pcd_parser import write_ascii_pcd
 from src.persistence.seed_builtin_data import ensure_seeded
 from src.services.playback_coordinator import PlaybackCoordinator
 from src.services.studio_state_service import StudioStateService
+from src.ui.common.async_task import wait_for_all_tasks
 from src.ui.mapping import NavigationMapPage
 from src.ui.monitoring import PerformanceMonitorPage
 
@@ -82,24 +83,39 @@ def test_navigation_map_page_upload_teleop_and_delete(tmp_path, monkeypatch) -> 
         saved = page.lib_dock.import_pcd_file(pcd, activate=True)
         assert state.scene.active_map_id == saved.id
 
-        # 2. Interactive navigation buttons, remote PCD pull, then push local PCD to robot
-        assert page._run_discovery() is not None
-        assert page._send_initialpose(0.1, 0.2, 0.0) is True
-        assert page._send_nav_goal(2.0, 1.0, 0.0) is True
-        assert page._cancel_nav() is True
-        assert page.lib_dock.sync_remote_pcd_dialog() is not None
+        # 2. Interactive navigation buttons run on background threads and return TaskHandles
+        h = page._run_discovery()
+        assert h is not None and h.wait(10.0) and h.result is not None and h.result.ok
+        h = page._send_initialpose(0.1, 0.2, 0.0)
+        assert h is not None and h.wait(10.0) and h.result.ok
+        h = page._send_nav_goal(2.0, 1.0, 0.0)
+        assert h is not None and h.wait(10.0) and h.result.ok
+        h = page._cancel_nav()
+        assert h is not None and h.wait(10.0) and h.result.ok
+        # Remote PCD pull chains listing -> download -> import across two background tasks
+        h = page.lib_dock.sync_remote_pcd_dialog()
+        assert h is not None
+        wait_for_all_tasks(timeout_s=20.0)
         for idx in range(page.lib_dock.list_w.count()):
             if "stage_test" in page.lib_dock.list_w.item(idx).text():
                 page.lib_dock.list_w.setCurrentRow(idx)
                 break
-        assert page.lib_dock.push_selected_to_robot(restart_localization=False) is True
+        h = page.lib_dock.push_selected_to_robot(restart_localization=False)
+        assert h is not None and h.wait(20.0) and h.result.ok
         assert (rmaps / "stage_test.pcd").exists()
 
-        page.teleop_dock._on_start()
-        page.teleop_dock._step_move(1.0, 0.0, 0.0)
-        slam_ent = page.teleop_dock.save_and_register_map()
+        h = page.teleop_dock._on_start()
+        assert h is not None and h.wait(10.0)
+        assert h.result[0] is True
+        h = page.teleop_dock._step_move(1.0, 0.0, 0.0)
+        if h is not None:
+            assert h.wait(10.0)
+        h = page.teleop_dock.save_and_register_map()
+        assert h is not None and h.wait(20.0)
+        slam_ent = h.result
         assert slam_ent is not None and slam_ent.id is not None
-        page.teleop_dock._on_stop()
+        h = page.teleop_dock._on_stop()
+        assert h is not None and h.wait(10.0)
         t0 = time.monotonic()
         page.sync_active_robot_stream()
         time.sleep(0.25)
@@ -121,16 +137,19 @@ def test_performance_monitor_live_pose_and_controls(tmp_path) -> None:
     pb = PlaybackCoordinator(state)
     perf = PerformanceMonitorPage(state, pb)
     perf._cmd_prep()
+    wait_for_all_tasks(timeout_s=30.0)
     assert "CHOREO" in perf.phase_badge.text()
     perf._cmd_play()
+    wait_for_all_tasks(timeout_s=30.0)
     assert "PLAY" in perf.phase_badge.text()
-    # Real callback pose updates 3D viewport live robot poses & clearance table
-    state.callback_listener.latest_by_target["A"] = {
+    # Real callback path: lower computer webhook -> listener._handle_event merge -> 3D viewport & clearance table
+    state.callback_listener._handle_event({
+        "event": "STEP_PROGRESS", "target_id": "A", "title": "导航到点1",
         "pose": {"x": 1.25, "y": -0.4, "yaw": 0.3},
-        "remaining_distance_m": 0.42,
-        "localization_confidence": 0.96,
-        "current_node_title": "导航到点1",
-    }
+        "remaining_distance_m": 0.42, "localization_confidence": 0.96,
+        "localization_delay_ms": 12.0, "local_nav_status": "SUCCEEDED",
+        "state": {"status": "RUNNING", "target_id": "A", "current_node_title": "导航到点1"},
+    })
     perf._on_http_callback({"target_id": "A", "payload": {"event": "STEP_PROGRESS", "title": "导航到点1", "remaining_distance_m": 0.42}})
     assert "A" in perf.viewport._live_robot_poses
     assert abs(perf.viewport._live_robot_poses["A"][0] - 1.25) < 1e-4
@@ -139,3 +158,8 @@ def test_performance_monitor_live_pose_and_controls(tmp_path) -> None:
     perf._cmd_emergency()
     assert "EMERGENCY" in perf.phase_badge.text()
     assert perf.table.rowCount() == len(state.tracks)
+    state.arbiter.apply_command("A", "PREP")
+    state.callback_listener._handle_event({"event": "CHAIN_ABORTED", "target_id": "A", "reason": "STOP"})
+    perf._on_http_callback({"target_id": "A", "payload": {"event": "CHAIN_ABORTED", "reason": "STOP"}})
+    assert state.arbiter.get_state("A").value == "FREE" and "中止" in perf.phase_badge.text()
+    wait_for_all_tasks(timeout_s=30.0)

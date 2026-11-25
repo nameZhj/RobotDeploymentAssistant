@@ -89,7 +89,7 @@ class TrajectoryRepository:
             return self._row_to_traj(row) if row else None
 
     def next_trajectory_no(self, track_no: int = 1) -> int:
-        """Compute UniUni track-prefixed number (e.g., 100001 for track 1, 200001 for track 2)."""
+        """Compute stage track-prefixed number (e.g., 100001 for track 1, 200001 for track 2)."""
         base = max(1, track_no) * 100000
         upper = base + 99999
         with self.db.session() as conn:

@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, Optional
 from PySide6.QtWidgets import QHBoxLayout, QTableWidgetItem, QWidget
 
 from src.core.event_bus import StudioEvent
-from src.protocol.robot_http_client import RobotHttpClient
+from src.protocol.robot_http_client import RobotHttpResponse
 from src.services.studio_state_service import StudioStateService
+from src.ui.common.async_task import TaskHandle, run_in_background
 from src.ui.design_system.u_buttons import UButton
 from src.ui.design_system.u_dialog import UDialog
 from src.ui.design_system.u_panels import UTable
@@ -34,6 +35,7 @@ class DeviceOverviewModal(UDialog):
         del_b.clicked.connect(self._on_delete)
         ping_b = UButton("刷新在线状态", variant="default", size="sm", icon_name="refresh", parent=self)
         ping_b.clicked.connect(self.refresh_online_health)
+        self.ping_b = ping_b
         rst_b = UButton("释放全队 LRMP (FREE)", variant="default", size="sm", parent=self)
         rst_b.clicked.connect(self._on_reset_lrmp)
         for b in (add_b, edit_b, del_b, ping_b, rst_b):
@@ -57,16 +59,24 @@ class DeviceOverviewModal(UDialog):
             self.table.setItem(r, 4, QTableWidgetItem(f"LRMP:{mode}"))
             self.table.setItem(r, 5, QTableWidgetItem(self._online_cache.get(t.target_id.upper(), "未检测")))
 
-    def refresh_online_health(self) -> int:
-        client = RobotHttpClient(timeout_s=1.2)
+    def refresh_online_health(self) -> Optional[TaskHandle]:
+        """Probe /api/v1/health on all tracks in the background (parallel) and refresh the table afterwards."""
+        return run_in_background(
+            self.state.fleet_health,
+            on_done=self._on_health_done,
+            busy_widgets=[self.ping_b],
+            busy_text="正在后台检测全队 HTTP / ROS 在线状态...",
+            notifier=self.state.notify,
+        )
+
+    def _on_health_done(self, results: Dict[str, RobotHttpResponse]) -> None:
         ok_cnt = 0
         for t in self.state.tracks:
             tid = t.target_id.upper()
-            if not t.robot_ip:
+            resp = results.get(tid)
+            if resp is None:
                 self._online_cache[tid] = "未设IP"
-                continue
-            resp = client.health(t.robot_ip)
-            if resp.ok:
+            elif resp.ok:
                 ok_cnt += 1
                 ros_s = "ROS在线" if resp.data.get("ros_master_reachable") else "ROS离线"
                 self._online_cache[tid] = f"在线 · {ros_s}"
@@ -74,7 +84,6 @@ class DeviceOverviewModal(UDialog):
                 self._online_cache[tid] = "离线"
         self.refresh()
         self.state.notify(f"设备在线检测完成: {ok_cnt}/{len(self.state.tracks)} 台可达", "ok" if ok_cnt == len(self.state.tracks) else "warn")
-        return ok_cnt
 
     def _selected_track(self):
         row = self.table.currentRow()
@@ -99,13 +108,25 @@ class DeviceOverviewModal(UDialog):
                 self.state.notify(f"已删除机器人 {name} (支持 Ctrl+Z 撤销)", "info")
                 self.refresh()
 
-    def _on_reset_lrmp(self) -> None:
+    def _on_reset_lrmp(self) -> Optional[TaskHandle]:
+        """Release LRMP authority on every track in the background; arbiter + UI update when done."""
+        commands = [(t.target_id, "RELEASE", []) for t in self.state.tracks]
+        if not commands:
+            self.state.notify("当前没有机器人轨道可释放", "info")
+            return None
+        return run_in_background(
+            lambda: self.state.dispatch_targets_http(commands),
+            on_done=self._on_reset_done,
+            busy_text=f"正在后台向 {len(commands)} 台机器人释放 LRMP 控制权...",
+            notifier=self.state.notify,
+        )
+
+    def _on_reset_done(self, results) -> None:
         ok_cnt = 0
-        for t in self.state.tracks:
-            res = self.state.dispatch_command_http(t.target_id, "RELEASE")
-            if res.get("ok"):
+        for r in results:
+            if r.get("ok"):
                 ok_cnt += 1
-            self.state.arbiter.apply_command(t.target_id, "RELEASE")
+            self.state.arbiter.apply_command(str(r.get("target_id", "")), "RELEASE")
         self.state.bus.publish(StudioEvent.ROBOT_TELEMETRY_UPDATED, None)
-        self.state.notify(f"已释放全部轨道控制权至 FREE (Wi-Fi HTTP 响应 {ok_cnt}/{len(self.state.tracks)})", "ok")
+        self.state.notify(f"已释放全部轨道控制权至 FREE (Wi-Fi HTTP 响应 {ok_cnt}/{len(results)})", "ok")
         self.refresh()

@@ -1,5 +1,5 @@
 # @file: src/ui/choreography/task_editor_widget.py
-# @brief: UniUni TaskEditor container combining 38px TimelineHeader, 40px EditorOpbar, and scrollable TimelineLaneView.
+# @brief: stage TaskEditor container combining 38px TimelineHeader, 40px EditorOpbar, and scrollable TimelineLaneView.
 # @exports: TaskEditorWidget
 
 from __future__ import annotations

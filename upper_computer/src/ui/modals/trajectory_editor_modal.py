@@ -22,6 +22,7 @@ from src.core.event_bus import StudioEvent
 from src.domain.trajectory_entities import ControlPoint2D, TrajectoryEntity
 from src.math.trajectory_sampler import sample_trajectory_50fps
 from src.services.studio_state_service import StudioStateService
+from src.ui.common.async_task import TaskHandle, run_in_background
 from src.ui.design_system.tokens import C_CARD, C_TEXT_2, FONT_MONO, LINE
 from src.ui.design_system.u_buttons import UBadge, UButton, USegmented
 from src.ui.design_system.u_dialog import UDialog
@@ -202,20 +203,30 @@ class TrajectoryEditorModal(UDialog):
         dlg.body_layout.addWidget(txt, 1)
         dlg.exec()
 
-    def _upload_http(self) -> None:
+    def _upload_http(self) -> Optional[TaskHandle]:
+        """Upload the waypoint chain to the robot in the background; badge updates when done."""
         self._sync_fields_and_preview()
         if not self.traj.control_points:
             self.http_badge.setText("请先在画布添加至少 1 个航点")
             self.http_badge.set_tone("warn")
-            return
+            return None
         ip = next((t.robot_ip.strip() for t in self.state.tracks if t.robot_ip), "")
         tgt = next((t.target_id for t in self.state.tracks if t.robot_ip), "A")
         if not ip:
             self.http_badge.setText("未配置机器人 Wi-Fi IP")
             self.http_badge.set_tone("warn")
-            return
+            return None
         payload = self._build_chain_payload(tgt, ip)
-        res = self.state.http_rpc.upload_task_chain(ip, tgt, payload)
+        self.http_badge.setText("[HTTP] 任务链后台下发中...")
+        self.http_badge.set_tone("accent")
+        return run_in_background(
+            lambda: self.state.http_rpc.upload_task_chain(ip, tgt, payload),
+            on_done=self._on_upload_done,
+            busy_text="正在后台下发轨迹任务链 (Wi-Fi HTTP)...",
+            notifier=self.state.notify,
+        )
+
+    def _on_upload_done(self, res) -> None:
         self.http_badge.setText(f"[HTTP] {'已下发' if res.ok else res.message[:22]}")
         self.http_badge.set_tone("ok" if res.ok else "warn")
 

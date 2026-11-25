@@ -1,12 +1,11 @@
 # @file: src/ui/mapping/pcd_map_library_dock.py
-# @brief: Clean zero-overlap PCD Map Library dock supporting local upload, stage loading, rename, calibration, and delete.
+# @brief: Clean zero-overlap PCD Map Library dock supporting local upload, background robot push/pull, stage loading, rename, calibration, and delete.
 # @exports: PcdMapLibraryDock
 
 from __future__ import annotations
 
 from pathlib import Path
-import shutil
-from typing import Optional
+from typing import Any, Dict, List, Optional, Tuple
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -25,10 +24,17 @@ from src.domain.map_entities import PcdMapEntity
 from src.persistence.pcd_grid_generator import generate_occupancy_grid_png
 from src.persistence.pcd_parser import PcdPointCloud, load_pcd
 from src.services.studio_state_service import StudioStateService
+from src.ui.common.async_task import TaskHandle, run_in_background
 from src.ui.design_system.tokens import C_CARD, C_TEXT_2, FONT_MONO, LINE
 from src.ui.design_system.u_buttons import UButton
 from src.ui.design_system.u_inputs import USearchInput
 from src.ui.design_system.u_panels import UPanel
+from src.ui.mapping.pcd_remote_sync import (
+    download_remote_pcd,
+    import_pcd_entity,
+    list_remote_pcds,
+    push_pcd_to_robot,
+)
 from src.ui.modals.coord_transform_modal import CoordTransformModal
 
 
@@ -143,16 +149,16 @@ class PcdMapLibraryDock(UPanel):
             f"路径: {Path(m.file_path).name}"
         )
 
-    def push_selected_to_robot(self, restart_localization: Optional[bool] = None) -> bool:
-        """Push selected local .pcd file to active robot's discovered onboard map dir via Wi-Fi HTTP."""
+    def push_selected_to_robot(self, restart_localization: Optional[bool] = None) -> Optional[TaskHandle]:
+        """Push selected local .pcd file to the active robot in the background (large upload)."""
         m = self._selected_entity()
         if not m or not m.file_path or not Path(m.file_path).exists():
             self.state.notify("请先选择有效的本地 PCD 地图", "warn")
-            return False
+            return None
         robot_ip = self.active_robot_ip.strip() or next((tr.robot_ip.strip() for tr in self.state.tracks if tr.robot_ip), "")
         if not robot_ip:
             self.state.notify("请先添加配置了 Wi-Fi IP 的机器人轨道", "warn")
-            return False
+            return None
         if restart_localization is None:
             ans = QMessageBox.question(
                 self,
@@ -162,64 +168,70 @@ class PcdMapLibraryDock(UPanel):
                 QMessageBox.StandardButton.No,
             )
             if ans == QMessageBox.StandardButton.Cancel:
-                return False
+                return None
             restart_localization = ans == QMessageBox.StandardButton.Yes
-        res = self.state.http_rpc.upload_slam_pcd(robot_ip, Path(m.file_path), restart_localization=bool(restart_localization))
-        self.state.notify(res.message, "ok" if res.ok else "warn")
-        return res.ok
+        pcd_path, ip_final, restart_final = Path(m.file_path), robot_ip, bool(restart_localization)
+        return run_in_background(
+            lambda: push_pcd_to_robot(self.state.http_rpc, ip_final, pcd_path, restart_final),
+            on_done=lambda res: self.state.notify(res.message, "ok" if res.ok else "warn"),
+            busy_text=f"正在后台推送 {m.name}.pcd 到 {robot_ip}（大文件，请稍候）...",
+            notifier=self.state.notify,
+        )
 
     def upload_pcd_dialog(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "上传本地 PCD 地图", "", "PCD Files (*.pcd)")
         if path:
             self.import_pcd_file(Path(path), activate=True)
 
-    def sync_remote_pcd_dialog(self) -> Optional[PcdMapEntity]:
-        """Discover onboard .pcd maps over Wi-Fi HTTP and download selected real map."""
+    def sync_remote_pcd_dialog(self) -> Optional[TaskHandle]:
+        """Discover onboard .pcd maps over Wi-Fi HTTP (background) and download the selected real map."""
         robot_ip = self.active_robot_ip.strip() or next((tr.robot_ip.strip() for tr in self.state.tracks if tr.robot_ip), "")
         if not robot_ip:
             self.state.notify("请先添加配置了 Wi-Fi IP 的机器人轨道", "warn")
             return None
-        res = self.state.http_rpc.list_remote_maps(robot_ip)
-        maps = (res.data.get("maps") or []) if res.ok else []
+        return run_in_background(
+            lambda: list_remote_pcds(self.state.http_rpc, robot_ip),
+            on_done=lambda payload: self._on_remote_listed(robot_ip, payload),
+            on_error=lambda err: self.state.notify(f"拉取机载 PCD 列表失败: {err.splitlines()[0]}", "warn"),
+            busy_text=f"正在后台发现 {robot_ip} 机载 .pcd 地图...",
+            notifier=self.state.notify,
+        )
+
+    def _on_remote_listed(self, robot_ip: str, payload: Tuple[Any, List[Dict[str, Any]]]) -> None:
+        res, maps = payload
         if not maps:
-            self.state.notify(f"未在机器人端动态发现 .pcd 地图 ({res.message})", "warn")
-            return None
+            self.state.notify(f"未在机器人端动态发现 .pcd 地图 ({getattr(res, 'message', '')})", "warn")
+            return
         choices = [f"{m['name']}.pcd ({round(m['size_bytes'] / (1024 * 1024), 2)}MB) — {m['path']}" for m in maps]
         if len(choices) == 1:
             idx = 0
         else:
             picked, ok = QInputDialog.getItem(self, "选择机载真实 PCD 地图", "动态发现的机载地图:", choices, 0, False)
             if not ok or picked not in choices:
-                return None
+                return
             idx = choices.index(picked)
         remote_p = str(maps[idx]["path"])
-        dst = get_paths().maps_dir / Path(remote_p).name
-        dl = self.state.http_rpc.download_slam_pcd(robot_ip, dst, remote_path=remote_p)
+        run_in_background(
+            lambda: self._download_and_import(robot_ip, remote_p),
+            on_done=self._on_remote_imported,
+            on_error=lambda err: self.state.notify(f"拉取机载 PCD 失败: {err.splitlines()[0]}", "warn"),
+            busy_text=f"正在后台下载机载地图 {Path(remote_p).name} 并生成栅格...",
+            notifier=self.state.notify,
+        )
+
+    def _download_and_import(self, robot_ip: str, remote_p: str) -> Tuple[PcdMapEntity, PcdPointCloud]:
+        dl, dst = download_remote_pcd(self.state.http_rpc, robot_ip, remote_p)
         if not dl.ok:
-            self.state.notify(f"下载机载 PCD 失败: {dl.message}", "warn")
-            return None
-        return self.import_pcd_file(dst, activate=True)
+            raise RuntimeError(f"下载机载 PCD 失败: {dl.message}")
+        return import_pcd_entity(self.state, dst)
+
+    def _on_remote_imported(self, imported: Tuple[PcdMapEntity, PcdPointCloud]) -> None:
+        saved, cloud = imported
+        self._activate_map(saved, cloud)
+        self.refresh()
 
     def import_pcd_file(self, src: Path, activate: bool = True) -> PcdMapEntity:
-        dst = get_paths().maps_dir / src.name
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        if src.resolve() != dst.resolve():
-            shutil.copy2(src, dst)
-        self.state.map_repo.unmark_deleted_map_path(str(dst))
-        cloud = load_pcd(dst, max_points=100000)
-        png = get_paths().pcd_cache_dir / f"{dst.stem}_grid.png"
-        grid = generate_occupancy_grid_png(cloud, png)
-        ent = PcdMapEntity(
-            name=dst.stem,
-            file_path=str(dst),
-            file_size=dst.stat().st_size,
-            point_count=cloud.header.points,
-            grid_png_path=grid.png_path,
-            resolution=grid.resolution,
-            origin_x=grid.origin_x,
-            origin_y=grid.origin_y,
-        )
-        saved = self.state.map_repo.upsert_map(ent)
+        saved, cloud = import_pcd_entity(self.state, src)
         if activate:
             self._activate_map(saved, cloud)
         self.refresh()

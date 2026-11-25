@@ -25,7 +25,7 @@ class TestRobotIdAndTargetControl(unittest.TestCase):
             ("r2", "R2"),
             ("G1_02", "G1_02"),
             ("robot-1", "ROBOT-1"),
-            ("g1_unitree_01", "G1_UNITREE_01"),
+            ("g1_robot_01", "G1_ROBOT_01"),
             ("99", "99"),
             ("  c  ", "C"),
             ("A_B-C", "A_B-C"),

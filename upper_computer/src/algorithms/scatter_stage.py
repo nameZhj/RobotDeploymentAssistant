@@ -17,7 +17,7 @@ def generate_scatter_positions(
     inner_radius: float = 1.4,
     center: Point2D = (0.0, 0.0),
 ) -> List[Point2D]:
-    """Generate two-ring outer(65%) + inner(35%) scatter waypoints matching UniUni algorithms-RYCS08SV."""
+    """Generate two-ring outer(65%) + inner(35%) scatter waypoints matching standard stage specs algorithms-RYCS08SV."""
     n = max(1, count)
     outer = math.ceil(n * 0.65)
     inner = n - outer

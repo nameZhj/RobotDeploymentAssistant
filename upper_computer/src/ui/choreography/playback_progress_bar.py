@@ -1,5 +1,5 @@
 # @file: src/ui/choreography/playback_progress_bar.py
-# @brief: Floating UniUni playback bar with scrubbed seek track, stop-to-origin button, collision markers, and active chain label.
+# @brief: Floating playback bar with scrubbed seek track, stop-to-origin button, collision markers, and active chain label.
 # @exports: PlaybackProgressBar
 
 from __future__ import annotations
@@ -131,7 +131,7 @@ class PlaybackProgressBar(QWidget):
 
     def _refresh(self) -> None:
         t = self.state.playhead_s
-        tot = self.state.total_duration()
+        tot = self.state.effective_playback_duration() or self.state.total_duration()
         intervals = [(c.start_time, c.end_time) for c in self.state.collisions]
         self.rail.set_data(t, tot, intervals)
         self.time_lbl.setText(active_chain_node_label(self.state.blocks, t, is_playing=self.playback.is_playing))

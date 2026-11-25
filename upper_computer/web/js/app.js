@@ -206,6 +206,39 @@ const App = {
         this.closeOpsModal();
       }
     });
+
+    this.bindOpsConsoleToggles();
+  },
+
+  // 运维中心底部控制台条：展开 / 收起切换，展开状态记忆在 localStorage
+  bindOpsConsoleToggles() {
+    const strips = document.querySelectorAll('.ops-console-strip');
+    if (!strips.length) return;
+    const STORAGE_KEY = 'opsConsoleExpanded';
+    let expanded = false;
+    try { expanded = localStorage.getItem(STORAGE_KEY) === '1'; } catch (_) {}
+
+    const apply = (strip, isExpanded) => {
+      strip.classList.toggle('expanded', isExpanded);
+      const btn = strip.querySelector('.ops-console-toggle');
+      if (btn) {
+        btn.textContent = isExpanded ? '⤡ 收起' : '⤢ 展开';
+        btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+      }
+    };
+
+    strips.forEach(strip => {
+      apply(strip, expanded);
+      const btn = strip.querySelector('.ops-console-toggle');
+      if (btn && !btn.dataset.bound) {
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => {
+          expanded = !strip.classList.contains('expanded');
+          strips.forEach(s => apply(s, expanded));
+          try { localStorage.setItem(STORAGE_KEY, expanded ? '1' : '0'); } catch (_) {}
+        });
+      }
+    });
   },
 
   openOpsModal(tabId = 'tab-network') {
@@ -415,29 +448,30 @@ const App = {
       const exp = p.expire_date || '永久授权';
       const dances = p.dance_count !== undefined ? p.dance_count : (p.dances?.length || 0);
       const customer = p.customer || '商业客户';
-      const model = p.model || 'Unitree G1';
+      const model = p.model || 'G1';
 
       if (res.license_valid) {
         licStatusEl.innerHTML = `
           <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px;">
             <div style="color: #34d399; font-weight: 700; font-size: 0.84rem; display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
               <span>✅ 授权已生效</span>
-              <span class="card-badge" style="font-size: 0.65rem; padding: 1px 5px;">${model}</span>
+              <span class="card-badge" style="font-size: 0.65rem; padding: 1px 5px;">${escapeHtml(model)}</span>
             </div>
             <div style="font-size: 0.75rem; color: #a7f3d0; line-height: 1.5;">
-              <div><b>授权客户:</b> ${customer}</div>
-              <div><b>有效期限:</b> <span style="color: #6ee7b7; font-weight: 600;">${exp}</span></div>
-              <div><b>包含舞蹈:</b> <span style="color: #6ee7b7; font-weight: 600;">${dances}</span> 首动作</div>
+              <div><b>授权客户:</b> ${escapeHtml(customer)}</div>
+              <div><b>有效期限:</b> <span style="color: #6ee7b7; font-weight: 600;">${escapeHtml(exp)}</span></div>
+              <div><b>包含舞蹈:</b> <span style="color: #6ee7b7; font-weight: 600;">${escapeHtml(dances)}</span> 首动作</div>
             </div>
           </div>
         `;
       } else {
+        const failReason = res.msg ? escapeHtml(res.msg) : '日志检测到 <code>[SKIP] not licensed</code>';
         licStatusEl.innerHTML = `
           <div style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px;">
             <div style="color: #f87171; font-weight: 700; font-size: 0.84rem; margin-bottom: 4px;">❌ 授权校验未通过</div>
             <div style="font-size: 0.75rem; color: #fca5a5; line-height: 1.4;">
-              <div>日志检测到 <code>[SKIP] not licensed</code></div>
-              <div style="color: #f87171; margin-top: 2px;">可能由于机器码不匹配，请重新导入</div>
+              <div>${failReason}</div>
+              <div style="color: #f87171; margin-top: 2px;">请核对机器码或重新导入授权文件</div>
             </div>
           </div>
         `;
@@ -715,6 +749,12 @@ const App = {
                 logLine('舞蹈动作包导入遇到异常，请查看统一执行日志', true);
                 showToast('舞蹈动作包导入遇到异常，请查看右侧执行日志', 'error');
               }
+            }, () => {
+              // W-5: SSE 断流兜底——复位按钮避免永久 disabled
+              btnSubmitUpdate.disabled = false;
+              btnSubmitUpdate.textContent = '🚀 一键上传并导入舞蹈动作包';
+              logLine('上传任务日志流中断，请检查连接后重试', true);
+              showToast('上传任务日志流中断，请重试', 'error');
             });
           } else {
             btnSubmitUpdate.disabled = false;

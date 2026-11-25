@@ -1,5 +1,5 @@
 # @file: src/ui/design_system/tokens.py
-# @brief: Authoritative UniUni v3 design tokens (ugc-v3.css) for dark surfaces, brand accents, typography, and layout sizing.
+# @brief: Authoritative desktop v3 design tokens (ugc-v3.css) for dark surfaces, brand accents, typography, and layout sizing.
 # @exports: C_CANVAS, C_BASE, C_PANEL, C_CARD, C_CONTROL, C_CONTROL_HOVER, C_FLOAT, C_ACCENT, C_OK, C_WARN, C_DANGER, ROBOT_COLORS, C_TEXT_1, C_TEXT_2, C_TEXT_3, LINE, LINE_STRONG, H_HEADER, H_STATUS, W_RIGHT_LIB, W_OPBAR, W_TRACK_HEAD
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ H_BTN = 32
 H_BTN_SM = 28
 H_BTN_XS = 24
 
-# Fixed UniUni Shell Geometry
+# Fixed stage Shell Geometry
 H_HEADER = 32
 H_STATUS = 28
 H_TL_HEADER = 38

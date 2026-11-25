@@ -159,6 +159,9 @@ const RobotControl = {
     const btnScanLan = document.getElementById('btn-scan-http-robots');
     if (btnScanLan) btnScanLan.addEventListener('click', () => this.scanLanRobots());
 
+    const btnProbeMotion = document.getElementById('btn-probe-motion-action');
+    if (btnProbeMotion) btnProbeMotion.addEventListener('click', () => this.probeSelectedMotion());
+
     this.bindModalEvents();
 
     const clearLogBtn = document.getElementById('ctrl-clear-log-btn');
@@ -507,7 +510,7 @@ const RobotControl = {
       const onlineTag = h ? (h.online ? `🟢 ${h.latency_ms ?? 0}ms` : '🔴 离线') : '⚪ 检测中';
 
       const card = document.createElement('div');
-      card.className = `target-card ${isSelected ? 'active' : ''}`;
+      card.className = `target-card ${isSelected ? 'active' : ''} ${h?.safety_locked ? 'safety-locked' : ''}`.trim();
       card.setAttribute('data-target', robotId);
 
       const topBar = document.createElement('div');
@@ -546,6 +549,51 @@ const RobotControl = {
       card.appendChild(topBar);
       card.appendChild(idDiv);
       card.appendChild(desc);
+
+      if (h && h.online) {
+        const stateRow = document.createElement('div');
+        stateRow.className = 'robot-state-row';
+        const modeTxt = h.active_dance ? `💃 ${h.active_dance}` : (h.motion_state || '');
+        if (modeTxt) {
+          const p = document.createElement('span');
+          if (h.safety_locked) {
+            p.className = 'fault-pill fatal';
+          } else {
+            const modeCls = ['GAIT', 'STAND'].includes(h.motion_state) ? 'ok' : '';
+            p.className = `state-pill ${modeCls}`.trim();
+          }
+          p.textContent = modeTxt;
+          stateRow.appendChild(p);
+        }
+        if (h.nav_input) {
+          const np = document.createElement('span');
+          np.className = `state-pill ${['READY', 'ACTIVE'].includes(h.nav_input) ? 'ok' : ''}`.trim();
+          np.textContent = h.nav_input;
+          stateRow.appendChild(np);
+        }
+        if (h.nav_status === 'FAILED') {
+          const nfp = document.createElement('span');
+          nfp.className = 'fault-pill fatal';
+          nfp.textContent = `NAV:${h.nav_reason || 'FAILED'}`;
+          stateRow.appendChild(nfp);
+        }
+        if (h.motion_udp_enabled) {
+          const up = document.createElement('span');
+          const reach = h.motion_udp && h.motion_udp.reachable === true;
+          up.className = `state-pill ${reach ? 'ok' : 'warn'}`;
+          up.textContent = reach ? 'UDP✓' : 'UDP✕';
+          stateRow.appendChild(up);
+        }
+        (h.active_faults || []).forEach(f => {
+          const fp = document.createElement('span');
+          const fatal = f.level === 'ERROR' || f.level === 'FATAL';
+          fp.className = `fault-pill ${fatal ? 'fatal' : 'warn'}`;
+          fp.textContent = f.code || f.level || 'FAULT';
+          stateRow.appendChild(fp);
+        });
+        if (stateRow.children.length > 0) card.appendChild(stateRow);
+      }
+
       card.addEventListener('click', (e) => this.handleCardClick(robotId, e.ctrlKey || e.metaKey));
       container.appendChild(card);
     });
@@ -560,6 +608,64 @@ const RobotControl = {
     if (summaryEl) summaryEl.textContent = `已选: ${this.getSelectionSummaryText()}`;
     const prefixEl = document.getElementById('ctrl-active-target-prefix');
     if (prefixEl) prefixEl.textContent = this.getCommandPrefixText();
+  },
+
+  async probeSelectedMotion() {
+    const effective = this.getEffectiveSelectedRobots();
+    if (effective.length === 0) {
+      if (typeof showToast === 'function') showToast('请先在上方选择机器人后再探测运控', 'warning');
+      return;
+    }
+    const targetStr = effective.join(',');
+    this.logTerminal('system', `[UDP PROBE] 正在探测 [${targetStr}] G1 运控 UDP 连通并同步状态...`);
+    try {
+      const res = await API.probeHttpMotion(targetStr, this.getTargetsMap());
+      if (res && Array.isArray(res.results)) {
+        res.results.forEach(r => this.logTerminal(r.ok ? 'rx' : 'error', `[UDP PROBE ${r.target}] ${r.msg || (r.ok ? '可达' : '超时')}`));
+      } else {
+        this.logTerminal(res?.ok ? 'rx' : 'error', `[UDP PROBE] ${res?.msg || '探测失败'}`);
+      }
+      await this.refreshFleetHealth(true);
+    } catch (e) {
+      this.logTerminal('error', `[UDP PROBE] 探测异常: ${e.message || e}`);
+    }
+  },
+
+  _diffHealthChanges(prevMap, nextMap) {
+    Object.entries(nextMap || {}).forEach(([tid, cur]) => {
+      if (!cur || !cur.online) return;
+      const prev = prevMap?.[tid];
+      const prevMode = prev?.motion_state || '';
+      if (cur.motion_state && prevMode && cur.motion_state !== prevMode) {
+        const isLock = ['ESTOP', 'FAULT', 'MANUAL_OVERRIDE'].includes(cur.motion_state);
+        this.logTerminal(isLock ? 'error' : 'rx', `[STATE ${tid}] ${prevMode} -> ${cur.motion_state}${cur.nav_input ? ` (${cur.nav_input})` : ''}`);
+      }
+      const prevCodes = new Map((prev?.active_faults || []).map(f => [f.code, f.level]));
+      const nextCodes = new Map((cur.active_faults || []).map(f => [f.code, f.level]));
+      nextCodes.forEach((lvl, code) => {
+        if (!prevCodes.has(code)) {
+          const fatal = lvl === 'FATAL' || lvl === 'ERROR';
+          this.logTerminal(fatal ? 'error' : 'system', `[FAULT ${tid}] ${lvl}:${code}`);
+          if (fatal && typeof showToast === 'function') showToast(`Robot ${tid} ${lvl}: ${code}`, 'error');
+        }
+      });
+      prevCodes.forEach((_lvl, code) => {
+        if (!nextCodes.has(code)) this.logTerminal('rx', `[FAULT CLEAR ${tid}] ${code} 已清除`);
+      });
+      if (cur.nav_status === 'FAILED' && (prev?.nav_status !== 'FAILED' || prev?.nav_reason !== cur.nav_reason)) {
+        const reason = cur.nav_reason || 'FAILED';
+        this.logTerminal('error', `[NAV FAIL ${tid}] ${reason}`);
+        if (reason === 'LOC_LOST' && typeof showToast === 'function') showToast(`Robot ${tid} 定位丢失 (LOC_LOST)`, 'error');
+      }
+    });
+  },
+
+  scheduleHealthRefresh(delayMs = 350) {
+    if (this._quickRefreshTimer) clearTimeout(this._quickRefreshTimer);
+    this._quickRefreshTimer = setTimeout(() => {
+      this._quickRefreshTimer = null;
+      if (this.fleet.length > 0) this.refreshFleetHealth(true);
+    }, delayMs);
   },
 
   // --- Wi-Fi 局域网 HTTP 健康轮询 ---
@@ -578,7 +684,9 @@ const RobotControl = {
     try {
       const res = await API.checkHttpHealth(this.fleet);
       if (res && res.robots) {
+        const prevMap = this.healthMap || {};
         this.healthMap = res.robots;
+        this._diffHealthChanges(prevMap, res.robots);
         this.renderTargetCards();
         this.updateNavbarHttpStatus();
         if (!silent) {
@@ -625,7 +733,16 @@ const RobotControl = {
         const list = Array.isArray(res.results) ? res.results : [];
         const hasReserved = list.some(r => r?.data?.execution_mode === 'RESERVED_SLOT');
         const tag = hasReserved ? ' [RESERVED_SLOT·待DDS挂载]' : '';
-        this.logTerminal('tx', `[HTTP TX] ${target}|${command}${tag} -> ${res.msg || 'OK'}`);
+        if (res.all_ok === false && list.length > 0) {
+          list.filter(r => r.ok).forEach(r => this.logTerminal('tx', `[HTTP TX] ${r.target}|${command} -> ${r.msg}`));
+          list.filter(r => !r.ok).forEach(r => this.logTerminal('error', `[HTTP REJECT] ${r.target}|${command} -> ${r.msg}`));
+        } else {
+          this.logTerminal('tx', `[HTTP TX] ${target}|${command}${tag} -> ${res.msg || 'OK'}`);
+        }
+        const head = command.split(',')[0];
+        if (['STAND', 'GAIT', 'PASSIVE', 'STOP', 'EMERGENCY', 'RELEASE', 'DANCE'].includes(head)) {
+          this.scheduleHealthRefresh(350);
+        }
       } else {
         this.logTerminal('error', `[HTTP FAIL] ${target}|${command} -> ${res?.msg || '下位机 HTTP 不可达'}`);
       }
@@ -659,7 +776,7 @@ const RobotControl = {
         if (key && (this.TRANSLATION_KEYS[key] || this.ROTATION_KEYS[key])) btn.classList.remove('key-active');
       });
       this.logTerminal('system', '[MOVEMENT] 松开移动/转向按键，通过 HTTP 下发停止指令 (STOP)');
-      this.sendCommand('STOP');
+      this.sendStopCommand(false);
     }
   },
 
@@ -667,7 +784,29 @@ const RobotControl = {
     this.activeTranslationKeys.clear();
     this.activeRotationKeys.clear();
     if (this.movementTimer) { clearInterval(this.movementTimer); this.movementTimer = null; }
-    this.sendCommand('STOP');
+    this.sendStopCommand(false);
+  },
+
+  // W-10: 停止/急停统一改走结构化端点 /api/http/stop（emergency 标志位），不再用自由文本 'STOP' 指令。
+  // 该端点不接受 targets_map，多目标时逐台下发。
+  async sendStopCommand(emergency = false) {
+    const effective = this.getEffectiveSelectedRobots();
+    if (effective.length === 0) {
+      this.logTerminal('error', `[HTTP WARN] 未选中任何受控目标！请先添加或勾选机器人（拟下发: ${emergency ? '急停' : '停止'}）`);
+      return;
+    }
+    const tmap = this.getTargetsMap();
+    const results = await Promise.all(effective.map(async (tid) => {
+      const ep = tmap && tmap[tid] ? tmap[tid] : {};
+      try {
+        const res = await API.stopHttpRobot(tid, emergency, ep.ip || '', ep.port || null);
+        return { target: tid, ok: !!(res && res.success), msg: (res && res.msg) ? res.msg : (res && res.success ? 'OK' : '下位机 HTTP 不可达') };
+      } catch (e) {
+        return { target: tid, ok: false, msg: e.message || String(e) };
+      }
+    }));
+    results.forEach(r => this.logTerminal(r.ok ? 'tx' : 'error', `[HTTP ${emergency ? 'ESTOP' : 'STOP'}] ${r.target} -> ${r.msg}`));
+    this.scheduleHealthRefresh(350);
   },
 
   bindCommandButtons() {
@@ -685,8 +824,10 @@ const RobotControl = {
         const onRel = (e) => {
           e.preventDefault();
           btn.classList.remove('key-active');
-          if (this.TRANSLATION_KEYS[key]) this.activeTranslationKeys.delete(key);
-          else this.activeRotationKeys.delete(key);
+          const wasActive = this.TRANSLATION_KEYS[key]
+            ? this.activeTranslationKeys.delete(key)
+            : this.activeRotationKeys.delete(key);
+          if (!wasActive) return;
           this.stopMovementTimerIfEmpty();
         };
         btn.addEventListener('mousedown', onPress);
@@ -697,7 +838,9 @@ const RobotControl = {
       } else {
         btn.addEventListener('click', () => {
           if (cmd) {
-            this.sendCommand(cmd);
+            // W-10: 停止/急停按钮 (data-cmd="STOP") 改走结构化端点 /api/http/stop (emergency=true)
+            if (cmd === 'STOP') this.sendStopCommand(true);
+            else this.sendCommand(cmd);
             btn.classList.add('key-active');
             setTimeout(() => btn.classList.remove('key-active'), 200);
           }
@@ -722,7 +865,14 @@ const RobotControl = {
       const k = e.key;
       if (this.TRANSLATION_KEYS[k]) { e.preventDefault(); if (e.repeat) return; this.activeTranslationKeys.add(k); this.highlightBtn(k); this.startMovementTimerIfNeeded(); return; }
       if (this.ROTATION_KEYS[k]) { e.preventDefault(); if (e.repeat) return; this.activeRotationKeys.add(k); this.highlightBtn(k); this.startMovementTimerIfNeeded(); return; }
-      if (this.ONE_SHOT_KEYS[k]) { e.preventDefault(); if (e.repeat) return; this.sendCommand(this.ONE_SHOT_KEYS[k]); this.highlightBtn(k); }
+      if (this.ONE_SHOT_KEYS[k]) {
+        e.preventDefault();
+        if (e.repeat) return;
+        // W-10: X 键急停 (ONE_SHOT 'STOP') 改走结构化端点 /api/http/stop (emergency=true)
+        if (this.ONE_SHOT_KEYS[k] === 'STOP') this.sendStopCommand(true);
+        else this.sendCommand(this.ONE_SHOT_KEYS[k]);
+        this.highlightBtn(k);
+      }
     });
     document.addEventListener('keyup', (e) => {
       if (App.activeTab !== 'tab-robot-control') return;
@@ -839,13 +989,13 @@ const RobotControl = {
     if (!container) return;
     let perInfo = '';
     if (perRobotCounts) {
-      const parts = Object.entries(perRobotCounts).map(([k, v]) => `<b>Robot ${k}</b>: ${v} 首`);
+      const parts = Object.entries(perRobotCounts).map(([k, v]) => `<b>Robot ${escapeHtml(k)}</b>: ${escapeHtml(v)} 首`);
       if (parts.length > 0) perInfo = `<div style="margin-top: 8px; font-size: 0.82rem; color: var(--accent-cyan);">${parts.join('  |  ')}</div>`;
     }
     container.innerHTML = `
       <div class="dance-status-card">
         <div class="dance-status-icon">🤝</div>
-        <div class="dance-status-title">[${targetStr}] 无共有动作</div>
+        <div class="dance-status-title">[${escapeHtml(targetStr)}] 无共有动作</div>
         <div class="dance-status-desc">所选设备动作交集为空。${perInfo}</div>
       </div>`;
   },
@@ -855,12 +1005,14 @@ const RobotControl = {
     const countTag = document.getElementById('ctrl-dance-count-tag');
     if (countTag) countTag.textContent = `[${targetStr}] 未就绪`;
     if (!container) return;
+    // W-6: reason 来自服务端响应/异常消息，必须转义后才能插入 innerHTML
+    const safeReason = window.escapeHtml ? escapeHtml(reason) : String(reason || '');
     container.innerHTML = `
       <div class="dance-status-card">
         <div class="dance-status-icon">📡</div>
-        <div class="dance-status-title">未获取到 [${targetStr}] 动作列表</div>
+        <div class="dance-status-title">未获取到 [${escapeHtml(targetStr)}] 动作列表</div>
         <div class="dance-status-desc">
-          ${reason ? `${reason} · ` : ''}请检查局域网连通性与下位机服务状态。
+          ${safeReason ? `${safeReason} · ` : ''}请检查局域网连通性与下位机服务状态。
         </div>
       </div>`;
   },

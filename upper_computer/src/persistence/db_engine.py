@@ -15,7 +15,7 @@ from src.persistence.schema_ddl import ALL_TABLES_DDL, SCHEMA_VERSION
 
 
 class StudioDatabase:
-    """Thread-safe SQLite gateway scoped to .agent_workspace/runtime/uniuni_studio.db."""
+    """Thread-safe SQLite gateway scoped to .agent_workspace/runtime/stage_studio.db."""
 
     def __init__(self, db_path: Optional[Path] = None) -> None:
         self.db_path = Path(db_path) if db_path else get_paths().db_path

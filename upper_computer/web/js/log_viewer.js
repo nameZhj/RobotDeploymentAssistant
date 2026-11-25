@@ -137,12 +137,35 @@ const LogViewer = {
     }
   },
 
+  // W-11: HTTP 通道日志响应无 available_containers（仅 target_container）时的容器下拉兜底刷新；
+  // 经 /api/containers/list（SSH/HTTP 两通道均支持）拉取，15s 限频避免 3s 自动刷新请求翻倍
+  _lastContainerListFetchAt: 0,
+
+  async _refreshContainerListFallback(targetContainer) {
+    const now = Date.now();
+    if (now - this._lastContainerListFetchAt < 15000) return;
+    this._lastContainerListFetchAt = now;
+    try {
+      const listRes = await API.listContainers();
+      const containers = Array.isArray(listRes && listRes.containers) ? listRes.containers
+        : (Array.isArray(listRes && listRes.running_containers) ? listRes.running_containers : []);
+      if (containers.length > 0) {
+        this.updateContainerDropdown(containers, targetContainer);
+      }
+    } catch (err) {
+      console.warn('容器列表兜底刷新失败:', err);
+    }
+  },
+
   async fetchCurrentLogs(isBackground = false) {
     try {
       const lines = this.currentLines || 500;
       const res = await API.getLogs(this.currentLogType, lines, this.currentContainer);
       if (res.available_containers) {
         this.updateContainerDropdown(res.available_containers, res.target_container);
+      } else if (this.currentLogType === 'container') {
+        // W-11: HTTP 通道响应缺 available_containers，走兜底刷新容器下拉，恢复日志页容器选择能力
+        this._refreshContainerListFallback(res.target_container);
       }
       if (res.success) {
         this.lastRawText = res.raw_text || '';
@@ -316,14 +339,16 @@ const LogViewer = {
     }
 
     let html = '';
+    const diagCopyTexts = [];
     for (const diag of diagnostics) {
       const isDanger = diag.severity === 'danger';
-      const diagCopyText = `【${diag.title}】\n描述: ${diag.description}\n特征: ${diag.matched_text}\n建议: ${diag.fix_title}`;
+      const copyIdx = diagCopyTexts.length;
+      diagCopyTexts.push(`【${diag.title}】\n描述: ${diag.description}\n特征: ${diag.matched_text}\n建议: ${diag.fix_title}`);
       html += `
         <div class="diag-alert ${isDanger ? '' : 'warning'}">
           <div style="flex: 1;">
-            <div class="diag-title">⚠️ ${diag.title}</div>
-            <div class="diag-desc">${diag.description}</div>
+            <div class="diag-title">⚠️ ${this.escapeHtml(diag.title)}</div>
+            <div class="diag-desc">${this.escapeHtml(diag.description)}</div>
             <div style="margin-top: 6px; font-family: monospace; font-size: 0.75rem; color: #9ca3af; background: rgba(0,0,0,0.3); padding: 4px 8px; border-radius: 4px; user-select: text;">
               匹配特征: ${this.escapeHtml(diag.matched_text)}
             </div>
@@ -332,7 +357,7 @@ const LogViewer = {
             <button class="btn ${isDanger ? 'btn-danger' : 'btn-primary'} btn-sm" onclick="LogViewer.triggerFix('${diag.fix_action}')">
               🛠️ ${diag.fix_title}
             </button>
-            <button class="btn-copy-mini" onclick="copyToClipboard(${JSON.stringify(diagCopyText)}, '诊断故障信息已复制')">
+            <button type="button" class="btn-copy-mini btn-copy-diag" data-idx="${copyIdx}">
               📋 复制诊断
             </button>
           </div>
@@ -340,6 +365,11 @@ const LogViewer = {
       `;
     }
     diagContainer.innerHTML = html;
+    // 复制按钮通过 data 属性绑定：matched_text 取自机器人日志原文（机器人侧可控），
+    // 避免把含引号的文案拼进 onclick 属性导致标签被截断（与 TabPrecheck.run 同款修复）
+    diagContainer.querySelectorAll('.btn-copy-diag').forEach(btn => {
+      btn.addEventListener('click', () => copyToClipboard(diagCopyTexts[Number(btn.dataset.idx)], '诊断故障信息已复制'));
+    });
   },
 
   triggerFix(action) {

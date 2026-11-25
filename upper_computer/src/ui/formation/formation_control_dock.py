@@ -1,5 +1,5 @@
 # @file: src/ui/formation/formation_control_dock.py
-# @brief: Right 310px UniUni controls.html-inspired formation parameter & potential-field solver control dock.
+# @brief: Right 310px stage controls.html-inspired formation parameter & potential-field solver control dock.
 # @exports: FormationControlDock
 
 from __future__ import annotations

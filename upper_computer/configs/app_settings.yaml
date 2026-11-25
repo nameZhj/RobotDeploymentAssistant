@@ -1,13 +1,13 @@
-# UniUni v3 Stage Choreography & Swarm Control Settings
+# Stage Choreography & Swarm Control Settings
 app_info:
-  app_title: "UniSwarm Studio - Unitree 舞台编导与群控工作台"
+  app_title: "舞台编导与群控工作台"
   version: "3.2.0"
   target_os: ["Windows 10", "Windows 11"]
 
 paths:
   workspace_dir: ".agent_workspace"
   runtime_dir: ".agent_workspace/runtime"
-  db_path: ".agent_workspace/runtime/uniuni_studio.db"
+  db_path: ".agent_workspace/runtime/stage_studio.db"
   pcd_cache_dir: ".agent_workspace/runtime/pcd_cache"
   http_uploads_dir: ".agent_workspace/runtime/http_uploads"
   logs_dir: ".agent_workspace/runtime/logs"

@@ -398,7 +398,7 @@ class DancePlayer3D {
     // 严密隐藏动捕球体与圆柱骨架
     this.setSkeletonVisibility(false);
 
-    // 材质方案：Unitree G1 科技金属与碳素装甲 (双面渲染，杜绝翻转面破洞)
+    // 材质方案：G1 科技金属与碳素装甲 (双面渲染，杜绝翻转面破洞)
     const titaniumMat = new THREE.MeshStandardMaterial({
       color: 0xcfd8e3,       // 亮色科技钛银金属
       metalness: 0.85,
@@ -407,7 +407,7 @@ class DancePlayer3D {
     });
 
     const armorMat = new THREE.MeshStandardMaterial({
-      color: 0x222730,       // Unitree G1 经典深空碳素装甲外壳
+      color: 0x222730,       // G1 经典深空碳素装甲外壳
       metalness: 0.70,
       roughness: 0.32,
       side: THREE.DoubleSide
@@ -421,14 +421,14 @@ class DancePlayer3D {
     });
 
     const headMat = new THREE.MeshStandardMaterial({
-      color: 0x181e28,       // Unitree G1 头部深空黑碳素金属 (杜绝刺眼外星蓝色大灯泡)
+      color: 0x181e28,       // G1 头部深空黑碳素金属
       metalness: 0.78,
       roughness: 0.25,
       side: THREE.DoubleSide
     });
 
     const logoMat = new THREE.MeshStandardMaterial({
-      color: 0x00f0ff,       // 胸口 Unitree Logo 科技荧光青蓝
+      color: 0x00f0ff,       // 胸口 Logo 科技荧光青蓝
       emissive: 0x0088cc,
       emissiveIntensity: 0.55,
       metalness: 0.5,

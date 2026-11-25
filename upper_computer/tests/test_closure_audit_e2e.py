@@ -19,6 +19,7 @@ from src.domain.action_entities import ActionEntity
 from src.domain.timeline_entities import TimelineBlockEntity
 from src.domain.trajectory_entities import ControlPoint2D
 from src.persistence.pcd_parser import PcdHeader, PcdPointCloud, write_ascii_pcd
+from src.ui.common.async_task import wait_for_all_tasks
 from src.ui.modals import (
     AddTrackDialog,
     CoordTransformModal,
@@ -47,7 +48,7 @@ def test_zero_demo_startup_and_full_user_track_crud(tmp_path: Path, monkeypatch)
     assert len(win.state.tracks) == 0
     assert "未添加机器人" in win.statusbar.btn_init.text()
     assert len(win.formation_page.canvas.sources) == 0
-    assert win.network_page.wizard.track_sel.current_data() == ""
+    assert "network" not in win._page_widgets  # 设置页已由主页「网络管理」取代
 
     # 2. User creates real tracks via AddTrackDialog and DeviceOverviewModal
     dlg = AddTrackDialog(win.state, win)
@@ -75,7 +76,6 @@ def test_zero_demo_startup_and_full_user_track_crud(tmp_path: Path, monkeypatch)
 
     # 3. Auto-synced downstream pages immediately see real tracks
     assert len(win.formation_page.canvas.sources) == 2
-    assert win.network_page.ip_table.rowCount() == 2
     assert win.monitoring_page.table.rowCount() == 2
     assert win.mapping_page.teleop_dock.target_sel.count() == 2
 
@@ -249,9 +249,12 @@ def test_timeline_undo_fragment_action_formation_map_lrmp_and_settings(tmp_path:
     win.mapping_page.lib_dock._scan_existing_dir()
     assert all(m.name != "hall_svd" for m in win.state.map_repo.list_maps())
 
-    # Pure Wi-Fi HTTP PerformanceMonitorPage (zero serial TX!) + live clearance & Settings persistence
+    # Pure Wi-Fi HTTP PerformanceMonitorPage (zero serial TX!) + live clearance & settings persistence
     win.monitoring_page._cmd_prep()
+    wait_for_all_tasks(timeout_s=30.0)  # PREP 任务链在后台线程下发，等待回调刷新 UI
+    assert "CHOREO" in win.monitoring_page.phase_badge.text()
     win.monitoring_page._cmd_play()
+    wait_for_all_tasks(timeout_s=30.0)
     assert len(sent_frames) == 0  # Pure Wi-Fi HTTP: never sends task-chain cmds over serial!
     assert "Wi-Fi HTTP" in win.monitoring_page.table.item(0, 3).text()
     assert "安全" in win.monitoring_page.table.item(0, 2).text()
@@ -261,13 +264,13 @@ def test_timeline_undo_fragment_action_formation_map_lrmp_and_settings(tmp_path:
     win.playback.reset_preview()
     assert abs(win.state.playhead_s) < 1e-6
 
-    win.network_page.safety_spin.setValue(0.85)
-    win.network_page.port_spin.setValue(8090)
+    # Settings persistence without the removed Studio settings page (safety threshold is config-level now)
+    win.state.apply_settings_update(0.85, False)
     assert abs(get_settings(reload=True).stage_defaults.safety_distance_m - 0.85) < 1e-4
     assert get_settings(reload=True).virtual_interfaces.http_upload_virtual_fallback is False
     assert get_settings(reload=True).virtual_interfaces.http_default_port == 8090
 
-    # 3D authentic Unitree G1 multi-material + NPZ 21-joint dance & concurrent action+trajectory playback
+    # 3D authentic G1 multi-material + NPZ 21-joint dance & concurrent action+trajectory playback
     vp3d = win.choreography_page.preview_panel.viewport_3d
     clip_kf = vp3d._motion_player.get_clip_for_action("preview/G1_KUNG_FU.npz", "G3_KUNGFU", 550031)
     clip_tk = vp3d._motion_player.get_clip_for_action("preview/G1_TIKTOK.npz", "G1_TIKTOK", 550005)
@@ -275,14 +278,15 @@ def test_timeline_undo_fragment_action_formation_map_lrmp_and_settings(tmp_path:
     _, q_tk = clip_tk.sample_at(2.5)
     assert float(abs(q_kf - q_tk).max()) > 0.05
     from src.viewport3d.stl_vbo_cache import g1_link_material_rgb
-    assert g1_link_material_rgb("meshes/logo_link.STL", (1.0, 0.0, 0.0), False)[2] > 0.9
+    assert g1_link_material_rgb("meshes/logo_link.STL", (1.0, 0.0, 0.0), False)[0] < 0.30
+    assert g1_link_material_rgb("meshes/torso_link.STL", (1.0, 0.0, 0.0), False)[0] > 0.70
     # Concurrent action + trajectory on same track must NOT conflict in sub-lane model
     b_act = TimelineBlockEntity(task_id=1, track_id=tr0.id or 1, block_type="action", start_time=0.0, duration=8.0, title="D")
     b_trj = TimelineBlockEntity(task_id=1, track_id=tr0.id or 1, block_type="trajectory", start_time=0.0, duration=8.0, title="T")
     assert not b_act.overlaps(b_trj)
 
     # L-1 slice merge + L-2 blockSelected highlight + L-3 group rename
-    from src.persistence.uniuni_slice_merger import merge_slice_into_current_task
+    from src.persistence.studio_slice_merger import merge_slice_into_current_task
     slice_data = win.state.json_codec.export_task_to_dict(t_start=0.0, t_end=8.0)
     pre_cnt = len(win.state.blocks)
     assert merge_slice_into_current_task(win.state, slice_data, offset_s=18.0) >= 1

@@ -61,8 +61,14 @@ class SlamMappingClient:
             self.arbiter.apply_command(target_id, "RELEASE")
             return False, f"启动建图失败 ({nav_res.message})"
 
-        self._http.send_posture(ip, "STAND")
-        self._http.send_posture(ip, "GAIT")
+        st_res = self._http.send_posture(ip, "STAND", wait_ready=True)
+        if not st_res.ok:
+            self.arbiter.apply_command(target_id, "RELEASE")
+            return False, f"建图站立预备失败 ({st_res.message})"
+        gt_res = self._http.send_posture(ip, "GAIT", wait_ready=True)
+        if not gt_res.ok:
+            self.arbiter.apply_command(target_id, "RELEASE")
+            return False, f"切换建图步态 GAIT 失败 ({gt_res.message})"
         disc = self._http.fetch_nav_discovery(ip)
         snap = self._http.fetch_slam_live_state(ip)
         p = snap.data.get("pose") if snap.ok else None

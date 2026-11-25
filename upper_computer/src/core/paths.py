@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -13,6 +15,16 @@ from typing import Optional
 def _resolve_repo_root() -> Path:
     """Resolve the project root directory cleanly across source and frozen runs."""
     return Path(__file__).resolve().parents[2]
+
+
+def _default_workspace_root(repo_root: Path) -> Path:
+    """R-4: anchor the writable workspace when frozen so DB/overlay/logs survive process exit."""
+    if getattr(sys, "frozen", False):
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata) / "RDA"
+        return Path(sys.executable).resolve().parent
+    return repo_root
 
 
 @dataclass(frozen=True)
@@ -56,7 +68,7 @@ class WorkspacePaths:
 def build_workspace_paths(root_override: Optional[Path] = None) -> WorkspacePaths:
     """Build WorkspacePaths anchored at the given root or detected repo root."""
     repo_root = _resolve_repo_root()
-    root = Path(root_override).resolve() if root_override else repo_root
+    root = Path(root_override).resolve() if root_override else _default_workspace_root(repo_root)
     workspace_dir = root / ".agent_workspace"
     runtime_dir = workspace_dir / "runtime"
     asset_root = root if (root / "backend" / "models").exists() else repo_root
@@ -69,7 +81,7 @@ def build_workspace_paths(root_override: Optional[Path] = None) -> WorkspacePath
         docs_dir=repo_root / "docs",
         workspace_dir=workspace_dir,
         runtime_dir=runtime_dir,
-        db_path=runtime_dir / "uniuni_studio.db",
+        db_path=runtime_dir / "stage_studio.db",
         pcd_cache_dir=runtime_dir / "pcd_cache",
         http_uploads_dir=runtime_dir / "http_uploads",
         logs_dir=runtime_dir / "logs",
@@ -96,4 +108,10 @@ def get_paths(reset: bool = False) -> WorkspacePaths:
         override = Path(env_root) if env_root else None
         _CACHED_PATHS = build_workspace_paths(override)
         _CACHED_PATHS.ensure_runtime_dirs()
+        legacy_db = _CACHED_PATHS.runtime_dir / "uniuni_studio.db"
+        if not _CACHED_PATHS.db_path.exists() and legacy_db.exists():
+            try:
+                shutil.copy2(legacy_db, _CACHED_PATHS.db_path)
+            except OSError:
+                pass
     return _CACHED_PATHS

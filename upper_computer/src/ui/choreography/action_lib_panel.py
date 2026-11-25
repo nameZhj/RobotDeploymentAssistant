@@ -23,6 +23,7 @@ from src.core.event_bus import StudioEvent
 from src.domain.action_entities import ActionEntity
 from src.services.studio_state_service import StudioStateService
 from src.ui.choreography.track_lib_panel import BLOCK_MIME_TYPE
+from src.ui.common.async_task import TaskHandle, run_in_background
 from src.ui.design_system.tokens import C_CARD, C_CONTROL_HOVER, C_TEXT_1, C_TEXT_2, FONT_MONO, LINE
 from src.ui.design_system.u_buttons import UBadge, UIconButton
 from src.ui.design_system.u_dialog import UDialog
@@ -154,8 +155,14 @@ class ActionLibPanel(UPanel):
             self.list_layout.addWidget(row)
         self.list_layout.addStretch(1)
 
-    def _sync_from_http(self) -> None:
-        self.state.sync_actions_from_http()
+    def _sync_from_http(self) -> Optional[TaskHandle]:
+        """Fetch the onboard action registry on a background thread (never blocks the GUI)."""
+        return run_in_background(
+            self.state.sync_actions_from_http,
+            busy_widgets=[self.sync_btn],
+            busy_text="正在后台从机器人同步机载动作库 (Wi-Fi HTTP)...",
+            notifier=self.state.notify,
+        )
 
     def _edit_action(self, act: ActionEntity) -> None:
         dlg = UDialog(f"编辑动作 [{act.no}]", width=380, height=230, confirm_text="保存", parent=self)

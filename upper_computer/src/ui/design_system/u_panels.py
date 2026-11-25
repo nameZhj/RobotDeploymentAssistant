@@ -1,5 +1,5 @@
 # @file: src/ui/design_system/u_panels.py
-# @brief: Structural containers UPanel, UCollapsibleGroup (.group-card), UTable, and UEmpty for UniUni v3 panels.
+# @brief: Structural containers UPanel, UCollapsibleGroup (.group-card), UTable, and UEmpty for desktop v3 panels.
 # @exports: UPanel, UCollapsibleGroup, UTable, UEmpty
 
 from __future__ import annotations
@@ -186,7 +186,7 @@ class UCollapsibleGroup(QFrame):
 
 
 class UTable(QTableWidget):
-    """Dense UniUni table supporting full-row selection and clean drag-payload creation."""
+    """Dense stage table supporting full-row selection and clean drag-payload creation."""
 
     def __init__(
         self,

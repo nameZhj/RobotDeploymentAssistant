@@ -1,5 +1,5 @@
 # @file: src/ui/modals/task_json_viewer_modal.py
-# @brief: Live JSON inspector and clipboard/file exporter for UniUni task & trajectory structures.
+# @brief: Live JSON inspector and clipboard/file exporter for stage task & trajectory structures.
 # @exports: TaskJsonViewerModal
 
 from __future__ import annotations
@@ -14,10 +14,10 @@ from src.ui.design_system.u_dialog import UDialog
 
 
 class TaskJsonViewerModal(UDialog):
-    """Displays full UniUni JSON serialization of the current task and supports file export."""
+    """Displays full stage JSON serialization of the current task and supports file export."""
 
     def __init__(self, state: StudioStateService, parent: QWidget | None = None) -> None:
-        super().__init__("UniUni 工程 JSON 数据视图", width=720, height=520, confirm_text="关闭", cancel_text="", parent=parent)
+        super().__init__("工程 JSON 数据视图", width=720, height=520, confirm_text="关闭", cancel_text="", parent=parent)
         self.state = state
         payload = state.json_codec.export_task_to_dict()
         self._text = json.dumps(payload, ensure_ascii=False, indent=2)

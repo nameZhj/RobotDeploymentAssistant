@@ -1,5 +1,5 @@
 # @file: src/ui/windows/main_studio_window.py
-# @brief: Studio entrypoint window composing the UniUni v3 shell and assembling all 5 authentic workspace pages.
+# @brief: Studio entrypoint window composing the desktop shell and assembling all 4 authentic workspace pages.
 # @exports: MainStudioWindow
 
 from __future__ import annotations
@@ -16,12 +16,15 @@ from src.ui.modals import (
     StageSizeModal,
 )
 from src.ui.monitoring import PerformanceMonitorPage
-from src.ui.network import SystemNetworkPage
-from src.ui.shell.app_shell_window import UniUniAppShell
+from src.ui.shell.app_shell_window import StudioAppShell
 
 
-class MainStudioWindow(UniUniAppShell):
-    """Unified Studio desktop window preserved as the entry target for main.py."""
+class MainStudioWindow(StudioAppShell):
+    """Unified Studio desktop window preserved as the entry target for main.py.
+
+    Network provisioning / Wi-Fi setup / License management intentionally live in the main
+    deployment console's「网络管理」page, so the Studio no longer ships a duplicate settings page.
+    """
 
     def __init__(
         self,
@@ -42,13 +45,11 @@ class MainStudioWindow(UniUniAppShell):
         self.formation_page = FormationPlanningPage(self.state, self)
         self.mapping_page = NavigationMapPage(self.state, self)
         self.monitoring_page = PerformanceMonitorPage(self.state, self.playback, self)
-        self.network_page = SystemNetworkPage(self.state, self)
 
         self.set_page_widget("choreography", self.choreography_page)
         self.set_page_widget("formation", self.formation_page)
         self.set_page_widget("mapping", self.mapping_page)
         self.set_page_widget("monitoring", self.monitoring_page)
-        self.set_page_widget("network", self.network_page)
 
         self.register_modal_hook("device_overview", lambda: DeviceOverviewModal(self.state, self).exec())
         self.register_modal_hook("stage_size", lambda: StageSizeModal(self.state, self).exec())

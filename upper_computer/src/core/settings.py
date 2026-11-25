@@ -44,7 +44,7 @@ class VirtualInterfaceSettings:
 
 @dataclass
 class UiLayoutSettings:
-    """Fixed UniUni v3 shell dimensions without magic numbers."""
+    """Fixed desktop shell dimensions without magic numbers."""
 
     default_width: int = 1440
     default_height: int = 900
@@ -61,7 +61,7 @@ class UiLayoutSettings:
 class StudioSettings:
     """Top-level settings aggregate loaded from YAML."""
 
-    app_title: str = "UniSwarm Studio - Unitree 舞台编导与群控工作台"
+    app_title: str = "舞台编导与群控工作台"
     version: str = "3.2.0"
     stage_defaults: StageDefaults = field(default_factory=StageDefaults)
     virtual_interfaces: VirtualInterfaceSettings = field(default_factory=VirtualInterfaceSettings)
@@ -92,8 +92,12 @@ def load_settings(config_path: Optional[Path] = None) -> StudioSettings:
                 if isinstance(ov.get(sec), dict):
                     data[sec] = {**(data.get(sec) or {}), **ov[sec]}
     app_info = data.get("app_info", {})
+    raw_title = str(app_info.get("app_title", StudioSettings.app_title))
+    low_t = raw_title.lower()
+    if any(tok in low_t for tok in ("uniswarm", "uniuni", "unitree")):
+        raw_title = StudioSettings.app_title
     return StudioSettings(
-        app_title=str(app_info.get("app_title", StudioSettings.app_title)),
+        app_title=raw_title,
         version=str(app_info.get("version", StudioSettings.version)),
         stage_defaults=_merge_dataclass(StageDefaults, data.get("stage_defaults")),
         virtual_interfaces=_merge_dataclass(VirtualInterfaceSettings, data.get("virtual_interfaces")),
@@ -121,11 +125,14 @@ def save_settings(settings: StudioSettings, config_path: Optional[Path] = None) 
 
 
 _CACHED_SETTINGS: Optional[StudioSettings] = None
+_CACHED_OVERLAY_PATH: Optional[Path] = None
 
 
 def get_settings(reload: bool = False) -> StudioSettings:
-    """Return the cached StudioSettings singleton."""
-    global _CACHED_SETTINGS
-    if _CACHED_SETTINGS is None or reload:
+    """Return the cached StudioSettings singleton (workspace-overlay aware)."""
+    global _CACHED_SETTINGS, _CACHED_OVERLAY_PATH
+    cur_overlay = _overlay_path()
+    if _CACHED_SETTINGS is None or reload or _CACHED_OVERLAY_PATH != cur_overlay:
         _CACHED_SETTINGS = load_settings()
+        _CACHED_OVERLAY_PATH = cur_overlay
     return _CACHED_SETTINGS

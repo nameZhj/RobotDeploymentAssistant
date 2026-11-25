@@ -383,7 +383,7 @@ body {
   display: none;
 }
 
-/* 环境预检与修复 Tab：完美自适应全高无多余滚动条 */
+/* 环境预检与修复 Tab：自适应全高，无多余滚动条 */
 #tab-precheck.active {
   display: flex;
   flex-direction: column;
@@ -393,54 +393,145 @@ body {
 }
 
 .ops-content-container:has(#tab-precheck.active) {
-  padding: 12px 18px;
+  padding: 14px 18px;
   overflow: hidden;
 }
 
 .precheck-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 4px;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+/* 预检项卡片：标题行 / 版本行 / 说明行三层，说明最多两行，不再单行截断 */
+.precheck-item-card {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-height: 84px;
+  transition: border-color 0.2s, background 0.2s;
 }
 
 .precheck-item-card:hover {
-  border-color: rgba(56, 189, 248, 0.35) !important;
-  background: rgba(14, 165, 233, 0.05) !important;
+  border-color: rgba(56, 189, 248, 0.35);
+  background: rgba(14, 165, 233, 0.05);
 }
 
-/* 网络与 License 管理 Tab：完美自适应全高无多余滚动条仪表盘 */
+.precheck-item-card .pc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.precheck-item-card .pc-icon {
+  font-size: 1rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.precheck-item-card .pc-name {
+  font-weight: 700;
+  font-size: 0.84rem;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.precheck-item-card .pc-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.precheck-item-card .pc-version {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--accent-cyan);
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  padding: 1px 7px;
+  border-radius: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.precheck-item-card .pc-msg {
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  user-select: text;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 网络与 License 管理 Tab：左「本机环境与授权」| 右「机器人网络」| 底部可折叠控制台 */
 #tab-network.active {
+  position: relative;
   display: flex;
   flex-direction: column;
+  gap: 10px;
   height: 100%;
   overflow: hidden;
   box-sizing: border-box;
 }
 
 .ops-content-container:has(#tab-network.active) {
-  padding: 12px 18px;
+  padding: 14px 18px;
   overflow: hidden;
 }
 
 .network-license-grid {
   display: grid;
-  grid-template-columns: 1.15fr 0.85fr;
-  gap: 10px;
-  flex: 1;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  flex: 1 1 0;
   min-height: 0;
-  height: 100%;
   overflow: hidden;
   align-items: stretch;
+}
+
+.network-license-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ops-col-caption {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  padding: 0 2px;
 }
 
 .network-license-left {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 10px;
   min-height: 0;
   overflow-y: auto;
-  padding-right: 3px;
+  padding-right: 4px;
   scrollbar-width: thin;
   scrollbar-color: rgba(56, 189, 248, 0.25) transparent;
 }
@@ -456,38 +547,10 @@ body {
 .network-license-right {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 10px;
   min-height: 0;
+  flex: 1 1 0;
   overflow: hidden;
-}
-
-.network-license-right .console-card {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-  margin-bottom: 0;
-}
-
-.network-license-right .terminal-console,
-#tp-license-result {
-  flex: 1;
-  min-height: 180px;
-  height: auto;
-  overflow-y: auto !important;
-  overflow-x: hidden !important;
-  white-space: pre-wrap !important;
-  word-break: break-word !important;
-  overflow-wrap: anywhere !important;
-}
-
-.network-license-right .terminal-console *,
-#tp-license-result * {
-  white-space: pre-wrap !important;
-  word-break: break-word !important;
-  overflow-wrap: anywhere !important;
-  max-width: 100% !important;
 }
 
 .network-license-grid .btn {
@@ -497,14 +560,284 @@ body {
 .network-license-grid .card {
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
   transition: border-color 0.2s;
+  padding: 12px 14px;
+  margin-bottom: 0;
 }
 
 .network-license-grid .card:hover {
   border-color: rgba(56, 189, 248, 0.35);
 }
 
+.network-license-grid .card-header {
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+}
+
+.network-license-grid .card-title {
+  font-size: 0.9rem;
+  gap: 6px;
+}
+
+/* 卡片内紧凑表单行 */
+.ops-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.ops-form-row + .ops-form-row {
+  margin-top: 6px;
+}
+
+.ops-form-row:has(> .ops-form-label) {
+  grid-template-columns: auto 1fr auto;
+}
+
+.ops-form-label {
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.network-license-grid .form-input,
+.network-license-grid .form-select {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 3px 8px;
+  font-size: 0.76rem;
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  outline: none;
+}
+
+.network-license-grid .form-control {
+  height: 28px;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  font-size: 0.78rem;
+}
+
+.network-license-grid .form-input:focus,
+.network-license-grid .form-select:focus,
+.network-license-grid .form-control:focus {
+  border-color: var(--accent-cyan);
+}
+
+.ops-btn-group {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Wi-Fi 配网卡片：绿色系以区分“机器人侧”操作 */
+.wifi-card {
+  background: rgba(16, 185, 129, 0.04);
+  border-color: rgba(52, 211, 153, 0.25);
+}
+
+.wifi-card .card-title {
+  color: #34d399;
+}
+
+.wifi-card .ops-btn-group .form-input {
+  width: 72px;
+  flex: 0 0 72px;
+}
+
+.ops-status-line {
+  font-size: 0.76rem;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+}
+
+.ops-mono-value {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 4px;
+  padding: 6px 10px;
+  user-select: text;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ops-footer-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.ops-footer-row strong {
+  color: #6ee7b7;
+  font-family: var(--font-mono);
+}
+
+.ops-title-cyan {
+  color: var(--accent-cyan);
+}
+
+/* License 拖拽导入框 */
+#tab-network .dropzone {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  margin: 0 0 8px;
+  border-width: 1.5px;
+  border-color: rgba(56, 189, 248, 0.35);
+  background: rgba(14, 165, 233, 0.04);
+  border-radius: 8px;
+  text-align: left;
+}
+
+#tab-network .dropzone.dragover {
+  border-color: var(--accent-cyan);
+  background: rgba(14, 165, 233, 0.12);
+}
+
+.dropzone-icon {
+  font-size: 1.35rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.dropzone-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.dropzone-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dropzone-filename {
+  font-size: 0.7rem;
+  color: var(--accent-cyan);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+#tp-deploy-btn {
+  width: 100%;
+  font-weight: 700;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+/* 局域网扫描：列表撑满右列剩余高度 */
+.scan-card {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: rgba(14, 165, 233, 0.04);
+  border-color: rgba(56, 189, 248, 0.22);
+}
+
+.scan-results {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(56, 189, 248, 0.3) transparent;
+}
+
+.scan-results::-webkit-scrollbar {
+  width: 4px;
+}
+
+.scan-results::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.3);
+  border-radius: 2px;
+}
+
+.ops-empty-hint {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  padding: 6px 2px;
+}
+
+.scan-results .card {
+  padding: 8px 12px !important;
+}
+
+.scan-results .card .btn {
+  padding: 3px 10px;
+}
+
+.scan-device-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px !important;
+}
+
+.scan-device-row:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* 窄窗口 (<900px)：双栏退化为单栏纵向滚动，避免表单被挤压 */
+@media (max-width: 900px) {
+  .network-license-grid,
+  .image-dashboard-top-grid {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+
+  .network-license-col,
+  .network-license-left,
+  .network-license-right,
+  .image-dashboard-col {
+    overflow: visible;
+    min-height: auto;
+  }
+
+  .scan-card {
+    flex: 0 0 auto;
+  }
+
+  #tp-scan-results {
+    max-height: 240px;
+  }
+
+  .card.ops-console-strip {
+    flex: 0 0 104px;
+    height: 104px;
+  }
+}
+
 /* 舞蹈与镜像管理 Tab：完美自适应全高无多余滚动条仪表盘 */
 #tab-image.active {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -514,7 +847,7 @@ body {
 
 /* 激活舞蹈与镜像管理时，外层容器内边距适度舒展 */
 .ops-content-container:has(#tab-image.active) {
-  padding: 10px 16px;
+  padding: 12px 18px;
   overflow: hidden;
 }
 
@@ -568,36 +901,63 @@ body {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 
-/* 底部全宽执行日志卡片：高度紧凑适中 (~145px)，不再霸占巨幅纵向空间 */
-.image-dashboard-console-card {
-  flex: 0 0 145px;
-  height: 145px;
-  min-height: 125px;
-  max-height: 160px;
+/* ========================================================= */
+/* 运维中心通用：底部可折叠控制台条 (默认紧凑 ~5 行，可展开到 48%) */
+/* ========================================================= */
+.card.ops-console-strip {
+  flex: 0 0 var(--ops-console-h, 126px);
+  height: var(--ops-console-h, 126px);
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   margin-bottom: 0;
-  padding: 8px 14px;
+  padding: 8px 14px 10px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   background: var(--bg-card);
-  overflow: hidden;
+  transition: flex-basis 0.22s ease, height 0.22s ease;
 }
 
-.image-dashboard-console-card .card-header {
-  margin-bottom: 4px;
-  padding-bottom: 2px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.card.ops-console-strip.expanded {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 62%;
+  z-index: 30;
+  box-shadow: 0 -18px 40px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(0, 210, 255, 0.18);
 }
 
-.image-dashboard-console-card .terminal-console,
-.image-dashboard-console-col .terminal-console,
-#tp-unified-console {
-  flex: 1;
-  min-height: 110px;
+/* 展开为抽屉时不挤压上方内容：上方网格保持紧凑态高度 */
+#tab-network.active:has(.ops-console-strip.expanded) .network-license-grid,
+.image-dashboard-container:has(.ops-console-strip.expanded) .image-dashboard-top-grid {
+  flex: 0 0 calc(100% - 136px);
+}
+
+.card-header.ops-console-header {
+  flex: 0 0 auto;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+}
+
+.ops-console-hint {
+  font-size: 0.7rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--text-muted);
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+.ops-console-toggle {
+  min-width: 76px;
+}
+
+.ops-console-strip .terminal-console {
+  flex: 1 1 0;
+  min-height: 0;
   height: auto;
   overflow-y: auto !important;
   overflow-x: hidden !important;
@@ -613,13 +973,19 @@ body {
   padding: 6px 10px;
 }
 
-.image-dashboard-console-card .terminal-console *,
-.image-dashboard-console-col .terminal-console *,
-#tp-unified-console * {
+.ops-console-strip .terminal-console * {
   white-space: pre-wrap !important;
   word-break: break-word !important;
   overflow-wrap: anywhere !important;
   max-width: 100% !important;
+}
+
+.ops-console-strip .terminal-console .log-info,
+.ops-console-strip .terminal-console .log-success,
+.ops-console-strip .terminal-console .log-warn,
+.ops-console-strip .terminal-console .log-error,
+.ops-console-strip .terminal-console .log-line {
+  margin: 1px 0;
 }
 
 /* 兼容类名 */
@@ -3234,5 +3600,45 @@ body {
 .ops-content-container::-webkit-scrollbar-thumb {
   background: rgba(0, 210, 255, 0.3);
   border-radius: 3px;
+}
+
+.target-card.safety-locked {
+  border-color: rgba(239, 68, 68, 0.85) !important;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.35);
+}
+
+.robot-state-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.state-pill,
+.fault-pill {
+  font-size: 0.65rem;
+  font-family: var(--font-mono, monospace);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.14);
+  color: var(--text-secondary);
+  line-height: 1.3;
+}
+
+.state-pill.ok {
+  background: rgba(16, 185, 129, 0.16);
+  color: #34d399;
+}
+
+.state-pill.warn,
+.fault-pill.warn {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+}
+
+.fault-pill.fatal {
+  background: rgba(239, 68, 68, 0.24);
+  color: #f87171;
+  font-weight: 700;
 }
 

@@ -66,7 +66,7 @@ def generate_occupancy_grid_png(
     fy = np.clip(h - 1 - ((pts[:, 1] - min_y) / eff_res).astype(np.int32), 0, h - 1)
     rgba[fy, fx] = (28, 36, 46, 95)
 
-    # Paint obstacle slice in UniUni teal/white highlight
+    # Paint obstacle slice in stage teal/white highlight
     ox = np.clip(((obs[:, 0] - min_x) / eff_res).astype(np.int32), 0, w - 1)
     oy = np.clip(h - 1 - ((obs[:, 1] - min_y) / eff_res).astype(np.int32), 0, h - 1)
     rgba[oy, ox] = (86, 212, 198, 225)

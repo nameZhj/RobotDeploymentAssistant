@@ -1,5 +1,5 @@
 # @file: src/algorithms/potential_field_solver.py
-# @brief: UniUni potential-field collision-free swarm trajectory planner with 3-pass safety projection and RDP simplification.
+# @brief: stage potential-field collision-free swarm trajectory planner with 3-pass safety projection and RDP simplification.
 # @exports: PotentialFieldParams, SwarmSimulationResult, rdp_simplify, compute_segment_times, solve_swarm_potential_field
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ Point2D = Tuple[float, float]
 
 @dataclass
 class PotentialFieldParams:
-    """Tuning gains matching UniUni RobotAction & algorithms-RYCS08SV solver."""
+    """Tuning gains matching standard stage specs RobotAction & algorithms-RYCS08SV solver."""
 
     safety_dist: float = 0.60
     repel_range: float = 1.20
@@ -97,7 +97,7 @@ def solve_swarm_potential_field(
     assignment: Optional[Sequence[int]] = None,
     params: Optional[PotentialFieldParams] = None,
 ) -> SwarmSimulationResult:
-    """Run UniUni artificial potential-field swarm simulation with tangential avoidance & 3-pass projection."""
+    """Run stage artificial potential-field swarm simulation with tangential avoidance & 3-pass projection."""
     p = params or PotentialFieldParams()
     n = min(len(sources), len(targets))
     if n == 0:

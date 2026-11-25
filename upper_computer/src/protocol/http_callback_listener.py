@@ -52,45 +52,55 @@ class HttpCallbackListener:
     def start(self) -> int:
         if self._httpd is not None:
             return self.bound_port
-        owner = self
+        with self._lock:
+            if self._httpd is not None:
+                return self.bound_port
+            owner = self
 
-        class _Handler(BaseHTTPRequestHandler):
-            def log_message(self, format: str, *args) -> None:  # noqa: A002
-                return
-
-            def do_POST(self) -> None:  # noqa: N802
-                ln = int(self.headers.get("Content-Length", "0") or "0")
-                raw = self.rfile.read(ln) if ln > 0 else b"{}"
-                try:
-                    payload = json.loads(raw.decode("utf-8"))
-                except Exception:
-                    self.send_response(400)
-                    self.end_headers()
-                    self.wfile.write(b'{"ok":false}')
+            class _Handler(BaseHTTPRequestHandler):
+                def log_message(self, format: str, *args) -> None:  # noqa: A002
                     return
-                owner._handle_event(payload)
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"ok":true}')
 
-        self._httpd = ThreadingHTTPServer((self.host, self.port), _Handler)
-        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True, name="UpperCallbackHTTP")
-        self._thread.start()
-        return self.bound_port
+                def do_POST(self) -> None:  # noqa: N802
+                    ln = int(self.headers.get("Content-Length", "0") or "0")
+                    raw = self.rfile.read(ln) if ln > 0 else b"{}"
+                    try:
+                        payload = json.loads(raw.decode("utf-8"))
+                    except Exception:
+                        self.send_response(400)
+                        self.end_headers()
+                        self.wfile.write(b'{"ok":false}')
+                        return
+                    owner._handle_event(payload)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"ok":true}')
+
+            self._httpd = ThreadingHTTPServer((self.host, self.port), _Handler)
+            self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True, name="UpperCallbackHTTP")
+            self._thread.start()
+            return self.bound_port
 
     def _handle_event(self, payload: Dict[str, Any]) -> None:
         state_obj = payload.get("state") if isinstance(payload.get("state"), dict) else {}
-        tgt = str(payload.get("target_id") or state_obj.get("target_id") or "A").upper()
+        rstate_obj = payload.get("robot_state") if isinstance(payload.get("robot_state"), dict) else {}
+        tgt = str(payload.get("target_id") or rstate_obj.get("target_id") or state_obj.get("target_id") or "A").upper()
         with self._lock:
             self.events.append(payload)
             if len(self.events) > 300:
                 self.events = self.events[-150:]
             merged = dict(self.latest_by_target.get(tgt, {}))
+            merged.update(rstate_obj)
             merged.update(state_obj)
             merged["last_event"] = payload.get("event", "")
-            if "pose" in payload:
-                merged["pose"] = payload["pose"]
+            for key in (
+                "pose", "remaining_distance_m", "localization_confidence", "localization_delay_ms",
+                "local_nav_status", "error", "motion_state", "active_dance", "nav_input", "nav_status", "nav_reason",
+                "active_faults", "safety_locked", "lock_reason", "relocalize_status",
+            ):
+                if key in payload:
+                    merged[key] = payload[key]
             if "title" in payload:
                 merged["current_node_title"] = payload["title"]
             self.latest_by_target[tgt] = merged

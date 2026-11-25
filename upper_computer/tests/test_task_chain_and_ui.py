@@ -1,6 +1,6 @@
 # @file: tests/test_task_chain_and_ui.py
-# @brief: Verifies pure-name Task Chain presentation, 70:30 viewport ratio, stop-to-origin, and LoRa Wi-Fi binding.
-# @exports: test_task_chain_pure_name_format_and_70_30_viewport, test_stop_to_origin_resets_robots_and_lora_binding
+# @brief: Verifies pure-name Task Chain presentation, 70:30 viewport ratio, and non-blocking stop-to-origin.
+# @exports: test_task_chain_pure_name_format_and_70_30_viewport, test_stop_to_origin_resets_robots
 
 from __future__ import annotations
 
@@ -11,17 +11,16 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from backend.g1_wifi_service import G1WifiService
 from src.core.paths import get_paths
 from src.domain.timeline_entities import TimelineBlockEntity
 from src.domain.trajectory_entities import ControlPoint2D, TrajectoryEntity
 from src.persistence import get_database
-from src.services.g1_wifi_provisioner import G1WifiProvisioner
 from src.services.task_chain_normalizer import (
     active_chain_node_label,
     format_track_chain_summary,
     sequence_track_chain,
 )
+from src.ui.common.async_task import wait_for_all_tasks
 from src.ui.modals import AddTrackDialog
 from src.ui.windows.main_studio_window import MainStudioWindow
 
@@ -82,7 +81,7 @@ def test_task_chain_pure_name_format_and_70_30_viewport(tmp_path: Path, monkeypa
     win.close()
 
 
-def test_stop_to_origin_resets_robots_and_lora_binding(tmp_path: Path, monkeypatch) -> None:
+def test_stop_to_origin_resets_robots(tmp_path: Path, monkeypatch) -> None:
     _app()
     monkeypatch.setenv("RDA_WORKSPACE_ROOT", str(tmp_path))
     get_paths(reset=True)
@@ -115,14 +114,13 @@ def test_stop_to_origin_resets_robots_and_lora_binding(tmp_path: Path, monkeypat
     px, py, _ = win.state.evaluate_robot_pose(tr, win.state.playhead_s)
     assert px > -1.5
 
-    # Click stop button -> returns immediately to origin (-2.0, 1.0)
+    # Click stop button -> GUI resets immediately to origin (-2.0, 1.0) while the HTTP
+    # stop-and-return command is dispatched on a background thread (never blocking the GUI).
     win.choreography_page.preview_panel.progress_bar.stop_btn.click()
     assert abs(win.state.playhead_s) < 1e-6
     ox, oy, _ = win.state.evaluate_robot_pose(tr, win.state.playhead_s)
     assert abs(ox - (-2.0)) < 1e-4 and abs(oy - 1.0) < 1e-4
 
-    # Verify LoRa channel binding for Wi-Fi provisioning
-    prov = G1WifiProvisioner(win.state, wifi_service=G1WifiService(lora_port="COM13"))
-    bind_res = prov.bind_lora_port("COM13", 9600)
-    assert bind_res["ok"] and bind_res["transport"] == "LoRa" and bind_res["lora_port"] == "COM13"
+    # Wi-Fi 配网已迁移至主页「网络管理」，Studio 不再重复提供 LoRa 绑定入口。
+    wait_for_all_tasks(timeout_s=10.0)
     win.close()

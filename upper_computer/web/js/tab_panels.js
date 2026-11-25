@@ -17,8 +17,12 @@ const TabNetwork = {
     const select = document.getElementById('tp-nic-select');
     const nicName = select ? select.value : '';
     showToast('⚡ 正在执行断网自愈与自动连接...', 'info', 3000);
+    // W-8: 后端 auto_connect 只消费 force_nic，不再发送 nic_name；手动选择的网卡不参与，明确反馈
+    if (nicName) {
+      showToast('提示：自动连接由后端自动探测网卡与目标 IP，下拉选择的网卡不参与本次连接', 'warning', 3500);
+    }
     try {
-      const res = await API.autoConnect(true, nicName);
+      const res = await API.autoConnect(true);
       if (res.connected) {
         showToast(res.msg, 'success', 3500);
         App.updateStatus();
@@ -44,7 +48,7 @@ const TabNetwork = {
         const data = res.data;
         if (data.ports && data.ports.length > 0) {
           const portNames = data.ports.map(p => `${p.port} (${p.device.replace('\\Device\\', '')})`).join(', ');
-          statusEl.innerHTML = `<span style="color: var(--accent-green); font-weight: bold;">✅ 已识别串口：${portNames}</span>`;
+          statusEl.innerHTML = `<span style="color: var(--accent-green); font-weight: bold;">✅ 已识别串口：${escapeHtml(portNames)}</span>`;
         } else {
           statusEl.innerHTML = `<span style="color: var(--text-muted);">未插入 USB 串口模块（若已插入但未识别，请点击右侧安装驱动）</span>`;
         }
@@ -83,7 +87,7 @@ const TabNetwork = {
         const opt = document.createElement('option');
         opt.value = nic.name;
         opt.textContent = `${nic.name}  (${nic.ip || '未分配IP'} / ${nic.is_up ? '已连接' : '未连接'})`;
-        if (nic.is_unitree_subnet) opt.selected = true;
+        if (nic.is_robot_subnet) opt.selected = true;
         select.appendChild(opt);
       }
     } catch (err) {
@@ -95,35 +99,50 @@ const TabNetwork = {
     const btn = document.getElementById('tp-btn-scan');
     const listEl = document.getElementById('tp-scan-results');
     if (btn) btn.disabled = true;
-    if (listEl) listEl.innerHTML = '<div style="padding: 12px; color: var(--accent-cyan);">🔍 正在扫描 Wi-Fi 局域网下位机 HTTP 服务 (端口 8090) ...</div>';
+    this.setScanCount(null);
+    if (listEl) listEl.innerHTML = '<div class="ops-empty-hint" style="padding: 10px 2px; color: var(--accent-cyan);">🔍 正在扫描 Wi-Fi 局域网下位机 HTTP 服务 (端口 8090) ...</div>';
 
     try {
       const res = await API.scanLanHttpRobots('', 8090);
       if (btn) btn.disabled = false;
-      if (!res.devices || res.devices.length === 0) {
+      const devices = res.devices || [];
+      this.setScanCount(devices.length);
+      if (devices.length === 0) {
         if (listEl) listEl.innerHTML = `
-          <div style="padding: 12px; color: var(--accent-yellow);">
-            ⚠️ 未在网段 ${res.subnet || 'Wi-Fi 局域网'} 发现运行下位机 HTTP(8090) 的机器人。请确认处于同一 Wi-Fi 且下位机已启动。
+          <div class="ops-empty-hint" style="padding: 10px 2px; color: var(--accent-yellow);">
+            ⚠️ 未在网段 ${escapeHtml(res.subnet || 'Wi-Fi 局域网')} 发现运行下位机 HTTP(8090) 的机器人。请确认处于同一 Wi-Fi 且下位机已启动。
           </div>
         `;
         return;
       }
-      let html = '';
-      for (const dev of res.devices) {
-        html += `
-          <div class="card" style="margin-bottom: 8px; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between;">
-            <div>
-              <div style="font-weight: 700; color: #ffffff; font-family: monospace; font-size: 0.95rem;">[${dev.robot_id}] http://${dev.ip}:${dev.port}</div>
-              <div style="font-size: 0.76rem; color: #9ca3af;">控制权: ${dev.authority} · ROS: ${dev.ros_master_reachable ? '在线' : '离线'}</div>
-            </div>
-            <button class="btn btn-primary btn-sm" onclick="TabNetwork.bindDiscoveredHttp('${dev.robot_id}', '${dev.ip}', ${dev.port})">🌐 绑定 HTTP</button>
-          </div>
-        `;
+      if (listEl) {
+        listEl.innerHTML = '';
+        for (const dev of devices) {
+          // W-6: 扫描到的设备名/IP 来自局域网响应，改用 DOM 构建 + textContent，消除模板字符串注入面
+          const row = document.createElement('div');
+          row.className = 'card scan-device-row';
+          const left = document.createElement('div');
+          left.style.cssText = 'min-width: 0; flex: 1;';
+          const line1 = document.createElement('div');
+          line1.style.cssText = 'font-weight: 700; color: #ffffff; font-family: monospace; font-size: 0.84rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+          line1.textContent = `[${dev.robot_id}] http://${dev.ip}:${dev.port}`;
+          const line2 = document.createElement('div');
+          line2.style.cssText = 'font-size: 0.72rem; color: #9ca3af; margin-top: 2px;';
+          line2.textContent = `控制权: ${dev.authority} · ROS: ${dev.ros_master_reachable ? '在线' : '离线'}`;
+          left.appendChild(line1);
+          left.appendChild(line2);
+          const bindBtn = document.createElement('button');
+          bindBtn.className = 'btn btn-primary btn-xs';
+          bindBtn.textContent = '🌐 绑定 HTTP';
+          bindBtn.addEventListener('click', () => TabNetwork.bindDiscoveredHttp(dev.robot_id, dev.ip, dev.port));
+          row.appendChild(left);
+          row.appendChild(bindBtn);
+          listEl.appendChild(row);
+        }
       }
-      if (listEl) listEl.innerHTML = html;
     } catch (err) {
       if (btn) btn.disabled = false;
-      if (listEl) listEl.innerHTML = `<div style="padding: 12px; color: var(--accent-red);">扫描失败: ${err.message}</div>`;
+      if (listEl) listEl.innerHTML = `<div style="padding: 12px; color: var(--accent-red);">扫描失败: ${escapeHtml(err.message)}</div>`;
     }
   },
 
@@ -188,6 +207,13 @@ const TabNetwork = {
     if (el) {
       el.innerHTML = '<div class="log-info">控制台已清空。就绪。</div>';
     }
+  },
+
+  // 局域网扫描结果计数徽标
+  setScanCount(n) {
+    const el = document.getElementById('tp-scan-count');
+    if (!el) return;
+    el.textContent = (n === null || n === undefined) ? '扫描中…' : `${n} 台`;
   },
 
   appendWifiLog(msg, level = 'info') {
@@ -328,38 +354,45 @@ const TabPrecheck = {
     try {
       const res = await API.getPrecheck();
       if (!res.success || !res.data) {
-        container.innerHTML = `<div style="padding: 20px; color: var(--accent-red);">预检失败: ${res.msg || '未知错误'}</div>`;
+        container.innerHTML = `<div style="padding: 20px; color: var(--accent-red);">预检失败: ${escapeHtml(res.msg || '未知错误')}</div>`;
         return;
       }
       const items = res.data.items;
+      const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      const copyTexts = [];
       let html = '';
       for (const key in items) {
         const item = items[key];
+        const idx = copyTexts.length;
         let statusIcon = '✅';
         if (item.status === 'error') statusIcon = '❌';
         else if (item.status === 'warning') statusIcon = '⚠️';
 
-        const copyText = `【${item.name}】状态: ${item.status}\n指标/版本: ${item.version}\n说明: ${item.msg}`;
+        copyTexts.push(`【${item.name}】状态: ${item.status}\n指标/版本: ${item.version}\n说明: ${item.msg}`);
         html += `
-          <div class="precheck-item-card" style="background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px; padding: 7px 10px; display: flex; flex-direction: column; justify-content: space-between; min-height: 52px; transition: border-color 0.2s;">
-            <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
-              <div style="display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden;">
-                <span style="font-size: 0.95rem; line-height: 1;">${statusIcon}</span>
-                <span style="font-weight: 700; font-size: 0.82rem; color: #ffffff; white-space: nowrap;">${item.name}</span>
-                <span style="font-family: monospace; font-size: 0.72rem; color: var(--accent-cyan); background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.2); padding: 1px 6px; border-radius: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${item.version || ''}">${item.version || '已就绪'}</span>
-              </div>
-              <div style="display: flex; gap: 4px; align-items: center; flex-shrink: 0;">
-                <button class="btn-copy-mini" onclick="copyToClipboard(${JSON.stringify(copyText)}, '指标信息已复制')" style="font-size: 0.68rem; padding: 1px 5px;" title="复制指标信息">📋 复制</button>
-                ${item.can_fix ? `<button class="btn btn-primary btn-xs" onclick="TabPrecheck.fixItem('${key}')" style="font-size: 0.7rem; font-weight: 700; padding: 2px 6px; white-space: nowrap;">🛠️ 修复</button>` : ''}
+          <div class="precheck-item-card" data-key="${esc(key)}">
+            <div class="pc-head">
+              <span class="pc-icon">${statusIcon}</span>
+              <span class="pc-name" title="${esc(item.name)}">${esc(item.name)}</span>
+              <div class="pc-actions">
+                <button type="button" class="btn-copy-mini btn-copy-precheck" data-idx="${idx}" style="font-size: 0.68rem; padding: 1px 5px;" title="复制指标信息">📋 复制</button>
+                ${item.can_fix ? `<button type="button" class="btn btn-primary btn-xs btn-fix-precheck" data-key="${esc(key)}" style="font-size: 0.7rem; font-weight: 700; padding: 2px 6px; white-space: nowrap;">🛠️ 修复</button>` : ''}
               </div>
             </div>
-            <div style="font-size: 0.72rem; color: var(--text-secondary); line-height: 1.3; user-select: text; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px;" title="${item.msg || ''}">
-              ${item.msg}
-            </div>
+            <span class="pc-version" title="${esc(item.version || '')}">${esc(item.version || '已就绪')}</span>
+            <div class="pc-msg" title="${esc(item.msg || '')}">${esc(item.msg)}</div>
           </div>
         `;
       }
-      container.innerHTML = html || '<div style="color: var(--text-muted); padding: 20px;">没有预检数据</div>';
+      container.innerHTML = html || '<div class="ops-empty-hint" style="padding: 20px;">没有预检数据</div>';
+
+      // 复制 / 修复按钮通过 data 属性绑定：避免把含引号或 > 的文案拼进 onclick 属性导致标签被截断
+      container.querySelectorAll('.btn-copy-precheck').forEach(btn => {
+        btn.addEventListener('click', () => copyToClipboard(copyTexts[Number(btn.dataset.idx)], '指标信息已复制'));
+      });
+      container.querySelectorAll('.btn-fix-precheck').forEach(btn => {
+        btn.addEventListener('click', () => this.fixItem(btn.dataset.key));
+      });
 
       // 控制顶部下位机驱动修复按钮：始终可见并高亮
       const btnHeaderFix = document.getElementById('btn-tp-fix-ch341');
@@ -477,6 +510,16 @@ const TabPrecheck = {
             showToast('❌ 修复遇到问题，请检查日志', 'error', 4000);
             TabPrecheck.run();
           }
+        }, () => {
+          // W-5: SSE 断流兜底——复位按钮避免永久 disabled
+          allFixBtns.forEach(btn => {
+            btn.disabled = false;
+            btn.innerHTML = btn.dataset.origText || '🛠️ 一键修复 LoRa 通信';
+            btn.classList.remove('loading');
+          });
+          if (progressTxt) progressTxt.textContent = '❌ 日志流连接中断，请重试';
+          showToast('修复日志流中断，请重试', 'error', 4000);
+          TabPrecheck.run();
         });
       } else {
         allFixBtns.forEach(btn => {
@@ -516,6 +559,10 @@ const TabPrecheck = {
         }, (ok) => {
           showToast(ok ? 'Docker 修复完成' : 'Docker 修复遇到问题', ok ? 'success' : 'error');
           TabPrecheck.run();
+        }, () => {
+          // W-5: SSE 断流兜底
+          showToast('Docker 修复日志流中断，请重试', 'error');
+          TabPrecheck.run();
         });
       }
     } catch (err) {
@@ -551,7 +598,7 @@ const TabImage = {
           btnStart.disabled = false;
           btnStart.classList.add('btn-primary');
           btnStart.classList.remove('btn-secondary');
-          if (d.running) {
+          if (d.running || d.is_container_running) {
             btnStart.textContent = `🔄 重新固化启动 / 更新 vsis_g1 (当前运行中)`;
           } else {
             btnStart.textContent = `⚡ 固化启动容器 (vsis_g1)`;
@@ -704,27 +751,24 @@ const TabImage = {
       listEl.innerHTML = '<div style="font-size: 0.8rem; color: var(--text-muted); padding: 4px 0;">⚪ 暂无正在运行中的容器</div>';
       return;
     }
+    const isWizard = targetElId.includes('wizard');
     let html = '<div style="display: flex; flex-direction: column; gap: 6px;">';
     for (const c of containers) {
-      const isUp = c.is_running;
+      // W-3: SSH 通道容器项带 is_running 字段，HTTP 通道仅有 status (如 "Up 2 hours")，双通道兼容判定
+      const isUp = c.is_running !== undefined ? !!c.is_running : String(c.status || '').toLowerCase().startsWith('up');
       const statusBadge = isUp 
         ? `<span class="container-status-badge running">🟢 运行中</span>`
-        : `<span class="container-status-badge stopped">⚪ ${c.status || '已停止'}</span>`;
-      
-      const isWizard = targetElId.includes('wizard');
-      const stopHandler = isWizard ? `Wizard.stopContainer('${c.name}')` : `TabImage.stopContainer('${c.name}')`;
-
+        : `<span class="container-status-badge stopped">⚪ ${escapeHtml(c.status || '已停止')}</span>`;
       const stopBtn = isUp 
-        ? `<button class="btn btn-danger btn-xs" style="padding: 4px 10px; font-size: 0.75rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; font-weight: 600; cursor: pointer; flex-shrink: 0;" onclick="${stopHandler}" title="停止并关闭该容器">⏹️ 关闭容器</button>`
+        ? `<button type="button" class="btn btn-danger btn-xs btn-stop-container" data-container="${escapeHtml(c.name)}" style="padding: 4px 10px; font-size: 0.75rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; font-weight: 600; cursor: pointer; flex-shrink: 0;" title="停止并关闭该容器">⏹️ 关闭容器</button>`
         : '';
-
-      const portInfo = c.ports ? `<div style="font-size: 0.72rem; color: var(--text-muted); font-family: monospace; word-break: break-all; margin-top: 2px;">端口: ${c.ports}</div>` : '';
+      const portInfo = c.ports ? `<div style="font-size: 0.72rem; color: var(--text-muted); font-family: monospace; word-break: break-all; margin-top: 2px;">端口: ${escapeHtml(c.ports)}</div>` : '';
       html += `
         <div style="display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; background: rgba(0, 0, 0, 0.25); border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.05); gap: 12px;">
           <div style="min-width: 0; flex: 1;">
             <div style="font-weight: 700; font-size: 0.85rem; color: #ffffff; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-              <span>📦 ${c.name}</span>
-              <span style="font-size: 0.75rem; color: var(--accent-cyan); font-family: monospace; font-weight: normal; word-break: break-all;">[${c.image}]</span>
+              <span>📦 ${escapeHtml(c.name)}</span>
+              <span style="font-size: 0.75rem; color: var(--accent-cyan); font-family: monospace; font-weight: normal; word-break: break-all;">[${escapeHtml(c.image)}]</span>
             </div>
             ${portInfo}
           </div>
@@ -737,6 +781,13 @@ const TabImage = {
     }
     html += '</div>';
     listEl.innerHTML = html;
+    listEl.querySelectorAll('.btn-stop-container').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = btn.dataset.container;
+        if (isWizard && window.Wizard) Wizard.stopContainer(name);
+        else TabImage.stopContainer(name);
+      });
+    });
   },
 
   async loadImages() {
@@ -751,7 +802,16 @@ const TabImage = {
       if (!select) return;
 
       select.innerHTML = '';
-      const availableImgs = res.available_images || res.images || [];
+      // W-2: SSH 通道镜像项为 {repository,tag,id,size}，HTTP 通道为 {name,id,size}(name 即 "repo:tag")，统一归一后消费
+      const imgFullName = (img) => {
+        if (img.repository !== undefined && img.tag !== undefined) return `${img.repository}:${img.tag}`;
+        return String(img.name || img.repository || img.id || '');
+      };
+      const runningImageNames = new Set((res.running_containers || [])
+        .map(c => String(c.image || '').trim())
+        .filter(Boolean));
+      const availableImgs = (res.available_images || res.images || [])
+        .filter(img => !runningImageNames.has(String(imgFullName(img)).trim()));
       if (availableImgs.length === 0) {
         select.innerHTML = '<option value="">(所有可用镜像均已在容器中运行)</option>';
         return;
@@ -759,8 +819,8 @@ const TabImage = {
 
       // 优先将 vsis_dancer 镜像排在首位
       availableImgs.sort((a, b) => {
-        const aName = `${a.repository}:${a.tag}`.toLowerCase();
-        const bName = `${b.repository}:${b.tag}`.toLowerCase();
+        const aName = imgFullName(a).toLowerCase();
+        const bName = imgFullName(b).toLowerCase();
         const aMatch = aName.includes('vsis_dancer') || (aName.includes('vsis') && aName.includes('dancer'));
         const bMatch = bName.includes('vsis_dancer') || (bName.includes('vsis') && bName.includes('dancer'));
         if (aMatch && !bMatch) return -1;
@@ -770,9 +830,9 @@ const TabImage = {
 
       for (const img of availableImgs) {
         const opt = document.createElement('option');
-        const tag = `${img.repository}:${img.tag}`;
+        const tag = imgFullName(img);
         opt.value = tag;
-        opt.textContent = `${tag} (${img.size})`;
+        opt.textContent = img.size ? `${tag} (${img.size})` : tag;
         select.appendChild(opt);
       }
     } catch (err) {
@@ -823,8 +883,25 @@ const TabImage = {
       }
 
       if (this.uploadInterval) clearInterval(this.uploadInterval);
+      // W-9: 进度轮询必须容错——连续异常达到阈值时 clearInterval 退避停止，避免每 500ms 未处理 rejection 且永不停止
+      let pollFailCount = 0;
       this.uploadInterval = setInterval(async () => {
-        const prog = await API.getUploadProgress();
+        let prog;
+        try {
+          prog = await API.getUploadProgress();
+          pollFailCount = 0;
+        } catch (pollErr) {
+          pollFailCount += 1;
+          console.warn(`上传进度查询失败 (${pollFailCount}/5):`, pollErr);
+          if (pollFailCount >= 5) {
+            clearInterval(this.uploadInterval);
+            this.uploadInterval = null;
+            this._resetUploadButtons();
+            showToast(`上传进度查询连续失败 ${pollFailCount} 次，已停止轮询: ${pollErr.message}`, 'error');
+            this.appendLog(`进度轮询连续失败 ${pollFailCount} 次，已停止: ${pollErr.message}`, true);
+          }
+          return;
+        }
         this._updateProgress(prog);
         if (prog.status === 'completed') {
           clearInterval(this.uploadInterval);
@@ -946,6 +1023,16 @@ const TabImage = {
             if (pBar) pBar.style.background = '#f87171';
             showToast('❌ 镜像导入异常，请查看右侧终端输出', 'error');
           }
+        }, () => {
+          // W-5: SSE 断流兜底——停 ticker、复位按钮避免永久 disabled
+          if (ticker) clearInterval(ticker);
+          if (btnLoad) {
+            btnLoad.disabled = false;
+            btnLoad.classList.remove('loading');
+            btnLoad.textContent = '⚡ 执行 docker load (导入并启动)';
+          }
+          setProgress(currentPct, '❌ 日志流连接中断', '任务可能仍在后台执行，可稍后刷新查看');
+          showToast('docker load 日志流中断，请稍后刷新状态', 'error');
         });
       } else {
         if (ticker) clearInterval(ticker);
@@ -1023,6 +1110,15 @@ const TabImage = {
             btnStart.classList.remove('loading');
             btnStart.textContent = '⚡ 固化启动 vsis_g1 容器';
           }
+        }, () => {
+          // W-5: SSE 断流兜底——复位按钮避免永久 disabled
+          if (btnStart) {
+            btnStart.disabled = false;
+            btnStart.classList.remove('loading');
+            btnStart.textContent = '⚡ 固化启动 vsis_g1 容器';
+          }
+          showToast('容器启动日志流中断，请稍后刷新状态', 'error');
+          this.appendLog('容器启动日志流中断', true);
         });
       } else {
         if (btnStart) {
@@ -1081,7 +1177,13 @@ const TabImage = {
 
       // 2. 检查宿主机当前容器状态，若 vsis_g1 已存在/运行，自动重启容器
       const cStatus = await API.getContainerStatus();
-      const hasContainer = cStatus.success && cStatus.data && (cStatus.data.running || cStatus.data.container_exists);
+      // W-3: SSH 通道为 running/container_exists，HTTP 通道为 is_container_running + containers 列表，双通道兼容判定
+      const dStatus = cStatus.data || {};
+      const httpContainers = Array.isArray(dStatus.containers) ? dStatus.containers : [];
+      const hasContainer = cStatus.success && cStatus.data && (
+        dStatus.running || dStatus.container_exists || dStatus.is_container_running ||
+        httpContainers.some(c => c && c.name === 'vsis_g1')
+      );
 
       if (hasContainer) {
         this.appendLog(`[INFO] 检测到 vsis_g1 容器已就绪，正在自动重启容器以应用新 ID [${robotId}] ...`, false, '🔄');
@@ -1225,6 +1327,14 @@ const TabImage = {
             this.appendLog('⚠️ 机载程序启动遇到异常，请检查上方日志输出。', true);
           }
           await this.checkProcessStatus();
+        }, () => {
+          // W-5: SSE 断流兜底——复位按钮避免永久 disabled
+          if (btnStart) {
+            btnStart.disabled = false;
+            btnStart.textContent = '🚀 启动机载程序 (run_bg.sh)';
+          }
+          this.appendLog('启动日志流中断，请检查连接后重试', true);
+          this.checkProcessStatus();
         });
       } else {
         if (btnStart) {
@@ -1315,6 +1425,10 @@ const TabImage = {
           } else {
             showToast('环境修复检测发现警告，请查看日志', 'warning');
           }
+        }, () => {
+          // W-5: SSE 断流兜底
+          showToast('环境修复日志流中断，请重试', 'error');
+          this.appendLog('环境修复日志流中断', true);
         });
       } else {
         this.appendLog(`环境修复请求失败: ${res?.msg || '未知错误'}`, true);
@@ -1449,26 +1563,26 @@ const TabLicense = {
         const res = await API.verifyLicense(this.licenseContent, this.machineId);
         if (res.success && res.parsed) {
           const p = res.parsed;
-          let dancesHtml = (p.dances || []).map(d => `<span class="card-badge" style="margin: 2px;">${d}</span>`).join(' ');
+          let dancesHtml = (p.dances || []).map(d => `<span class="card-badge" style="margin: 2px;">${escapeHtml(d)}</span>`).join(' ');
           this._showResult(`
             <div style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); padding: 12px; border-radius: 6px; color: #38bdf8; font-weight: 600; margin-bottom: 12px;">
               📄 License 文件已加载，点击下方【部署 License 至机器人】开始写入并重启校验。
             </div>
             <div class="card" style="padding: 14px;">
-              <div style="font-size: 0.85rem; margin-bottom: 6px; user-select: text;"><b>授权客户:</b> ${p.customer || '商业客户'} | <b>适用机型:</b> ${p.model || 'Unitree G1'}</div>
-              <div style="font-size: 0.85rem; margin-bottom: 6px; user-select: text;"><b>有效期至:</b> <span style="color: var(--accent-cyan); font-weight: 600;">${p.expire_date || '永久授权'}</span></div>
+              <div style="font-size: 0.85rem; margin-bottom: 6px; user-select: text;"><b>授权客户:</b> ${escapeHtml(p.customer || '商业客户')} | <b>适用机型:</b> ${escapeHtml(p.model || 'G1')}</div>
+              <div style="font-size: 0.85rem; margin-bottom: 6px; user-select: text;"><b>有效期至:</b> <span style="color: var(--accent-cyan); font-weight: 600;">${escapeHtml(p.expire_date || '永久授权')}</span></div>
               ${p.dance_count > 0 ? `<div style="font-size: 0.85rem; margin-bottom: 8px; user-select: text;"><b>包含舞蹈清单 (${p.dance_count} 支):</b></div>
               <div style="display: flex; flex-wrap: wrap; gap: 4px; max-height: 120px; overflow-y: auto; user-select: text;">${dancesHtml}</div>` : ''}
             </div>
           `);
         } else {
           this._showResult(`<div style="color: var(--accent-cyan); padding: 12px; background: rgba(56,189,248,0.08); border-radius: 8px; border: 1px solid rgba(56,189,248,0.3);">
-            📄 <b>${file.name}</b> 已就绪，点击【部署 License 至机器人】写入并重启校验。
+            📄 <b>${escapeHtml(file.name)}</b> 已就绪，点击【部署 License 至机器人】写入并重启校验。
           </div>`);
         }
       } catch (_) {
         this._showResult(`<div style="color: var(--accent-cyan); padding: 12px; background: rgba(56,189,248,0.08); border-radius: 8px; border: 1px solid rgba(56,189,248,0.3);">
-          📄 <b>${file.name}</b> 已就绪，点击【部署 License 至机器人】写入并重启校验。
+          📄 <b>${escapeHtml(file.name)}</b> 已就绪，点击【部署 License 至机器人】写入并重启校验。
         </div>`);
       }
 
@@ -1498,8 +1612,8 @@ const TabLicense = {
         let html = `
           <div style="background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3); border-radius: 8px; padding: 16px; margin-bottom: 12px;">
             <div style="color: #34d399; font-weight: 700; margin-bottom: 8px;">✅ 授权与生效校验成功！</div>
-            <div style="font-size: 0.85rem; color: #a7f3d0;">${res.msg}</div>
-            ${res.log_snippet ? `<div style="margin-top: 8px; font-family: monospace; font-size: 0.75rem; color: #a7f3d0; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; white-space: pre-wrap; max-height: 120px; overflow-y: auto;">${res.log_snippet}</div>` : ''}
+            <div style="font-size: 0.85rem; color: #a7f3d0;">${escapeHtml(res.msg)}</div>
+            ${res.log_snippet ? `<div style="margin-top: 8px; font-family: monospace; font-size: 0.75rem; color: #a7f3d0; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; white-space: pre-wrap; max-height: 120px; overflow-y: auto;">${escapeHtml(res.log_snippet)}</div>` : ''}
           </div>
           <div id="tp-license-process-box" style="background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 8px; padding: 14px;">
             <div style="font-weight: 700; color: var(--accent-cyan); margin-bottom: 6px;" id="tp-lic-proc-title">🚀 正在拉起机载运控与通信程序 (run_bg.sh)...</div>
@@ -1557,6 +1671,14 @@ const TabLicense = {
                 showToast('机载程序已拉起', 'info');
               }
               this.syncAllStates();
+            }, () => {
+              // W-5: SSE 断流兜底——更新部署结果面板，避免进程状态卡片停留在“启动中”
+              const procTitle = document.getElementById('tp-lic-proc-title');
+              const procDesc = document.getElementById('tp-lic-proc-desc');
+              if (procTitle) procTitle.textContent = '⚠️ 启动日志流中断';
+              if (procDesc) procDesc.textContent = '任务可能仍在后台执行，可稍后刷新状态查看。';
+              showToast('机载程序启动日志流中断，可稍后刷新查看', 'warning');
+              this.syncAllStates();
             });
           }
         } catch (e) {
@@ -1566,9 +1688,9 @@ const TabLicense = {
       } else {
         showToast(`❌ 机器端校验失败: ${res.msg}`, 'error');
         let html = `<div style="background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 8px; padding: 16px;">
-          <div style="color: #f87171; font-weight: 700; margin-bottom: 8px;">❌ 校验失败: ${res.msg}</div>`;
+          <div style="color: #f87171; font-weight: 700; margin-bottom: 8px;">❌ 校验失败: ${escapeHtml(res.msg)}</div>`;
         if (res.log_snippet) {
-          html += `<div style="margin-top: 8px; font-family: monospace; font-size: 0.75rem; color: #fca5a5; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; white-space: pre-wrap; max-height: 120px; overflow-y: auto;">${res.log_snippet}</div>`;
+          html += `<div style="margin-top: 8px; font-family: monospace; font-size: 0.75rem; color: #fca5a5; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; white-space: pre-wrap; max-height: 120px; overflow-y: auto;">${escapeHtml(res.log_snippet)}</div>`;
         }
         html += '</div>';
         this._showResult(html);
@@ -1602,12 +1724,15 @@ const TabLicense = {
 };
 
 // 暴露到全局 window
+// W-1: TabManual/TabTutorials/TabDanceUpdate 三个面板已下线且全仓无定义，
+// 直接 window.TabManual = TabManual 会在脚本加载时抛 ReferenceError，
+// 中断后续 window.TabLicense 挂载与 DOMContentLoaded 初始化注册——必须加存在性守卫。
 window.TabNetwork = TabNetwork;
 window.TabPrecheck = TabPrecheck;
 window.TabImage = TabImage;
-window.TabManual = TabManual;
-window.TabTutorials = TabTutorials;
-window.TabDanceUpdate = TabDanceUpdate;
+if (typeof TabManual !== 'undefined') window.TabManual = TabManual;
+if (typeof TabTutorials !== 'undefined') window.TabTutorials = TabTutorials;
+if (typeof TabDanceUpdate !== 'undefined') window.TabDanceUpdate = TabDanceUpdate;
 window.TabLicense = TabLicense;
 
 // ===========================================

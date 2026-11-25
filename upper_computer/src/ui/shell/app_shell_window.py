@@ -1,11 +1,13 @@
 # @file: src/ui/shell/app_shell_window.py
-# @brief: Master UniUni v3 main window shell with 32px UTitlebar, 6-page QStackedWidget, and 28px UStatusBar.
-# @exports: UniUniAppShell
+# @brief: Master main window shell with 32px UTitlebar, 4-page QStackedWidget, 28px UStatusBar, and GUI-thread event bus bridge.
+# @exports: StudioAppShell
 
 from __future__ import annotations
 
+import logging
 import os
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
@@ -15,18 +17,37 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.core.event_bus import StudioEvent
+from src.core.event_bus import StudioEvent, Subscription
 from src.core.settings import get_settings
 from src.services import PlaybackCoordinator, StudioStateService
+from src.ui.common.async_task import run_in_background
 from src.ui.design_system.tokens import C_TEXT_2
 from src.ui.design_system.ugc_v3_qss import build_ugc_v3_stylesheet
 from src.ui.shell.shortcut_manager import ShortcutManager
 from src.ui.shell.u_statusbar import UStatusBar
 from src.ui.shell.u_titlebar import PAGE_DEFS, UTitlebar
 
+logger = logging.getLogger(__name__)
 
-class UniUniAppShell(QMainWindow):
-    """Canonical UniUni v3 desktop application shell hosting all 6 studio pages."""
+
+class _EventBusBridge(QObject):
+    """Marshals StudioEventBus.publish() calls made from worker threads onto the GUI thread."""
+
+    _invoke = Signal(object)
+
+    def __init__(self, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+        self._invoke.connect(self._run, Qt.ConnectionType.QueuedConnection)
+
+    def submit(self, fn: Callable[[], None]) -> None:
+        self._invoke.emit(fn)
+
+    def _run(self, fn: Callable[[], None]) -> None:
+        fn()
+
+
+class StudioAppShell(QMainWindow):
+    """Canonical desktop application shell hosting all 4 studio pages."""
 
     def __init__(
         self,
@@ -37,7 +58,7 @@ class UniUniAppShell(QMainWindow):
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
-        self.setObjectName("UniUniAppShell")
+        self.setObjectName("StudioAppShell")
         cfg = get_settings()
         self.setWindowTitle(cfg.app_title)
         self.resize(cfg.ui_layout.default_width, cfg.ui_layout.default_height)
@@ -52,6 +73,13 @@ class UniUniAppShell(QMainWindow):
         self.playback = PlaybackCoordinator(self.state, self)
         self._page_widgets: Dict[str, QWidget] = {}
         self._modal_hooks: Dict[str, Callable[[], None]] = {}
+        self._bus_callback_pairs: Tuple[Tuple[StudioEvent, Callable[[Any], None]], ...] = ()
+        self._bus_subscriptions: List[Subscription] = []
+
+        # Worker threads (HTTP callbacks, background tasks) publish through this bridge so that
+        # every Qt widget is only ever touched from the GUI thread that owns it.
+        self._bus_bridge = _EventBusBridge(self)
+        self.state.bus.set_dispatcher(self._bus_bridge.submit)
 
         central = QWidget(self)
         root_layout = QVBoxLayout(central)
@@ -102,6 +130,9 @@ class UniUniAppShell(QMainWindow):
 
     def switch_page(self, page_key: str) -> None:
         widget = self._page_widgets.get(page_key)
+        if widget is None:
+            page_key = "choreography"
+            widget = self._page_widgets.get(page_key)
         if widget is not None:
             self.stack.setCurrentWidget(widget)
             self.titlebar.set_active_page(page_key)
@@ -116,19 +147,42 @@ class UniUniAppShell(QMainWindow):
         from src.services.task_chain_normalizer import active_chain_node_label
         self.playback.timeChanged.connect(
             lambda t: self.statusbar.set_timecode(
-                t, self.state.total_duration(),
+                t, self.state.effective_playback_duration() or self.state.total_duration(),
                 active_chain_node_label(self.state.blocks, t, is_playing=self.playback.is_playing),
             )
         )
-        self.state.bus.subscribe(StudioEvent.SCENE_CHANGED, lambda _p: self._refresh_statusbar())
-        self.state.bus.subscribe(StudioEvent.TRACKS_UPDATED, lambda _p: self._refresh_statusbar())
-        self.state.bus.subscribe(StudioEvent.TIMELINE_UPDATED, lambda _p: self._refresh_statusbar())
-        self.state.bus.subscribe(StudioEvent.INIT_POINTS_UPDATED, lambda p: self._refresh_statusbar(p))
-        self.state.bus.subscribe(StudioEvent.STATUS_NOTIFICATION, self._on_status_notice)
-        self.state.bus.subscribe(
-            StudioEvent.PAGE_NAVIGATION_REQUESTED,
-            lambda k: self.switch_page(str(k)),
-        )
+        # 急停回原点：services 层仅复位，HTTP 指令由 UI 层在后台线程下发（分层单向依赖）
+        self.playback.stoppedToOrigin.connect(self._dispatch_stop_to_origin_http)
+        self._subscribe_bus_events()
+
+    def _subscribe_bus_events(self) -> None:
+        """(Re)register the six shell-level bus listeners, keeping Subscription handles for closeEvent (R-8)."""
+        if not self._bus_callback_pairs:
+            self._bus_callback_pairs = (
+                (StudioEvent.SCENE_CHANGED, lambda _p: self._refresh_statusbar()),
+                (StudioEvent.TRACKS_UPDATED, lambda _p: self._refresh_statusbar()),
+                (StudioEvent.TIMELINE_UPDATED, lambda _p: self._refresh_statusbar()),
+                (StudioEvent.INIT_POINTS_UPDATED, lambda p: self._refresh_statusbar(p)),
+                (StudioEvent.STATUS_NOTIFICATION, self._on_status_notice),
+                (StudioEvent.PAGE_NAVIGATION_REQUESTED, lambda k: self.switch_page(str(k))),
+            )
+        self._bus_subscriptions = [
+            self.state.bus.subscribe(topic, cb) for topic, cb in self._bus_callback_pairs
+        ]
+
+    def rearm_event_flow(self) -> None:
+        """Re-arm the GUI-thread dispatcher, shell subscriptions and telemetry listener for window reuse (R-1).
+
+        Must be invoked on the GUI thread (set_dispatcher captures the owning thread id); main.py's
+        reuse path calls it from the Qt-queued _handle_show, which satisfies that constraint.
+        """
+        self._subscribe_bus_events()
+        self.state.bus.set_dispatcher(self._bus_bridge.submit)
+        if not self.state.callback_listener.is_running:
+            try:
+                self.state.callback_listener.start()
+            except Exception as ex:
+                logger.error(f"遥测回调监听器重启失败: {ex}", exc_info=True)
 
     def _bind_shortcuts(self) -> None:
         sm = ShortcutManager(self)
@@ -145,6 +199,24 @@ class UniUniAppShell(QMainWindow):
             verb = "重做" if redo else "撤销"
             self.state.notify(f"已{verb}: {desc}", "ok")
 
+    def _dispatch_stop_to_origin_http(self) -> None:
+        """Wi-Fi HTTP 停止并回原点指令的 UI 层后台下发（订阅 playback.stoppedToOrigin）。"""
+        if not self.state.tracks:
+            return
+        run_in_background(
+            self.state.stop_all_robots_and_return_origin_http,
+            on_done=self._on_stop_http_done,
+            on_error=lambda err: self.state.notify(f"回原点指令下发异常: {err.splitlines()[0]}", "warn"),
+            busy_text="正在后台向全队下发停止并回原点指令 (Wi-Fi HTTP)...",
+            notifier=self.state.notify,
+        )
+
+    def _on_stop_http_done(self, results: object) -> None:
+        rows = results if isinstance(results, list) else []
+        ok_cnt = sum(1 for r in rows if isinstance(r, dict) and r.get("ok"))
+        if rows:
+            self.state.notify(f"回原点指令下发完成：{ok_cnt}/{len(rows)} 台响应", "ok" if ok_cnt == len(rows) else "warn")
+
     def _invoke_hook(self, name: str) -> None:
         fn = self._modal_hooks.get(name)
         if fn is not None:
@@ -157,7 +229,7 @@ class UniUniAppShell(QMainWindow):
         self.statusbar.set_scene_summary(self.state.scene.name, len(self.state.tracks), music_name, init_txt)
         self.statusbar.set_timecode(
             self.state.playhead_s,
-            self.state.total_duration(),
+            self.state.effective_playback_duration() or self.state.total_duration(),
             active_chain_node_label(self.state.blocks, self.state.playhead_s, is_playing=self.playback.is_playing),
         )
 
@@ -168,13 +240,19 @@ class UniUniAppShell(QMainWindow):
     def _show_help_dialog(self) -> None:
         QMessageBox.information(
             self,
-            "UniSwarm Studio 快捷键与操作指南",
-            "【通用快捷键】Space: 本地预览播放/暂停 | Ctrl+S: 保存工程 | Ctrl+Z/Y: 撤销/重做 | Ctrl+1..5: 切换 5 大工作区\n"
-            "【主舞台轨迹绘制】点击『轨迹绘制』后左键落点、右键完成并保存、Alt+左键平移动画布、Ctrl+Z 撤回点。\n"
-            "【真机任务链演出】在『舞蹈编排/队形规划』编排节点，在『表演监测』点击 PREP/PLAY/STOP 回原点（纯 Wi-Fi HTTP）。",
+            "舞台编导工作台快捷键与操作指南",
+            "【通用快捷键】Space: 本地预览播放/暂停 | Ctrl+S: 保存工程 | Ctrl+Z/Y: 撤销/重做 | Ctrl+1..4: 切换 4 大工作区\n"
+            "【主舞台轨迹绘制】点击『轨迹绘制』后左键落点、右键完成并保存、Esc 退出恢复『选择/移动』拖拽机器人起点。\n"
+            "【真机任务链演出】在『舞蹈编排/队形规划』编排节点，在『表演监测』点击 PREP/PLAY/STOP 回原点（纯 Wi-Fi HTTP，后台执行不卡界面）。\n"
+            "【网络与配网】机器人 Wi-Fi 配网、网卡与 License 管理统一在主页『网络管理』中完成。",
         )
 
     def closeEvent(self, event) -> None:
         self.playback.pause()
+        # R-8：退订壳层全局总线订阅，避免窗口销毁后旧死回调残留中断其余监听者（复用路径由 rearm_event_flow 重挂）
+        for sub in self._bus_subscriptions:
+            self.state.bus.unsubscribe(sub.topic, sub.callback)
+        self._bus_subscriptions = []
+        self.state.bus.clear_dispatcher()
         self.state.callback_listener.stop()
         super().closeEvent(event)

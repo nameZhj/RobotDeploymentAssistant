@@ -1,5 +1,5 @@
 # @file: src/math/s_curve_profile.py
-# @brief: 7-segment jerk-limited S-curve velocity profile and physical minimum duration calculator matching UniUni.
+# @brief: 7-segment jerk-limited S-curve velocity profile and physical minimum duration calculator matching standard stage specs.
 # @exports: SmoothProfile, compute_min_execution_time, build_time_frames, build_smooth_profile
 
 from __future__ import annotations

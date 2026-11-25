@@ -812,7 +812,7 @@ fi
                         elif any(k in lower_l for k in ["license", "customer", "expire", "机器码"]):
                             _cb("[PROGRESS 45%] 正在验证硬件指纹与 License 授权...\n", False)
                         elif any(k in lower_l for k in ["channelfactory", "dds", "eth0", "joint", "domain"]):
-                            _cb("[PROGRESS 92%] 正在初始化 Unitree 29-DOF 关节通道与 DDS 通信...\n", False)
+                            _cb("[PROGRESS 92%] 正在初始化 29-DOF 关节通道与 DDS 通信...\n", False)
                         elif any(k in lower_l for k in ["switched to group controller", "groupcontroller"]):
                             _cb("[PROGRESS 98%] 运控主程序已接入 LoRa 群控通道...\n", False)
 

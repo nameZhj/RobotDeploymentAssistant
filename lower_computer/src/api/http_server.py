@@ -146,6 +146,8 @@ class LowerComputerHttpServer:
     def stop(self) -> None:
         self._stop_flag.set()
         self.ctx.slam_tap.stop()
+        if self.ctx.motion_udp is not None:
+            self.ctx.motion_udp.close()
         if self._httpd is not None:
             self._httpd.shutdown()
             self._httpd.server_close()

@@ -32,6 +32,7 @@ class NetworkManager:
         self._daemon_thread: Optional[threading.Thread] = None
         self._stop_daemon_event = threading.Event()
         self._manual_disconnect_pause_until = 0.0
+        self._warned_missing_creds_ip = ""
 
     def get_local_interfaces(self) -> List[Dict[str, Any]]:
         """获取 Windows 本地网卡列表与当前 IP"""
@@ -66,7 +67,7 @@ class NetworkManager:
                 "mac": mac,
                 "is_up": is_up,
                 "speed_mbps": speed,
-                "is_unitree_subnet": ipv4.startswith("192.168.123."),
+                "is_robot_subnet": ipv4.startswith("192.168.123."),
                 "is_loopback": is_loopback
             })
 
@@ -127,7 +128,7 @@ class NetworkManager:
         nics = self.get_local_interfaces()
         # 1. 已处于 192.168.123.x 的网卡
         for nic in nics:
-            if nic.get("is_unitree_subnet") and nic.get("is_up"):
+            if nic.get("is_robot_subnet") and nic.get("is_up"):
                 return {
                     "healed": False,
                     "already_ready": True,
@@ -184,15 +185,15 @@ class NetworkManager:
             sock.settimeout(timeout)
             result = sock.connect_ex((ip, port))
             if result == 0:
-                is_unitree_default = (ip == "192.168.123.164" or ip == "192.168.123.161" or ip == "192.168.123.162")
+                is_robot_default = (ip == "192.168.123.164" or ip == "192.168.123.161" or ip == "192.168.123.162")
                 return {
                     "ip": ip,
                     "port": port,
                     "status": "online",
                     "banner": "",
-                    "is_unitree": is_unitree_default,
-                    "device_type": "Unitree G1/Go2 Robot" if is_unitree_default else "SSH Device",
-                    "default_hint": "宇树默认IP (G1/Go2)" if is_unitree_default else "局域网活跃SSH主机"
+                    "is_robot_default": is_robot_default,
+                    "device_type": "G1/Go2 Robot" if is_robot_default else "SSH Device",
+                    "default_hint": "机器人默认IP (G1/Go2)" if is_robot_default else "局域网活跃SSH主机"
                 }
         except Exception:
             pass
@@ -274,10 +275,23 @@ class NetworkManager:
                 found_ip = ip
                 break
 
-        # 3. 若候选 IP 命中，立即握手连接
+        # 3. 若候选 IP 命中，立即握手连接（凭据读自 ssh_manager 凭据存储；无凭据则跳过自动 SSH 并记录状态）
         if found_ip:
+            if not ssh_manager.username or not ssh_manager.password:
+                if self._warned_missing_creds_ip != found_ip:
+                    logger.warning(f"探测到 {found_ip} 在线，但未配置 SSH 凭据，跳过自动连接")
+                    self._warned_missing_creds_ip = found_ip
+                self.auto_detecting = False
+                self.last_auto_status_msg = f"探测到 {found_ip} 在线，但未配置 SSH 凭据，已跳过自动连接"
+                return {
+                    "success": False,
+                    "connected": False,
+                    "target_ip": found_ip,
+                    "msg": f"探测到机器人 {found_ip} 在线，但未配置 SSH 凭据，请先在连接设置中填写用户名与密码"
+                }
+            self._warned_missing_creds_ip = ""
             self.last_auto_status_msg = f"正在连接 {found_ip}..."
-            ssh_manager.set_credentials(host=found_ip, port=22, username="unitree", password="123")
+            ssh_manager.set_credentials(host=found_ip, port=22, username=ssh_manager.username, password=ssh_manager.password)
             ok, msg = ssh_manager.connect(timeout=timeout)
             self.auto_detecting = False
             if ok:
@@ -344,7 +358,7 @@ class NetworkManager:
                 except Exception:
                     pass
 
-        found_devices.sort(key=lambda x: (not x.get("is_unitree", False), x.get("ip") != "192.168.123.164", x.get("ip")))
+        found_devices.sort(key=lambda x: (not x.get("is_robot_default", False), x.get("ip") != "192.168.123.164", x.get("ip")))
         self.scan_results = found_devices
         self.scanning = False
         self.scan_progress = 100

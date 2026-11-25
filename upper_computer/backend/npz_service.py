@@ -279,7 +279,7 @@ class NPZService:
     # ==========================
     def _create_base_pose(self) -> np.ndarray:
         """G1 机器人标准站立姿态 (21 关节 x 3D 空间坐标, 单位: 米)"""
-        # 身高约 1.30 米 (Unitree G1 真实尺寸)
+        # 身高约 1.30 米 (G1 真实尺寸)
         pose = np.zeros((21, 3), dtype=np.float32)
         pose[0] = [0.0, 0.0, 0.70]     # pelvis (0)
         pose[1] = [0.0, 0.0, 0.85]     # spine (1)

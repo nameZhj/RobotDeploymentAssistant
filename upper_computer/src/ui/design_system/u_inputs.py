@@ -1,5 +1,5 @@
 # @file: src/ui/design_system/u_inputs.py
-# @brief: Numeric, timecode, dropdown, and search input controls conforming to UniUni v3 dark styling.
+# @brief: Numeric, timecode, dropdown, and search input controls conforming to desktop v3 dark styling.
 # @exports: UInputNumber, UTimeInput, USearchInput, USelect
 
 from __future__ import annotations

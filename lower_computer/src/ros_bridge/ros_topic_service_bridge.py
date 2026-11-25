@@ -189,16 +189,22 @@ class RosTopicServiceBridge:
             "stdout": out, "reason": "" if rc == 0 else (err_s or f"rostopic pub 退出码 {rc}"),
         }
 
-    def publish_initial_pose(self, x: float, y: float, yaw: float, frame_id: str = "map") -> Dict[str, Any]:
+    def publish_initial_pose(
+        self, x: float, y: float, yaw: float, frame_id: str = "map",
+        xy_var: float = 0.25, yaw_var: float = 0.25,
+    ) -> Dict[str, Any]:
         err = self._check_ready()
         if err:
             return {"ok": False, "ros_available": False, "reason": err}
         topic = self.discovery.discover_topics().initialpose_topic
         qz, qw = _yaw_to_quat_zw(yaw)
+        cov = [0.0] * 36
+        cov[0], cov[7], cov[14], cov[21], cov[28], cov[35] = float(xy_var), float(xy_var), 0.05, 0.01, 0.01, float(yaw_var)
+        cov_s = "[" + ", ".join(f"{v:.4g}" for v in cov) + "]"
         yaml_msg = (
             f"{{header: {{frame_id: '{frame_id}'}}, "
             f"pose: {{pose: {{position: {{x: {x:.4f}, y: {y:.4f}, z: 0.0}}, "
-            f"orientation: {{x: 0.0, y: 0.0, z: {qz:.6f}, w: {qw:.6f}}}}}}}}}"
+            f"orientation: {{x: 0.0, y: 0.0, z: {qz:.6f}, w: {qw:.6f}}}}}, covariance: {cov_s}}}}}"
         )
         cmd = f"rostopic pub -1 {topic} {ROS_TOPICS['initialpose']['type']} \"{yaml_msg}\""
         rc, out, err_s = self.diagnostics.run_ros_cmd(cmd, 5.0)

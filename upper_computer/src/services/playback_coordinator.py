@@ -36,8 +36,11 @@ class PlaybackCoordinator(QObject):
         return self.is_playing
 
     def play(self) -> None:
-        total = self.state.total_duration()
-        if self.state.playhead_s >= total - 0.02:
+        end_t = self.state.effective_playback_duration()
+        if end_t <= 1e-6:
+            self._finish_to_origin("当前时间轴无可执行动作，已保持初始状态")
+            return
+        if self.state.playhead_s >= end_t - 0.02:
             self.state.playhead_s = 0.0
         self.is_playing = True
         self._timer.start()
@@ -62,7 +65,11 @@ class PlaybackCoordinator(QObject):
         self.state.notify("已停止本地预览并复位游标（未触发真机移动）", "info")
 
     def stop_and_return_origin(self) -> None:
-        """Immediately halt playback, reset all 2D/3D robots to (init_x, init_y, init_yaw), and notify lower HTTP."""
+        """Immediately halt playback and reset all 2D/3D robots to (init_x, init_y, init_yaw).
+
+        services 层只负责复位与广播；Wi-Fi HTTP 停止/回原点指令由 UI 层订阅 ``stoppedToOrigin``
+        信号后经 BackgroundTaskRunner 后台下发（见 app_shell_window._dispatch_stop_to_origin_http）。
+        """
         self.is_playing = False
         self._timer.stop()
         self.state.playhead_s = 0.0
@@ -71,16 +78,14 @@ class PlaybackCoordinator(QObject):
         self.stoppedToOrigin.emit()
         self.state.bus.publish(StudioEvent.PLAYBACK_STATE_CHANGED, False)
         self.state.bus.publish(StudioEvent.PLAYHEAD_MOVED, 0.0)
-        if self.state.tracks:
-            self.state.stop_all_robots_and_return_origin_http()
-        self.state.notify("已停止播放并命令机器人回到初始原点", "info")
+        self.state.notify("已停止播放并复位到初始原点，回原点指令后台下发中", "info")
 
     def replay(self) -> None:
         self.seek(0.0)
         self.play()
 
     def seek(self, t_sec: float) -> None:
-        total = self.state.total_duration()
+        total = max(self.state.effective_playback_duration(), self.state.total_duration())
         clamped = max(0.0, min(float(t_sec), total))
         self.state.playhead_s = clamped
         self.timeChanged.emit(clamped)
@@ -89,14 +94,25 @@ class PlaybackCoordinator(QObject):
     def set_speed(self, speed_factor: float) -> None:
         self.speed = max(0.1, min(4.0, float(speed_factor)))
 
+    def _finish_to_origin(self, notice: Optional[str] = None) -> None:
+        self.is_playing = False
+        self._timer.stop()
+        self.state.playhead_s = 0.0
+        self.stateChanged.emit(False)
+        self.timeChanged.emit(0.0)
+        self.state.bus.publish(StudioEvent.PLAYBACK_STATE_CHANGED, False)
+        self.state.bus.publish(StudioEvent.PLAYHEAD_MOVED, 0.0)
+        if notice:
+            self.state.notify(notice, "info")
+
     def _on_tick(self) -> None:
-        total = self.state.total_duration()
+        end_t = self.state.effective_playback_duration()
+        if end_t <= 1e-6:
+            self._finish_to_origin()
+            return
         nxt = self.state.playhead_s + self._dt_sec * self.speed
-        if nxt >= total:
-            self.state.playhead_s = total
-            self.timeChanged.emit(total)
-            self.state.bus.publish(StudioEvent.PLAYHEAD_MOVED, total)
-            self.pause()
+        if nxt >= end_t:
+            self._finish_to_origin("动作播放完成，已恢复初始状态")
             return
         self.state.playhead_s = nxt
         self.timeChanged.emit(nxt)

@@ -17,7 +17,7 @@ TRACK_COLOR_PALETTE = (
 
 
 def pick_track_color(track_no: int) -> str:
-    """Return canonical UniUni robot track accent hex color for 1-based track_no."""
+    """Return canonical stage robot track accent hex color for 1-based track_no."""
     idx = max(0, track_no - 1) % len(TRACK_COLOR_PALETTE)
     return TRACK_COLOR_PALETTE[idx]
 

@@ -1,27 +1,33 @@
 # @file: src/ui/monitoring/performance_monitor_page.py
-# @brief: Live Show Monitor executing Wi-Fi HTTP task chains with real ROS pose 3D sync, clearance check, and callbacks.
+# @brief: Live Show Monitor page UI with real ROS pose 3D sync, clearance table, and background show control mixin.
 # @exports: PerformanceMonitorPage
 
 from __future__ import annotations
 
 import math
+import time
 from typing import Dict, Tuple
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPlainTextEdit, QTableWidgetItem, QVBoxLayout, QWidget
 
 from src.core.event_bus import StudioEvent
 from src.core.settings import get_settings
-from src.protocol.timeline_lrmp_compiler import TimelineLrmpCompiler
 from src.services.playback_coordinator import PlaybackCoordinator
 from src.services.studio_state_service import StudioStateService
 from src.ui.design_system.tokens import FONT_MONO
 from src.ui.design_system.u_buttons import UBadge, UButton
 from src.ui.design_system.u_panels import UPanel, UTable
+from src.ui.monitoring.show_control_mixin import ShowControlMixin
 from src.viewport3d.stage_viewport_3d import StageViewport3D
 
 
-class PerformanceMonitorPage(QWidget):
-    """Pure Wi-Fi HTTP live show execution desk synced with real lower-computer ROS poses & callbacks."""
+class PerformanceMonitorPage(QWidget, ShowControlMixin):
+    """Pure Wi-Fi HTTP live show execution desk synced with real lower-computer ROS poses & callbacks.
+
+    Every blocking HTTP call (health probe, PREP/BARRIER/PLAY/EMERGENCY) runs on a background
+    thread via ``run_in_background``; the GUI thread only renders results, so clicking a show
+    button never freezes the window even when robots are unreachable.
+    """
 
     _callbackSignal = Signal(object)
 
@@ -31,6 +37,7 @@ class PerformanceMonitorPage(QWidget):
         self.playback = playback
         self._active_run_id: str = "9001"
         self._health_cache: Dict[str, str] = {}
+        self._live_dance_state: Dict[str, Tuple[str, float]] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
@@ -39,26 +46,26 @@ class PerformanceMonitorPage(QWidget):
         bar = UPanel(
             title="演出控制台",
             parent=self,
-            help_text="标准调度流程：1. PREP 下发任务链；2. BARRIER 同步就绪；3. PLAY 开始演出；异常时点击 EMERGENCY 急停。",
+            help_text="标准调度流程：1. PREP 下发任务链；2. BARRIER 同步就绪；3. PLAY 开始演出；异常时点击 EMERGENCY 急停。所有指令后台下发，不阻塞界面。",
         )
         bar.setFixedHeight(92)
         bl = QHBoxLayout()
         bl.setSpacing(8)
         self.phase_badge = UBadge("阶段: 待命 (FREE)", tone="neutral", parent=bar.body_widget)
-        prep_b = UButton("1. PREP 准备", variant="default", size="sm", parent=bar.body_widget)
-        prep_b.clicked.connect(self._cmd_prep)
-        bar_b = UButton("2. BARRIER 放行", variant="default", size="sm", parent=bar.body_widget)
-        bar_b.clicked.connect(self._cmd_barrier)
-        play_b = UButton("3. PLAY 启动", variant="primary", size="sm", icon_name="play", parent=bar.body_widget)
-        play_b.clicked.connect(self._cmd_play)
-        stop_b = UButton("STOP 停止", variant="default", size="sm", icon_name="stop", parent=bar.body_widget)
-        stop_b.clicked.connect(self._cmd_stop)
-        emg_b = UButton("EMERGENCY 急停", variant="danger", size="sm", parent=bar.body_widget)
-        emg_b.clicked.connect(self._cmd_emergency)
-        ping_b = UButton("刷新在线", variant="ghost", size="sm", icon_name="refresh", parent=bar.body_widget)
-        ping_b.clicked.connect(self.refresh_fleet_health)
+        self.prep_b = UButton("1. PREP 准备", variant="default", size="sm", parent=bar.body_widget)
+        self.prep_b.clicked.connect(self._cmd_prep)
+        self.bar_b = UButton("2. BARRIER 放行", variant="default", size="sm", parent=bar.body_widget)
+        self.bar_b.clicked.connect(self._cmd_barrier)
+        self.play_b = UButton("3. PLAY 启动", variant="primary", size="sm", icon_name="play", parent=bar.body_widget)
+        self.play_b.clicked.connect(self._cmd_play)
+        self.stop_b = UButton("STOP 停止", variant="default", size="sm", icon_name="stop", parent=bar.body_widget)
+        self.stop_b.clicked.connect(self._cmd_stop)
+        self.emg_b = UButton("EMERGENCY 急停", variant="danger", size="sm", parent=bar.body_widget)
+        self.emg_b.clicked.connect(self._cmd_emergency)
+        self.ping_b = UButton("刷新在线", variant="ghost", size="sm", icon_name="refresh", parent=bar.body_widget)
+        self.ping_b.clicked.connect(self.refresh_fleet_health)
 
-        for w in (self.phase_badge, prep_b, bar_b, play_b, stop_b, emg_b, ping_b):
+        for w in (self.phase_badge, self.prep_b, self.bar_b, self.play_b, self.stop_b, self.emg_b, self.ping_b):
             bl.addWidget(w)
         bl.addStretch(1)
         bar.body_layout.addLayout(bl)
@@ -94,132 +101,93 @@ class PerformanceMonitorPage(QWidget):
         state.bus.subscribe(StudioEvent.ROBOT_TELEMETRY_UPDATED, lambda evt: self._callbackSignal.emit(evt))
         self._refresh_table()
 
+    # ------------------------------------------------------------------ live callbacks
     def _on_http_callback(self, evt: object) -> None:
         if isinstance(evt, dict):
-            tgt = evt.get("target_id", "")
+            tgt = str(evt.get("target_id", "")).upper()
             p = evt.get("payload", {}) if isinstance(evt.get("payload"), dict) else {}
-            ev_name = p.get("event", "")
-            title = p.get("title", "")
+            ev_name = str(p.get("event", ""))
+            title = str(p.get("title", "") or p.get("alias", "") or p.get("code", "") or p.get("status", ""))
             rem = p.get("remaining_distance_m")
             rem_s = f" 距目标 {rem:.2f}m" if isinstance(rem, (int, float)) else ""
-            err_s = f" ERR:{p.get('error')}" if p.get("error") else ""
+            err_s = f" ERR:{p.get('error') or p.get('reason')}" if (p.get("error") or p.get("reason")) else ""
             self.log_box.appendPlainText(f"[HTTP-CB {tgt}] {ev_name} {title}{rem_s}{err_s}".strip())
+            rs_cb = p.get("robot_state") if isinstance(p.get("robot_state"), dict) else {}
+            if ev_name == "DANCE_STARTED" or (ev_name in ("TASK_STARTED", "STEP_STARTED") and (p.get("alias") or p.get("task_type") == "dance")):
+                alias = str(p.get("alias") or rs_cb.get("active_dance") or p.get("title") or "")
+                if alias:
+                    self._live_dance_state[tgt] = (alias, time.monotonic())
+            elif ev_name in ("DANCE_DONE", "DANCE_COMPLETED", "DANCE_ABORTED", "CHAIN_COMPLETED", "CHAIN_ABORTED", "TASK_ERROR"):
+                self._live_dance_state.pop(tgt, None)
+            if ev_name == "ROBOT_FAULT" and p.get("level") in ("ERROR", "FATAL"):
+                self._live_dance_state.pop(tgt, None)
+                self.state.arbiter.apply_command(tgt, "EMERGENCY")
+                self.phase_badge.setText(f"阶段: 安全熔断 ({p.get('code', 'FAULT')})")
+                self.phase_badge.set_tone("danger")
+            elif ev_name == "ROBOT_STATE_CHANGED" and p.get("state") in ("ESTOP", "FAULT", "MANUAL_OVERRIDE"):
+                self._live_dance_state.pop(tgt, None)
+                self.state.arbiter.apply_command(tgt, "EMERGENCY")
+                self.phase_badge.setText(f"阶段: 安全锁 ({p.get('state')})")
+                self.phase_badge.set_tone("danger")
+            elif ev_name == "ROBOT_STATE_CHANGED" and p.get("state") in ("PASSIVE", "STAND", "FREE"):
+                self._live_dance_state.pop(tgt, None)
+            elif ev_name == "ROBOT_FAULT_CLEARED" and not p.get("safety_locked"):
+                cb_map = self.state.callback_listener.latest_by_target
+                if not any(isinstance(r, dict) and r.get("safety_locked") for r in cb_map.values()):
+                    self.phase_badge.setText("阶段: 故障已清除 (FREE)")
+                    self.phase_badge.set_tone("ok")
+            elif ev_name == "TASK_ERROR":
+                self.state.arbiter.apply_command(tgt, "STOP")
+                self.phase_badge.setText(f"阶段: 任务异常 ({p.get('title', 'ERR')})")
+                self.phase_badge.set_tone("warn")
+            elif ev_name == "CHAIN_COMPLETED":
+                self.state.arbiter.apply_command(tgt, "STOP")
+                still_choreo = any(self.state.arbiter.get_state(tr.target_id).value == "CHOREO" for tr in self.state.tracks)
+                self.phase_badge.setText("阶段: 演出完成 (FREE)" if not still_choreo else f"阶段: {tgt} 完成 · 其余运行中")
+                self.phase_badge.set_tone("ok" if not still_choreo else "accent")
+            elif ev_name == "CHAIN_ABORTED":
+                cmd = "EMERGENCY" if "EMERGENCY" in str(p.get("reason", "")).upper() else "STOP"
+                self.state.arbiter.apply_command(tgt, cmd)
+                still_choreo = any(self.state.arbiter.get_state(tr.target_id).value == "CHOREO" for tr in self.state.tracks)
+                self.phase_badge.setText("阶段: 任务已中止 (FREE)" if not still_choreo else f"阶段: {tgt} 已中止")
+                self.phase_badge.set_tone("danger" if cmd == "EMERGENCY" else "warn")
         self._sync_live_3d_poses()
         self._refresh_table()
 
     def _sync_live_3d_poses(self) -> None:
         cb_map = self.state.callback_listener.latest_by_target
         live_poses: Dict[str, Tuple[float, float, float]] = {}
+        live_states: Dict[str, Dict[str, object]] = {}
         for tgt, rec in cb_map.items():
-            p = rec.get("pose") if isinstance(rec, dict) else None
+            if not isinstance(rec, dict):
+                continue
+            tid = tgt.upper()
+            p = rec.get("pose")
             if isinstance(p, dict) and "x" in p and "y" in p:
-                live_poses[tgt.upper()] = (float(p["x"]), float(p["y"]), float(p.get("yaw", 0.0)))
-        self.viewport.set_live_robot_poses(live_poses)
+                pose_t = (float(p["x"]), float(p["y"]), float(p.get("yaw", 0.0)))
+                live_poses[tid] = pose_t
+                ms = str(rec.get("motion_state") or "").upper()
+                cb_dance = str(rec.get("active_dance") or "").strip()
+                last_ev = str(rec.get("last_event") or "")
+                terminal_dance = last_ev in ("DANCE_DONE", "DANCE_COMPLETED", "DANCE_ABORTED", "CHAIN_COMPLETED", "CHAIN_ABORTED")
+                if cb_dance and not terminal_dance and ms not in ("ESTOP", "FAULT", "PASSIVE"):
+                    if tid not in self._live_dance_state or self._live_dance_state[tid][0] != cb_dance:
+                        self._live_dance_state[tid] = (cb_dance, time.monotonic())
+                    dance_alias, dance_t0 = self._live_dance_state[tid]
+                elif tid in self._live_dance_state and not terminal_dance and ms not in ("ESTOP", "FAULT", "PASSIVE"):
+                    dance_alias, dance_t0 = self._live_dance_state[tid]
+                else:
+                    dance_alias, dance_t0 = "", 0.0
+                live_states[tid] = {
+                    "pose": pose_t,
+                    "motion_state": ms,
+                    "active_dance": dance_alias,
+                    "dance_start_s": dance_t0,
+                    "fault": bool(rec.get("safety_locked")) or ms in ("ESTOP", "FAULT"),
+                }
+        self.viewport.set_live_robot_states(live_states)
 
-    def refresh_fleet_health(self) -> int:
-        """Actively probe /api/v1/health on every configured track over Wi-Fi HTTP."""
-        ok_cnt = 0
-        for tr in self.state.tracks:
-            if not tr.robot_ip:
-                self._health_cache[tr.target_id.upper()] = "未设IP"
-                continue
-            resp = self.state.http_rpc.health(tr.robot_ip)
-            if resp.ok:
-                ok_cnt += 1
-                ros_tag = "ROS在线" if resp.data.get("ros_master_reachable") else "ROS离线"
-                self._health_cache[tr.target_id.upper()] = f"HTTP在线·{ros_tag}"
-            else:
-                self._health_cache[tr.target_id.upper()] = "离线"
-        self.log_box.appendPlainText(f"[HEALTH] 机群在线体检完成: {ok_cnt}/{len(self.state.tracks)} 台可达")
-        self._refresh_table()
-        return ok_cnt
-
-    def _emit_to_targets(self, cmd: str, *params: str) -> None:
-        if not self.state.tracks:
-            self.log_box.appendPlainText(f"[SKIP] 无真实机器人轨道，未发送 {cmd}")
-            return
-        lines = []
-        for tr in self.state.tracks:
-            chk = self.state.arbiter.can_execute(tr.target_id, cmd)
-            if chk.allowed:
-                res = self.state.dispatch_command_http(tr.target_id, cmd, list(params))
-                self.state.arbiter.apply_command(tr.target_id, cmd)
-                mode = (res.get("data") or {}).get("execution_mode", "")
-                tag = " [RESERVED_SLOT]" if mode == "RESERVED_SLOT" else ""
-                lines.append(f"[HTTP-TX {tr.target_id}@{tr.robot_ip}] {cmd}{tag} -> {res.get('message', '')}")
-            else:
-                lines.append(f"[DENY] {tr.target_id}|{cmd}: {chk.reason}")
-        self.log_box.appendPlainText("\n".join(lines))
-        self._refresh_table()
-
-    def _cmd_prep(self) -> None:
-        if not self.state.tracks:
-            self.state.notify("暂无真实机器人轨道，请先添加机器人", "warn")
-            return
-        plan = TimelineLrmpCompiler.compile_plan(self.state.tracks, self.state.blocks)
-        self._active_run_id = plan.run_id
-        for tr in self.state.tracks:
-            self.state.arbiter.apply_command(tr.target_id, "PREP")
-        res_list = self.state.compile_and_upload_chains_http(plan_id=plan.plan_id, run_id=plan.run_id, prep=True)
-        ok_cnt = sum(1 for r in res_list if r.get("upload_ok") and r.get("prep_ok"))
-        for r in res_list:
-            self.log_box.appendPlainText(f"[HTTP-PREP {r['target_id']}@{r['robot_ip']}] {r['message']}")
-        self.phase_badge.setText(f"阶段: CHOREO 就绪 (PREP {ok_cnt}/{len(res_list)})")
-        self.phase_badge.set_tone("accent" if ok_cnt > 0 else "warn")
-        self._refresh_table()
-
-    def _cmd_barrier(self) -> None:
-        if not self.state.tracks:
-            return
-        ok_cnt = 0
-        for tr in self.state.tracks:
-            if tr.muted:
-                continue
-            resp = self.state.http_rpc.barrier_task_chain(tr.robot_ip, self._active_run_id, barrier_id="1")
-            ok_cnt += int(resp.ok)
-            self.log_box.appendPlainText(f"[HTTP-BARRIER {tr.target_id}@{tr.robot_ip}] {resp.message}")
-        self.phase_badge.setText(f"阶段: BARRIER 同步 ({ok_cnt}/{len(self.state.tracks)})")
-        self.phase_badge.set_tone("accent" if ok_cnt > 0 else "warn")
-
-    def _cmd_play(self) -> None:
-        if not self.state.tracks:
-            self.state.notify("暂无真实机器人轨道，请先添加机器人", "warn")
-            return
-        plan = TimelineLrmpCompiler.compile_plan(self.state.tracks, self.state.blocks)
-        run_id = self._active_run_id or plan.run_id
-        for tr in self.state.tracks:
-            chk = self.state.arbiter.can_execute(tr.target_id, "PLAY")
-            if not chk.allowed:
-                self.log_box.appendPlainText(f"[DENY] {chk.reason}")
-                return
-        has_action = any(b.block_type == "action" and not b.is_ignored for b in self.state.blocks)
-        res_list = self.state.start_task_chains_http(run_id=run_id)
-        ok_cnt = sum(1 for r in res_list if r.get("ok"))
-        for r in res_list:
-            self.log_box.appendPlainText(f"[HTTP-PLAY {r['target_id']}@{r['robot_ip']}] {r['message']}")
-        if has_action:
-            self.log_box.appendPlainText("[NOTE] 任务链含舞蹈动作节点：下位机当前为 RESERVED_SLOT（白名单校验，待 DDS 手柄挂载）")
-        self.playback.pause()
-        self._sync_live_3d_poses()
-        self.phase_badge.setText(f"阶段: PLAY 执行中 ({ok_cnt}/{len(res_list)})")
-        self.phase_badge.set_tone("ok" if ok_cnt > 0 else "warn")
-        self._refresh_table()
-
-    def _cmd_stop(self) -> None:
-        self.playback.stop_and_return_origin()
-        for tr in self.state.tracks:
-            self.state.arbiter.apply_command(tr.target_id, "STOP")
-        self.log_box.appendPlainText("[HTTP-STOP] 已发送任务链停止并回到初始原点指令")
-        self.phase_badge.setText("阶段: STOP 已回原点")
-        self.phase_badge.set_tone("neutral")
-        self._refresh_table()
-
-    def _cmd_emergency(self) -> None:
-        self.playback.pause()
-        self._emit_to_targets("EMERGENCY")
-        self.phase_badge.setText("阶段: EMERGENCY 已紧急急停!")
-        self.phase_badge.set_tone("danger")
-
+    # ------------------------------------------------------------------ table
     def _refresh_table(self) -> None:
         d_safe = get_settings().stage_defaults.safety_distance_m
         cb_map = self.state.callback_listener.latest_by_target
@@ -249,8 +217,11 @@ class PerformanceMonitorPage(QWidget):
             if isinstance(conf, (int, float)):
                 clear_txt += f" · 置信{conf:.2f}"
             auth = self.state.arbiter.get_state(tr.target_id).value
+            mode_s = f"{cb.get('motion_state') or ''}" + (f"({cb['nav_input']})" if cb.get("nav_input") else "")
+            faults = [f.get("code", "") for f in (cb.get("active_faults") or []) if isinstance(f, dict)]
+            fault_s = f" [故障:{','.join(faults)}]" if faults else ""
             status_txt = cb.get("current_node_title") or cb.get("last_event") or self._health_cache.get(tid) or "Wi-Fi HTTP 就绪"
             self.table.setItem(r, 0, QTableWidgetItem(f"{tr.name}[{tr.target_id}] {tr.robot_ip}"))
             self.table.setItem(r, 1, QTableWidgetItem(f"{x:.2f}, {y:.2f}, {yaw:.2f}" + (" [实机]" if is_live else " [原点]")))
             self.table.setItem(r, 2, QTableWidgetItem(clear_txt))
-            self.table.setItem(r, 3, QTableWidgetItem(f"{auth} · {status_txt}"))
+            self.table.setItem(r, 3, QTableWidgetItem(f"{auth}" + (f"·{mode_s}" if mode_s else "") + f"{fault_s} · {status_txt}"))

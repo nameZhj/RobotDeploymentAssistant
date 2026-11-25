@@ -72,6 +72,8 @@ def test_dual_computer_full_http_closure(tmp_path: Path, monkeypatch) -> None:
             return 0, f"position:\n  x: {sim_pose[0]:.4f}\n  y: {sim_pose[1]:.4f}\norientation:\n  x: 0.0\n  y: 0.0\n  z: 0.0\n  w: 1.0", ""
         if "rostopic echo -n 1 /local_nav_status" in cmd:
             return 0, "data: 'ARRIVED'", ""
+        if "rostopic echo -n 1 /localization_3d_confidence" in cmd:
+            return 0, "data: 0.92", ""
         if "rosservice call /teb_polar_node/cancel_planning" in cmd:
             cancelled[0] = True
             return 0, "ok", ""
@@ -91,8 +93,10 @@ def test_dual_computer_full_http_closure(tmp_path: Path, monkeypatch) -> None:
     lower_port = l_srv.start()
 
     # 2. Boot upper_computer StudioStateService pointed at lower_computer HTTP port
-    if str(UPPER_ROOT) not in sys.path:
-        sys.path.insert(0, str(UPPER_ROOT))
+    for k in list(sys.modules):
+        if k == "src" or k.startswith("src."):
+            del sys.modules[k]
+    sys.path[:] = [str(UPPER_ROOT), *[p for p in sys.path if p != str(UPPER_ROOT)]]
     monkeypatch.setenv("RDA_WORKSPACE_ROOT", str(tmp_path / "upper_ws"))
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication([])
@@ -116,6 +120,7 @@ def test_dual_computer_full_http_closure(tmp_path: Path, monkeypatch) -> None:
     ensure_seeded(db)
     state = StudioStateService(db=db)
     playback = PlaybackCoordinator(state)
+    playback.stoppedToOrigin.connect(state.stop_all_robots_and_return_origin_http)
 
     try:
         tr = state.upsert_track_validated(TrackEntity(
@@ -180,8 +185,12 @@ def test_dual_computer_full_http_closure(tmp_path: Path, monkeypatch) -> None:
         assert pre_res["ok"] is True and pre_res["http_used"] is True
         disc_res = state.http_rpc.fetch_nav_discovery("127.0.0.1")
         assert disc_res.ok is True and disc_res.data["endpoints"]["odom_topic"] == "/Odometry_loc"
+        reloc_res = state.http_rpc.relocalize("127.0.0.1", mode="auto", fallback_pose={"x": -1.0, "y": 0.0, "yaw": 0.0}, timeout_s=0.8)
+        assert reloc_res.ok is True and reloc_res.data["converged"] is True
+        probe_res = state.http_rpc.probe_motion("127.0.0.1")
+        assert probe_res.status_code == 503 and probe_res.ok is False
 
-        # Verify Flask Web Console pure Wi-Fi HTTP APIs (fleet, health, command, posture, velocity, dance, stop, state, precheck, logs)
+        # Verify Flask Web Console pure Wi-Fi HTTP APIs (fleet, health, command, posture, velocity, dance, stop, state, probe, precheck, logs)
         from app import app as flask_app
         from backend.http_lower_bridge import http_lower_bridge
         orig_storage = http_lower_bridge._storage_file
@@ -195,15 +204,18 @@ def test_dual_computer_full_http_closure(tmp_path: Path, monkeypatch) -> None:
             assert r_fl.status_code == 200 and r_fl.get_json()["success"] is True
             r_hl = flask_client.post("/api/http/health", json={"robots": [{"id": "A", "ip": "127.0.0.1", "port": lower_port}]})
             assert r_hl.status_code == 200 and r_hl.get_json()["online_count"] == 1
+            assert "safety_locked" in r_hl.get_json()["robots"]["A"] and "active_faults" in r_hl.get_json()["robots"]["A"]
+            r_pb = flask_client.post("/api/http/probe", json={"target": "A", "targets_map": {"A": {"ip": "127.0.0.1", "port": lower_port}}})
+            assert r_pb.status_code == 200 and r_pb.get_json()["reachable"] is False
             r_cm = flask_client.post("/api/http/command", json={"target": "A", "command": "STAND", "targets_map": {"A": {"ip": "127.0.0.1", "port": lower_port}}})
             assert r_cm.status_code == 200 and r_cm.get_json()["success"] is True and r_cm.get_json()["http_used"] is True
-            r_po = flask_client.post("/api/http/posture", json={"target": "A", "posture": "GAIT", "robot_ip": "127.0.0.1", "port": lower_port})
+            r_po = flask_client.post("/api/http/posture", json={"target": "A", "posture": "GAIT", "wait_ready": True, "robot_ip": "127.0.0.1", "port": lower_port})
             assert r_po.status_code == 200 and r_po.get_json()["success"] is True
             r_ve = flask_client.post("/api/http/velocity", json={"target": "A", "direction": "FORWARD", "duration": 1.0, "robot_ip": "127.0.0.1", "port": lower_port})
             assert r_ve.status_code == 200 and r_ve.get_json()["success"] is True
             r_da = flask_client.post("/api/http/dance", json={"target": "A", "alias": "G1_TAIJI", "robot_ip": "127.0.0.1", "port": lower_port})
             assert r_da.status_code == 200 and r_da.get_json()["success"] is True
-            r_st = flask_client.get(f"/api/http/state?target=A&robot_ip=127.0.0.1&port={lower_port}")
+            r_st = flask_client.get(f"/api/http/state?target=A&sync=1&robot_ip=127.0.0.1&port={lower_port}")
             assert r_st.status_code == 200 and r_st.get_json()["data"]["motion"]["active_dance"] == "G1_TAIJI"
             r_sp = flask_client.post("/api/http/stop", json={"target": "A", "emergency": False, "robot_ip": "127.0.0.1", "port": lower_port})
             assert r_sp.status_code == 200 and r_sp.get_json()["success"] is True

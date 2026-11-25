@@ -49,7 +49,7 @@ class LicenseService:
                 dance_list = []
 
             customer = data.get("customer_id") or data.get("customer") or data.get("client") or "商业客户"
-            model = data.get("product") or data.get("robot_model") or data.get("model") or "Unitree G1"
+            model = data.get("product") or data.get("robot_model") or data.get("model") or "G1"
             signature = data.get("signature") or data.get("sign") or ""
 
             return {
@@ -75,7 +75,7 @@ class LicenseService:
                     "dances": [],
                     "dance_count": 0,
                     "customer": "自定义文件",
-                    "model": "Unitree G1",
+                    "model": "G1",
                     "signature": "",
                     "raw_json": {}
                 }

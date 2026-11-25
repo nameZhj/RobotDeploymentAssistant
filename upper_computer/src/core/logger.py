@@ -16,15 +16,15 @@ _CONFIGURED = False
 
 
 def configure_studio_logging(level: int = logging.INFO) -> None:
-    """Attach rotating file and console handlers for the UniSwarm logger hierarchy."""
+    """Attach rotating file and console handlers for the Stage Studio logger hierarchy."""
     global _CONFIGURED
     if _CONFIGURED:
         return
     paths = get_paths()
     paths.ensure_runtime_dirs()
-    log_file = paths.logs_dir / "uniswarm_studio.log"
+    log_file = paths.logs_dir / "stage_studio.log"
 
-    root_logger = logging.getLogger("uniswarm")
+    root_logger = logging.getLogger("stage_studio")
     root_logger.setLevel(level)
     root_logger.propagate = False
 
@@ -45,7 +45,7 @@ def configure_studio_logging(level: int = logging.INFO) -> None:
 
 
 def get_studio_logger(name: Optional[str] = None) -> logging.Logger:
-    """Return a child logger under the configured uniswarm namespace."""
+    """Return a child logger under the configured stage_studio namespace."""
     configure_studio_logging()
-    full_name = f"uniswarm.{name}" if name else "uniswarm"
+    full_name = f"stage_studio.{name}" if name else "stage_studio"
     return logging.getLogger(full_name)

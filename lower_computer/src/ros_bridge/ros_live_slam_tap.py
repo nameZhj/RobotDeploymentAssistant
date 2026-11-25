@@ -143,8 +143,10 @@ class RosLiveSlamTap:
             "ros_available": False, "state_seq": 0, "cloud_seq": 0, "point_count": 0,
             "pose": None, "localization_confidence": None, "localization_delay_ms": None,
             "local_nav_status": None, "global_path": [], "scan_xy": [], "tap_mode": "idle",
-            "topics": {}, "reason": "尚未启动实时 ROS 监听",
+            "topics": {}, "robot_state": {}, "reason": "尚未启动实时 ROS 监听",
         }
+        self._last_good_pose: Optional[Dict[str, float]] = None
+        self._confidence_seen: bool = False
         self._proc: Optional[subprocess.Popen[str]] = None
         self._reader_thread: Optional[threading.Thread] = None
         self._stop_req = threading.Event()
@@ -171,9 +173,7 @@ class RosLiveSlamTap:
             return False
         try:
             self._stop_req.clear()
-            self._proc = subprocess.Popen(
-                cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1
-            )
+            self._proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
             self._reader_thread = threading.Thread(target=self._read_loop, daemon=True, name="RosSlamTapReader")
             self._reader_thread.start()
             with self._cond:
@@ -209,24 +209,14 @@ class RosLiveSlamTap:
             s = line.strip()
             if s.startswith("S:"):
                 try:
-                    payload = json.loads(s[2:])
-                    self.push_external_frame(
-                        pose=payload.get("pose"),
-                        confidence=payload.get("localization_confidence"),
-                        delay_ms=payload.get("localization_delay_ms"),
-                        nav_status=payload.get("local_nav_status"),
-                        global_path=payload.get("global_path"),
-                        scan_xy=payload.get("scan_xy"),
-                        ros_available=True,
-                        tap_mode="rospy_stream",
-                    )
+                    p = json.loads(s[2:])
+                    self.push_external_frame(pose=p.get("pose"), confidence=p.get("localization_confidence"), delay_ms=p.get("localization_delay_ms"), nav_status=p.get("local_nav_status"), global_path=p.get("global_path"), scan_xy=p.get("scan_xy"), ros_available=True, tap_mode="rospy_stream")
                 except Exception:
                     pass
             elif s.startswith("C:"):
                 try:
                     _, seq_s, cnt_s, b64 = s.split(":", 3)
-                    raw = base64.b64decode(b64)
-                    self.push_cloud_bytes(raw, int(cnt_s), cloud_seq=int(seq_s))
+                    self.push_cloud_bytes(base64.b64decode(b64), int(cnt_s), cloud_seq=int(seq_s))
                 except Exception:
                     pass
 
@@ -238,11 +228,15 @@ class RosLiveSlamTap:
     ) -> int:
         with self._cond:
             self._state_seq += 1
+            if confidence is not None:
+                self._confidence_seen = True
+            if isinstance(pose, dict) and "x" in pose and "y" in pose:
+                if (confidence is not None and float(confidence) >= 0.65) or (not self._confidence_seen and confidence is None):
+                    self._last_good_pose = {"x": float(pose["x"]), "y": float(pose["y"]), "yaw": float(pose.get("yaw", 0.0))}
             self._latest_state.update({
-                "ros_available": ros_available, "state_seq": self._state_seq,
-                "cloud_seq": self._cloud_seq, "point_count": self._point_count, "pose": pose,
-                "localization_confidence": confidence, "localization_delay_ms": delay_ms,
-                "local_nav_status": nav_status,
+                "ros_available": ros_available, "state_seq": self._state_seq, "cloud_seq": self._cloud_seq,
+                "point_count": self._point_count, "pose": pose, "localization_confidence": confidence,
+                "localization_delay_ms": delay_ms, "local_nav_status": nav_status,
                 "global_path": global_path if global_path is not None else self._latest_state.get("global_path", []),
                 "scan_xy": scan_xy if scan_xy is not None else self._latest_state.get("scan_xy", []),
                 "tap_mode": tap_mode, "topics": self.discovery.current.to_dict(), "reason": reason,
@@ -250,24 +244,36 @@ class RosLiveSlamTap:
             self._cond.notify_all()
             return self._state_seq
 
+    def set_robot_state(self, robot_state: Dict[str, Any]) -> int:
+        with self._cond:
+            self._state_seq += 1
+            self._latest_state["state_seq"] = self._state_seq
+            self._latest_state["robot_state"] = dict(robot_state)
+            self._cond.notify_all()
+            return self._state_seq
+
+    def get_last_good_pose(self) -> Optional[Dict[str, float]]:
+        with self._cond:
+            return dict(self._last_good_pose) if self._last_good_pose else None
+
+    def has_confidence_telemetry(self) -> bool:
+        with self._cond:
+            return self._confidence_seen
+
     def push_cloud_bytes(self, raw_float32_xyz: bytes, point_count: Optional[int] = None, cloud_seq: Optional[int] = None) -> int:
         cnt = point_count if point_count is not None else len(raw_float32_xyz) // 12
         with self._cond:
             self._cloud_seq = cloud_seq if cloud_seq is not None else (self._cloud_seq + 1)
-            self._point_count = cnt
-            self._cloud_bytes = raw_float32_xyz
+            self._point_count, self._cloud_bytes = cnt, raw_float32_xyz
             self._state_seq += 1
-            self._latest_state["state_seq"] = self._state_seq
-            self._latest_state["cloud_seq"] = self._cloud_seq
-            self._latest_state["point_count"] = cnt
+            self._latest_state.update({"state_seq": self._state_seq, "cloud_seq": self._cloud_seq, "point_count": cnt})
             self._cond.notify_all()
             return self._cloud_seq
 
     def push_points_list(self, xyz_points: List[Tuple[float, float, float]]) -> int:
         if not xyz_points:
             return self._cloud_seq
-        raw = b"".join(struct.pack("<fff", float(x), float(y), float(z)) for x, y, z in xyz_points)
-        return self.push_cloud_bytes(raw, len(xyz_points))
+        return self.push_cloud_bytes(b"".join(struct.pack("<fff", float(x), float(y), float(z)) for x, y, z in xyz_points), len(xyz_points))
 
     def get_live_state(self) -> Dict[str, Any]:
         with self._cond:
@@ -283,9 +289,7 @@ class RosLiveSlamTap:
         with self._cond:
             if self._cloud_seq == 0 or (since_seq > 0 and self._cloud_seq <= since_seq):
                 return self._cloud_seq, 0, b""
-            raw = self._cloud_bytes
-            cnt = self._point_count
+            raw, cnt = self._cloud_bytes, self._point_count
             if cnt > max_points > 0:
-                raw = raw[: max_points * 12]
-                cnt = max_points
+                raw, cnt = raw[: max_points * 12], max_points
             return self._cloud_seq, cnt, raw
